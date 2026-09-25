@@ -11,11 +11,11 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
@@ -28,19 +28,30 @@ from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.codec import record_to_json
 from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.flight.record import FlightRecord
+from uas_workbench.life import Board, DueList, board, due_list
 
-from .observability import FINDINGS, FLIGHTS_STORED, HTTP_LATENCY, HTTP_REQUESTS
+from .observability import (
+    AIRCRAFT_BY_STATUS,
+    DUE_ITEMS,
+    FINDINGS,
+    FLIGHTS_STORED,
+    HTTP_LATENCY,
+    HTTP_REQUESTS,
+)
 from .store import DuplicateFlight, Store
 
 logger = logging.getLogger("uasw.http")
 
-DESCRIPTION = """Flight records per aircraft from PX4 and ArduPilot logs, and reconciliation of
-logged flight time against the autopilot's own lifetime counter.
+DESCRIPTION = """Flight records per aircraft from PX4 and ArduPilot logs, reconciliation of
+logged flight time against the autopilot's own lifetime counter, and the component life,
+inspection due list and board state computed from them.
 
 Every value a log cannot support is returned as `{"unknown": "<reason>"}`, never as zero.
 Every record and aircraft carries `synthetic`: the demo fleet is generated from a seed; the
-two real showcase aircraft are excerpts of public, licensed logs. Civil fleet sustainment
-only; see the repository's scope and non-goals."""
+two real showcase aircraft are excerpts of public, licensed logs. Board states use civil
+vocabulary only and are computed, never stored; every state but serviceable carries its
+reasons as full sentences. Limits and intervals come from `fleet.toml`, each with its public
+civil source. Civil fleet sustainment only; see the repository's scope and non-goals."""
 
 
 # ---- response models -------------------------------------------------------------------
@@ -89,10 +100,40 @@ class AircraftOut(BaseModel):
     synthetic: bool
     licence: str
     attribution: str
-    status: str | UnknownOut
+    status: str | UnknownOut  # computed board state, civil vocabulary
+    status_reasons: list[str]  # full sentences; empty only when serviceable or unknown
+    overdue: int  # due items past their limit, tolerance included
+    due_soon: int
     flights: int
     flight_time_known_s: float
     findings: int
+
+
+class DueItemOut(BaseModel):
+    aircraft_key: str
+    subject: str
+    component_id: str | None
+    basis: str
+    unit: str
+    used: float
+    limit: float
+    remaining: float
+    tolerance: float
+    state: str
+    source: str
+    message: str
+    synthetic: bool
+
+
+class DueOut(BaseModel):
+    aircraft_key: str
+    synthetic: bool
+    as_of: datetime
+    status: str | UnknownOut
+    status_reasons: list[str]
+    time_in_service_s: float | UnknownOut
+    items: list[DueItemOut]
+    notes: list[str]
 
 
 class CoverageOut(BaseModel):
@@ -166,9 +207,44 @@ def reconcile_view(
     return result, out
 
 
+DUE_ORDER = {"overdue": 0, "overdue_within_tolerance": 1, "due_soon": 2, "ok": 3}
+
+
+def due_view(
+    store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
+) -> tuple[DueList, Board, DueOut]:
+    """The due list and board state of one aircraft at `as_of` (default: now)."""
+    at = as_of or datetime.now(UTC)
+    due = due_list(
+        aircraft.key,
+        maintenance=store.maintenance(aircraft.key),
+        components=store.components(),
+        flights_of=store.flights,
+        policy=config.life,
+        as_of=at,
+        tolerance_s=config.tolerance_s,
+    )
+    state = board(due)
+    items = sorted(due.items, key=lambda i: (DUE_ORDER[i.state], i.remaining / (i.limit or 1)))
+    out = DueOut(
+        aircraft_key=aircraft.key,
+        synthetic=aircraft.synthetic,
+        as_of=at,
+        status=_maybe(state.status),
+        status_reasons=list(state.reasons),
+        time_in_service_s=_maybe(due.time_in_service_s),
+        items=[
+            DueItemOut(**{**dataclasses.asdict(i), "synthetic": aircraft.synthetic}) for i in items
+        ],
+        notes=list(due.notes),
+    )
+    return due, state, out
+
+
 def aircraft_view(store: Store, aircraft: Aircraft, config: FleetConfig) -> AircraftOut:
     records = store.flights(aircraft.key)
     result, _ = reconcile_view(store, aircraft, config)
+    _, state, due = due_view(store, aircraft, config)
     return AircraftOut(
         key=aircraft.key,
         label=aircraft.label,
@@ -176,7 +252,10 @@ def aircraft_view(store: Store, aircraft: Aircraft, config: FleetConfig) -> Airc
         synthetic=aircraft.synthetic,
         licence=aircraft.licence,
         attribution=aircraft.attribution,
-        status=_maybe(aircraft.status),
+        status=_maybe(state.status),
+        status_reasons=list(state.reasons),
+        overdue=sum(i.state in ("overdue", "overdue_within_tolerance") for i in due.items),
+        due_soon=sum(i.state == "due_soon" for i in due.items),
         flights=len(records),
         flight_time_known_s=round(
             sum(r.flight_time_s for r in records if is_known(r.flight_time_s)), 1
@@ -185,19 +264,51 @@ def aircraft_view(store: Store, aircraft: Aircraft, config: FleetConfig) -> Airc
     )
 
 
+def fleet_due(store: Store, config: FleetConfig, as_of: datetime | None = None) -> list[DueItemOut]:
+    """Every due-soon and overdue item across the fleet, worst first."""
+    items = [
+        i
+        for a in store.aircraft()
+        for i in due_view(store, a, config, as_of)[2].items
+        if i.state != "ok"
+    ]
+    return sorted(items, key=lambda i: (DUE_ORDER[i.state], i.remaining / (i.limit or 1)))
+
+
 def refresh_gauges(store: Store, config: FleetConfig) -> None:
     FLIGHTS_STORED.set(store.flight_count())
     kinds: Counter[str] = Counter()
+    statuses: Counter[str] = Counter()
+    states: Counter[str] = Counter()
     for aircraft in store.aircraft():
         result, _ = reconcile_view(store, aircraft, config)
         kinds.update(f.kind for f in result.findings)
+        due, state, _ = due_view(store, aircraft, config)
+        statuses[state.status if is_known(state.status) else "unknown"] += 1
+        states.update(i.state for i in due.items)
     for kind in ("unlogged_flight", "counter_mismatch"):
         FINDINGS.labels(kind=kind).set(kinds.get(kind, 0))
+    for status in (*config.states, "unknown"):
+        AIRCRAFT_BY_STATUS.labels(status=status).set(statuses.get(status, 0))
+    for state_name in DUE_ORDER:
+        DUE_ITEMS.labels(state=state_name).set(states.get(state_name, 0))
 
 
 # ---- the application -------------------------------------------------------------------
 
 READERS = {".ulg": read_ulog, ".bin": read_dataflash}
+
+
+AsOf = Annotated[
+    datetime | None, Query(description="Compute the due list at this UTC time instead of now.")
+]
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """A naive query time is taken as UTC, so the engine always compares aware datetimes."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)
 
 
 def _remove(path: Path) -> None:
@@ -282,6 +393,16 @@ def create_app(store: Store, config: FleetConfig | None = None) -> FastAPI:
     @app.get("/fleet/findings", tags=["reconcile"], response_model=list[FindingOut])
     def fleet_findings() -> list[FindingOut]:
         return [f for a in store.aircraft() for f in reconcile_view(store, a, cfg)[1].findings]
+
+    @app.get("/aircraft/{key}/due", tags=["life"], response_model=DueOut)
+    def aircraft_due(key: str, as_of: AsOf = None) -> DueOut:
+        """Component life and inspection due list, and the board state with its reasons."""
+        return due_view(store, _aircraft_or_404(key), cfg, _utc(as_of))[2]
+
+    @app.get("/fleet/due", tags=["life"], response_model=list[DueItemOut])
+    def fleet_due_items(as_of: AsOf = None) -> list[DueItemOut]:
+        """What a maintenance lead asks first: everything due soon or overdue, worst first."""
+        return fleet_due(store, cfg, _utc(as_of))
 
     @app.post("/ingest", tags=["flights"], status_code=201, response_model=FlightOut)
     def ingest(
