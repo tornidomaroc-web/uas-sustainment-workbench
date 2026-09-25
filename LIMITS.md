@@ -74,6 +74,25 @@ field-level tables. This file is about what that means for a maintenance tool.
   interval at all; the two inspections borrow the manned Part 91 shape so the tolerance
   and calendar logic have a public source.
 
+## Limits of the assistant
+
+- **It reads; it never computes.** Its only tools are the service's GET endpoints, and the
+  computation date is pinned outside the model. Anything not in a fetched record is, by
+  the system prompt, something it must say it does not have.
+- **The grounding check is a filter, not a proof.** It rejects an answer that states a
+  number, a component or aircraft id, or a date absent from the fetched records, with one
+  allowance for integers up to ten, which may be counts made while phrasing. It cannot
+  tell a wrong sentence built from correct values. The records under each answer exist so
+  a reader can check that.
+- **Recorded runs are one model's output on one date.** They name the model tag, the digest
+  of its weights, the recording date and the computation date. Re-recording with another
+  model or another date gives different sentences; the test suite only guarantees that the
+  records behind each recorded answer are what the current code returns.
+- **Hours and cycles cannot be projected.** Only calendar limits have a date, so "what is
+  due before Friday" is answered for calendar items and stated as unknown for the rest.
+- **No airworthiness decision.** The assistant reports the board state and its reasons and
+  says that the workbench does not certify airworthiness.
+
 ## Limits of the ArduPilot evidence
 
 Everything ArduPilot-side rests on one aircraft, ten logs on two days in July 2018,

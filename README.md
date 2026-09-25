@@ -81,11 +81,28 @@ exists so `reconcile()` has consecutive logs to compare and the life engine has 
 work from. The two real aircraft have no maintenance record, so their state is unknown, with
 that reason.
 
+**An assistant that phrases, and never computes.** `uasw ask "what is due on SYN-04 before
+2026-10-03, and why?"` sends the question to a small open model served locally by Ollama and
+lets it call the service's read-only endpoints, one tool per endpoint, nothing else. The
+computation date is pinned by the caller, and the model cannot move it. Every answer carries
+the calls it made with the records returned, and a deterministic grounding check marks any
+answer unverified that states a number, a component or aircraft id, or a date that none of
+those records contain. The model is told that hours and cycles advance only with flight,
+which cannot be predicted, and that the workbench does not certify airworthiness. Five runs,
+recorded once with `--record`, ship with the package: the live demo shows them under
+"recorded runs, not live" with the model tag, the digest of its weights, the recording date,
+the fixed computation date, and every record the answer rests on. A test replays each
+recording against the current code on every CI run, so a change to the engine fails CI
+instead of leaving a stale answer on the page. No model runs in CI or on the page.
+
 ## What remains
 
 - Maintenance records (time in service, inspections done, components fitted, work orders)
   can only be seeded today. There is no endpoint or command to enter or edit them yet; an
   aircraft you `ingest` stays unknown until that exists.
+- The assistant is a local command, not a live page feature; the page replays recordings.
+  The grounding check catches invented numbers, ids and dates, not a wrong sentence built
+  from real ones; the records under each answer are there so a reader can check the rest.
 - A cycle is one flight record. Logs give no battery pack identity or cycle count
   ([LIMITS.md](LIMITS.md)), so pack assignment is an operator record, and a flight that opens
   and closes without landing in between still counts as one cycle.
@@ -97,7 +114,6 @@ that reason.
 ## What comes next
 
 1. Entering and editing maintenance records through the API and the CLI.
-2. An assistant that answers maintenance questions through the tool's own API.
 
 ## Scope and non-goals
 
@@ -122,6 +138,15 @@ uasw serve                                        # seeds on first start; /docs,
 uasw ingest my-aircraft path/to/log.ulg           # add your own logs (never stored raw)
 uasw export-static --out site                     # the static demo, from the same store
 ruff check . && mypy && pytest                    # no network, no downloads needed
+```
+
+The assistant needs a running service and a local [Ollama](https://ollama.com) with the
+model pulled (`ollama pull qwen3:8b`, Apache-2.0, about 5 GB; no account, no key). Ollama
+listens on localhost only. Then:
+
+```bash
+uasw ask "which aircraft are not serviceable, and what stops each one?"
+uasw ask "..." --as-of 2026-10-01T00:00:00Z --record run.json   # a replayable recording
 ```
 
 The census that measured the public logs is `uasw-census` (`px4-select`, `px4-fetch`,
