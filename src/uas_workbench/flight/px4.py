@@ -101,7 +101,9 @@ def _arm_cycles(ulog: ULog) -> Maybe[int]:
     state = _column(dataset, "arming_state")
     if state is None:
         return Unknown("vehicle_status has no arming_state field")
-    return _rising((state == ARMING_STATE_ARMED).astype(np.float64))
+    armed = (state == ARMING_STATE_ARMED).astype(np.float64)
+    # PX4 starts logging at arming by default, so a log that opens armed is inside a cycle.
+    return _rising(armed) + int(armed[0] != 0)
 
 
 def _battery(ulog: ULog) -> tuple[Maybe[float], Maybe[float]]:
