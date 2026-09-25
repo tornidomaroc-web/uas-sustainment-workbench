@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pyulog import ULog
 
-from uas_workbench.census.excerpt import ULOG_KEEP, ULOG_ZERO
+from uas_workbench.census.excerpt import ULOG_DROP_INFO, ULOG_KEEP, ULOG_ZERO
 from uas_workbench.census.px4 import probe_ulog
 from uas_workbench.flight import Unknown, is_known
 from uas_workbench.flight.px4 import read_ulog
@@ -24,6 +24,12 @@ COORDINATE = re.compile(r"-?\b\d{1,3}\.\d{5,}\b")
 
 def test_fixture_is_present_and_small() -> None:
     assert FIXTURE.stat().st_size < 400_000
+
+
+def test_fixture_names_no_hardware_product() -> None:
+    """The hardware name, its subtype and the firmware branch name a commercial board."""
+    ulog = ULog(str(FIXTURE), disable_str_exceptions=True)
+    assert not set(ULOG_DROP_INFO) & set(ulog.msg_info_dict)
 
 
 def test_fixture_carries_no_position_and_no_device_id() -> None:
