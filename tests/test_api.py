@@ -17,6 +17,7 @@ from uas_workbench.service.store import Store
 FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG = load_config()
 PX4_FIXTURE = FIXTURES / "px4" / "flight_review_board_validation_2026-06-12_excerpt.ulg"
+NO_RECORD = "no maintenance record entered for this aircraft"
 
 
 @pytest.fixture(scope="module")
@@ -87,6 +88,67 @@ def test_fleet_findings_cover_synthetic_and_real_aircraft(client: TestClient) ->
                for f in findings)  # fmt: skip
 
 
+def test_board_states_are_computed_with_their_reasons(client: TestClient) -> None:
+    by_key = {a["key"]: a for a in client.get("/aircraft").json()}
+    assert by_key["SYN-01"]["status"] == "serviceable"
+    assert by_key["SYN-01"]["status_reasons"] == []
+    assert by_key["SYN-03"]["status"] == "serviceable with deferred defects"
+    assert by_key["SYN-04"]["status"] == "unserviceable"
+    assert by_key["SYN-05"]["status"] == "in maintenance"
+    assert by_key["SYN-07"]["status"] == "AOG"
+    assert by_key["SYN-06"]["status"] == {
+        "unknown": "no maintenance record entered for this aircraft"
+    }
+    for key in (ALFA_KEY, PX4_KEY):
+        assert by_key[key]["status"] == {
+            "unknown": "no maintenance record entered for this aircraft"
+        }
+        assert by_key[key]["status_reasons"] == []
+    for a in by_key.values():
+        assert isinstance(a["status_reasons"], list)
+        assert isinstance(a["overdue"], int) and isinstance(a["due_soon"], int)
+    assert by_key["SYN-04"]["overdue"] >= 2
+    assert by_key["SYN-02"]["due_soon"] >= 1
+    reasons = by_key["SYN-04"]["status_reasons"]
+    assert any("cycles past its" in r and "battery pack" in r for r in reasons)
+    assert any("calendar-month life limit on 2026-" in r for r in reasons)
+
+
+def test_due_view_per_aircraft_lists_every_item_with_its_source(client: TestClient) -> None:
+    due = client.get("/aircraft/SYN-04/due").json()
+    assert due["aircraft_key"] == "SYN-04" and due["synthetic"] is True
+    assert due["status"] == "unserviceable" and due["as_of"]
+    assert due["time_in_service_s"] > 0
+    states = {i["state"] for i in due["items"]}
+    assert "overdue" in states
+    for i in due["items"]:
+        assert {"subject", "basis", "unit", "used", "limit", "remaining", "tolerance",
+                "state", "source", "message", "component_id"} <= set(i)  # fmt: skip
+        assert i["state"] in ("ok", "due_soon", "overdue_within_tolerance", "overdue")
+        assert "http" in i["source"] and i["message"]
+    cycles = next(i for i in due["items"] if i["basis"] == "cycles" and i["state"] == "overdue")
+    assert cycles["message"] in due["status_reasons"]
+
+    fixed = client.get("/aircraft/SYN-04/due", params={"as_of": "2026-10-01T00:00:00Z"}).json()
+    assert fixed["as_of"].startswith("2026-10-01")
+
+    real = client.get(f"/aircraft/{ALFA_KEY}/due").json()
+    assert real["synthetic"] is False and real["items"] == []
+    assert real["status"] == {"unknown": "no maintenance record entered for this aircraft"}
+    assert real["time_in_service_s"] == {"unknown": NO_RECORD}
+    assert client.get("/aircraft/no-such-aircraft/due").status_code == 404
+
+
+def test_fleet_due_view_is_the_due_soon_and_overdue_items_worst_first(client: TestClient) -> None:
+    items = client.get("/fleet/due").json()
+    assert items and all(i["state"] != "ok" for i in items)
+    order = ["overdue", "overdue_within_tolerance", "due_soon"]
+    ranks = [order.index(i["state"]) for i in items]
+    assert ranks == sorted(ranks)
+    assert {i["aircraft_key"] for i in items} >= {"SYN-02", "SYN-03", "SYN-04"}
+    assert all(isinstance(i["synthetic"], bool) for i in items)
+
+
 def test_unknown_aircraft_is_404(client: TestClient) -> None:
     response = client.get("/aircraft/no-such-aircraft/flights")
     assert response.status_code == 404
@@ -122,6 +184,7 @@ def test_metrics_and_request_ids(client: TestClient) -> None:
     text = client.get("/metrics").text
     assert "uasw_http_requests_total" in text
     assert "uasw_flights_stored" in text
+    assert 'uasw_aircraft_by_status{status="unserviceable"} 1.0' in text
     assert 'path="/aircraft"' in text
 
 
