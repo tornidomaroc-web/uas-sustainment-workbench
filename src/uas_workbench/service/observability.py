@@ -49,3 +49,9 @@ HTTP_LATENCY = Histogram(
 )
 FLIGHTS_STORED = Gauge("uasw_flights_stored", "Flight records in the store")
 FINDINGS = Gauge("uasw_findings", "Reconciliation findings across the fleet, by kind", ["kind"])
+AIRCRAFT_BY_STATUS = Gauge(
+    "uasw_aircraft_by_status", "Aircraft per computed board state (civil vocabulary)", ["status"]
+)
+DUE_ITEMS = Gauge(
+    "uasw_due_items", "Life and inspection items across the fleet, by state", ["state"]
+)

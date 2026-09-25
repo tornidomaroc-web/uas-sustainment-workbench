@@ -54,6 +54,16 @@
   .finding.synthetic::after { content: "synthetic"; }
   .unknown { color: var(--muted); font-style: italic; }
   .reason { color: var(--muted); font-size: .85rem; display: block; }
+  #due ul, #detail-status ul { margin: 6px 0 0; padding-left: 20px; }
+  #due li, #detail-status li { margin: 4px 0; }
+  li.overdue, .due-overdue { color: var(--bad); }
+  li.overdue-within-tolerance, .due-overdue-within-tolerance { color: var(--amber); }
+  li.due-soon, .due-due-soon { color: var(--amber); }
+  .due-ok { color: var(--ok); }
+  #due li::after { font-size: .78rem; color: var(--muted); margin-left: 6px; }
+  #due li.synthetic::after { content: "synthetic"; }
+  #due li.real::after { content: "real data"; }
+  td.source { font-size: .8rem; color: var(--muted); max-width: 26em; word-break: break-word; }
   footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
   a { color: var(--accent); }
 </style>
@@ -66,23 +76,38 @@
 
   <div class="summary" id="summary"></div>
 
+  <section class="card" id="due">
+    <h2 style="margin-top:0">Due soon and overdue</h2>
+    <p class="sub" id="due-sub" style="margin-bottom:0"></p>
+    <ul></ul>
+  </section>
+
   <section class="card" id="findings">
     <h2 style="margin-top:0">Findings: flight the logs do not cover</h2>
-    <p class="sub" style="margin-bottom:0">Each line compares consecutive logs of one aircraft with the autopilot's own lifetime counter.</p>
+    <p class="sub" style="margin-bottom:0">Each line compares consecutive logs of one aircraft with the autopilot's own lifetime counter. Flight found this way counts toward component life.</p>
     <ul></ul>
   </section>
 
   <h2>Fleet</h2>
   <div class="wrap"><table id="fleet">
-    <thead><tr><th>Aircraft</th><th>Data</th><th>Status</th><th>Autopilot</th>
+    <thead><tr><th>Aircraft</th><th>Data</th><th>Status</th><th>Due</th><th>Autopilot</th>
       <th class="num">Flights</th><th class="num">Flight hours</th><th class="num">Findings</th></tr></thead>
     <tbody></tbody>
   </table></div>
-  <p class="sub">Click an aircraft for its flights and the reconciliation detail. Values a log cannot support are shown as <span class="unknown">unknown</span> with the reason.</p>
+  <p class="sub">Status is computed from each aircraft's maintenance record, its components and its flights; every state but serviceable says why. Click an aircraft for its due list, flights and reconciliation detail. Values a log cannot support are shown as <span class="unknown">unknown</span> with the reason.</p>
 
   <section id="detail" hidden>
     <h2 id="detail-title"></h2>
     <p id="detail-attribution" class="sub"></p>
+    <h3>Board state and why</h3>
+    <div class="card" id="detail-status"></div>
+    <h3>Maintenance due list: limits by hours, cycles and calendar, whichever comes first</h3>
+    <div class="wrap"><table id="due-list">
+      <thead><tr><th>Item</th><th>Basis</th><th class="num">Used</th><th class="num">Limit</th>
+        <th class="num">Remaining</th><th>State</th><th>Source</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="sub" id="due-notes"></p>
     <h3>Reconciliation against the autopilot's lifetime counter</h3>
     <div class="card" id="detail-reconcile"></div>
     <h3>Flights</h3>
@@ -119,14 +144,37 @@
     : `<span class="pill ${statusClass(s)}">${esc(s)}</span>`;
   const utc = (v) => typeof v === 'string' ? esc(v.replace('T', ' ').slice(0, 19) + ' UTC') : val(v);
 
-  $('#notice').textContent = data.notice + ` Generated ${data.generated_utc} from seed ${data.seed}.`;
+  $('#notice').textContent = data.notice + ` Generated ${data.generated_utc} from seed ${data.seed}; due list computed as of ${data.as_of}.`;
 
   const real = data.aircraft.filter(a => !a.synthetic).length;
-  const serviceable = data.aircraft.filter(a => a.status === 'serviceable').length;
+  const counts = {};
+  for (const a of data.aircraft) {
+    const s = isUnknown(a.status) ? 'unknown' : a.status;
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  const dueItems = data.due || [];
+  const overdueCount = dueItems.filter(i => i.state === 'overdue' || i.state === 'overdue_within_tolerance').length;
+  const soonCount = dueItems.filter(i => i.state === 'due_soon').length;
   $('#summary').innerHTML =
     `<span><b>${data.aircraft.length}</b> aircraft (${real} real, ${data.aircraft.length - real} synthetic)</span>` +
-    `<span><b>${serviceable}</b> serviceable</span>` +
+    Object.entries(counts).map(([s, n]) => `<span><b>${n}</b> ${esc(s)}</span>`).join('') +
+    `<span><b>${overdueCount}</b> overdue</span><span><b>${soonCount}</b> due soon</span>` +
     `<span><b>${data.findings.length}</b> finding${data.findings.length === 1 ? '' : 's'}</span>`;
+
+  const stateWord = (s) => String(s).replace(/_/g, ' ');
+  const stateClass = (s) => String(s).replace(/_/g, '-');
+  $('#due-sub').textContent = `Every limit that is past, within its tolerance, or has less than ${Math.round((data.due_soon_fraction ?? 0.1) * 100)} % of its interval left, worst first. Each interval and limit cites its public civil source in the aircraft detail.`;
+  const dueList = $('#due ul');
+  if (dueItems.length) {
+    for (const i of dueItems) {
+      const li = document.createElement('li');
+      li.className = `${stateClass(i.state)} ${i.synthetic ? 'synthetic' : 'real'}`;
+      li.textContent = `${stateWord(i.state)}: ${i.message}`;
+      dueList.appendChild(li);
+    }
+  } else {
+    dueList.innerHTML = '<li>Nothing due soon or overdue.</li>';
+  }
 
   const byKey = Object.fromEntries(data.aircraft.map(a => [a.key, a]));
   const list = $('#findings ul');
@@ -146,9 +194,18 @@
     const tr = document.createElement('tr');
     tr.className = 'row';
     tr.dataset.key = a.key;
+    const reasons = a.status_reasons || [];
+    const why = reasons.length
+      ? `<span class="reason">${esc(reasons[0])}${reasons.length > 1 ? ` (and ${reasons.length - 1} more)` : ''}</span>`
+      : '';
+    const due = isUnknown(a.status) ? 'no record'
+      : (a.overdue || a.due_soon)
+        ? [a.overdue ? `${a.overdue} overdue` : '', a.due_soon ? `${a.due_soon} due soon` : ''].filter(Boolean).join(', ')
+        : 'nothing due';
     tr.innerHTML = `<td><strong>${esc(a.key)}</strong><br><span class="sub">${esc(a.label)}</span></td>
       <td class="data"><span class="tag ${a.synthetic ? '' : 'real'}">${a.synthetic ? 'synthetic' : 'real, ' + esc(a.licence)}</span></td>
-      <td class="status">${statusCell(a.status)}</td>
+      <td class="status">${statusCell(a.status)}${why}</td>
+      <td class="due ${a.overdue ? 'due-overdue' : a.due_soon ? 'due-due-soon' : ''}">${esc(due)}</td>
       <td>${esc(a.source)}</td>
       <td class="num">${val(a.flights)}</td>
       <td class="num">${val(a.flight_time_known_s / 3600, 1)}</td>
@@ -163,6 +220,32 @@
     $('#detail').hidden = false;
     $('#detail-title').textContent = `${a.key}: ${a.label}`;
     $('#detail-attribution').textContent = `${a.synthetic ? 'Synthetic data. ' : 'Real data. '}${a.attribution}`;
+
+    const d = a.due || { status: a.status, status_reasons: a.status_reasons || [], items: [], notes: [], time_in_service_s: null };
+    let sh = `<p>${statusCell(d.status)}`;
+    if (!isUnknown(d.time_in_service_s) && d.time_in_service_s !== null) {
+      sh += ` <span class="sub">time in service ${val(d.time_in_service_s / 3600, 1)} h, logged flight plus the flight the counter shows and no log covers</span>`;
+    }
+    sh += '</p>';
+    if (d.status_reasons.length) sh += '<ul>' + d.status_reasons.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>';
+    else if (!isUnknown(d.status)) sh += '<p class="sub">Nothing past its limit, no open work.</p>';
+    $('#detail-status').innerHTML = sh;
+    const db = $('#due-list tbody');
+    db.innerHTML = '';
+    for (const i of d.items) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${esc(i.subject)}</td><td>${esc(i.basis)}</td>
+        <td class="num">${val(i.used, i.unit === 'h' ? 1 : 0)} ${esc(i.unit)}</td>
+        <td class="num">${val(i.limit, 0)} ${esc(i.basis === 'calendar' ? 'months' : i.unit)}</td>
+        <td class="num">${val(i.remaining, i.unit === 'h' ? 1 : 0)} ${esc(i.unit)}${i.tolerance ? `<span class="reason">tolerance ${esc(i.tolerance)} h</span>` : ''}</td>
+        <td class="${stateClass('due-' + i.state)}">${esc(stateWord(i.state))}<span class="reason">${esc(i.message)}</span></td>
+        <td class="source">${esc(i.source)}</td>`;
+      db.appendChild(row);
+    }
+    $('#due-notes').textContent = d.items.length || !isUnknown(d.status)
+      ? (d.notes.length ? 'Notes: ' + d.notes.join('; ') : '')
+      : 'No due list: ' + (isUnknown(d.status) ? d.status.unknown : '') + '.';
+
     const r = a.reconcile;
     let html = '';
     html += r.findings.length

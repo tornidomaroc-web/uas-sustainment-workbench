@@ -14,19 +14,22 @@ from pathlib import Path
 
 from uas_workbench.fleet import FleetConfig, load_config
 
-from .app import aircraft_view, flight_view, reconcile_view
+from .app import aircraft_view, due_view, fleet_due, flight_view, reconcile_view
 from .store import Store
 
 NOTICE = (
     "Demonstration fleet. Aircraft and flights marked synthetic are generated from a seed and "
-    "describe no real aircraft. The two real aircraft are excerpts of public, licensed logs "
-    "with positions and device ids removed. Civil fleet sustainment only."
+    "describe no real aircraft; their maintenance records are generated too, and their board "
+    "states are computed from them. The two real aircraft are excerpts of public, licensed "
+    "logs with positions and device ids removed. Civil fleet sustainment only."
 )
 
 
 def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None) -> Path:
     cfg = config or load_config()
     out_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC).replace(microsecond=0)
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")  # the form the API models serialise to
     aircraft: list[dict[str, object]] = []
     findings: list[dict[str, object]] = []
     for a in store.aircraft():
@@ -37,16 +40,20 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
                 # "flights" stays the count from the aircraft view; the records go under "records".
                 "records": [flight_view(r).model_dump(mode="json") for r in store.flights(a.key)],
                 "reconcile": result.model_dump(mode="json"),
+                "due": due_view(store, a, cfg, now)[2].model_dump(mode="json"),
             }
         )
         findings.extend(f.model_dump(mode="json") for f in result.findings)
     data = {
         "notice": NOTICE,
-        "generated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "generated_utc": stamp,
+        "as_of": stamp,
         "seed": cfg.seed,
         "tolerance_s": cfg.tolerance_s,
+        "due_soon_fraction": cfg.life.due_soon_fraction,
         "aircraft": aircraft,
         "findings": findings,
+        "due": [i.model_dump(mode="json") for i in fleet_due(store, cfg, now)],
     }
     (out_dir / "fleet.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
     page = resources.files("uas_workbench.service").joinpath("site/index.html")
