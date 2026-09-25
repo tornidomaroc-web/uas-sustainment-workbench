@@ -1,4 +1,4 @@
-"""Fleet policy loaded from fleet.toml (vocabulary, tolerances, synthetic seed)."""
+"""Fleet policy loaded from fleet.toml (vocabulary, tolerances, life limits, synthetic seed)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass
 from datetime import date
 from importlib import resources
+
+from uas_workbench.life import LifePolicy, policy_from_toml
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,7 @@ class FleetConfig:
     seed: int
     aircraft: int
     first_day: date
+    life: LifePolicy
 
 
 def load_config() -> FleetConfig:
@@ -26,4 +29,5 @@ def load_config() -> FleetConfig:
         seed=int(raw["synthetic"]["seed"]),
         aircraft=int(raw["synthetic"]["aircraft"]),
         first_day=date.fromisoformat(raw["synthetic"]["first_day"]),
+        life=policy_from_toml(raw["life"]),
     )

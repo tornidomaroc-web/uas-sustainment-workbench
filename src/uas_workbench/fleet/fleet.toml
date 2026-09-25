@@ -1,5 +1,6 @@
 # Fleet policy. Every value here comes from a public civil source, cited next to it.
-# Nothing in this file describes a real fleet.
+# Nothing in this file describes a real fleet: every interval and limit is an editable
+# default for a synthetic demonstration, never a claim about any real aircraft or product.
 
 [vocabulary]
 # Board states in civil airworthiness terms. Source: SKYbrary, "Minimum Equipment List (MEL)",
@@ -22,5 +23,57 @@ tolerance_s = 30
 [synthetic]
 # The seeded fleet used for the demo. Change the seed and the whole fleet changes.
 seed = 20260925
-aircraft = 6
+aircraft = 7
 first_day = "2026-08-03"
+
+[life]
+# Component life limits and inspection intervals. A limit may be set in flight hours, in
+# cycles (one flight record = one cycle: a take-off and a landing) and in calendar months;
+# whichever comes first applies. Source for that rule and for batteries as life-limited
+# parts: EASA, Means of Compliance to OSO #3 (19 Dec 2024),
+# https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf. The same "hours or
+# calendar, whichever first" structure appears in public manufacturer maintenance manuals,
+# e.g. https://dl.djicdn.com/downloads/Matrice_400/MTM/Matrice_400_Maintenance_Manual_v1.0_en.pdf
+# (basic service by flight hours or months); the numbers below are not taken from it.
+#
+# Part 107 sets no inspection interval for small unmanned aircraft (14 CFR 107.15 requires a
+# condition for safe operation). The two inspections below borrow the shape of the manned
+# Part 91 rules as editable defaults so the tolerance and calendar logic has a public source.
+#
+# "Due soon" = less than this fraction of the interval remains. A convention of this tool,
+# not a rule from any source.
+due_soon_fraction = 0.10
+
+[[life.component_kinds]]
+kind = "battery pack"
+# Batteries are life-limited parts with limits in flight cycles or calendar time, whichever
+# comes first: EASA MoC to OSO #3, https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf.
+# 300 cycles and 24 months are placeholder defaults. No public standard sets a number; end of
+# life by state of health (80 % is convention) is out of scope until logs carry pack health
+# (LIMITS.md: 1 of 40 public logs did).
+cycles = 300
+calendar_months = 24
+source = "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults"
+
+[[life.component_kinds]]
+kind = "propeller set"
+# A life limit in flight hours (14 CFR 43.10 defines a life-limited part by its life limit;
+# the status travels with the part). 300 h is a placeholder default.
+hours = 300
+source = "14 CFR 43.10, https://www.ecfr.gov/current/title-14/chapter-I/subchapter-C/part-43/section-43.10; 300 h is an editable default"
+
+[[life.inspections]]
+name = "100-hour inspection"
+# 14 CFR 91.409(b): the 100-hour limit may be exceeded by not more than 10 hours while en
+# route to a place where the inspection can be done, and the excess counts toward the next
+# 100 hours. https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409
+hours = 100
+tolerance_hours = 10
+source = "14 CFR 91.409(b), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409"
+
+[[life.inspections]]
+name = "annual inspection"
+# 14 CFR 91.409(a): within the preceding 12 calendar months; a calendar month runs to its
+# last day. https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409
+calendar_months = 12
+source = "14 CFR 91.409(a)(1), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409"
