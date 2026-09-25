@@ -1,7 +1,8 @@
 """The real, licensed log excerpts committed under tests/fixtures, as showcase aircraft.
 
 They are the only real data in the demo and are labelled as such. Their positions and
-device ids were removed before they entered the repository (DATA.md).
+device ids were removed before they entered the repository (DATA.md). No maintenance record
+exists for them, so their board state is unknown, with that reason.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.px4 import read_ulog
-from uas_workbench.flight.record import FlightRecord, Unknown
+from uas_workbench.flight.record import FlightRecord
 
 from .model import Aircraft, Fleet
 
@@ -24,7 +25,6 @@ PX4_ATTRIBUTION = (
     "PX4 Flight Review public log, board-support validation flight of 2026-06-12, CC BY 4.0; "
     "excerpt with positions and device id removed"
 )
-NO_RECORD = Unknown("no maintenance record: public research or validation aircraft")
 
 
 def showcase(fixtures_dir: Path) -> Fleet:
@@ -47,7 +47,6 @@ def showcase(fixtures_dir: Path) -> Fleet:
                 False,
                 "CC BY 4.0",
                 ALFA_ATTRIBUTION,
-                NO_RECORD,
             )
         )
         flights[ALFA_KEY] = tuple(alfa)
@@ -60,7 +59,6 @@ def showcase(fixtures_dir: Path) -> Fleet:
                 False,
                 "CC BY 4.0",
                 PX4_ATTRIBUTION,
-                NO_RECORD,
             )
         )
         flights[PX4_KEY] = tuple(px4)

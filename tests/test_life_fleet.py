@@ -83,7 +83,10 @@ def test_unlogged_flight_from_reconcile_wears_the_parts() -> None:
     due, _ = compute(fleet, "SYN-02")
     logged = sum(r.flight_time_s for r in fleet.flights["SYN-02"] if is_known(r.flight_time_s))
     before = fleet.maintenance["SYN-02"].time_in_service_before_s
-    assert due.time_in_service_s == before + logged + 420.0
+    # The counter is flushed every 30 s, so reconcile() sees the 420 s less than one flush.
+    assert is_known(due.time_in_service_s)
+    credited = due.time_in_service_s - before - logged
+    assert 420.0 - CONFIG.tolerance_s < credited <= 420.0
     prop = next(i for i in due.items if i.basis == "hours" and i.component_id)
     assert prop.state == "due_soon"
     assert 0 < prop.remaining <= CONFIG.life.due_soon_fraction * prop.limit

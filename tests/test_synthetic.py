@@ -31,7 +31,6 @@ def test_everything_synthetic_is_marked_and_civil() -> None:
     for aircraft in fleet.aircraft:
         assert aircraft.synthetic
         assert "synthetic" in aircraft.attribution.lower()
-        assert not is_known(aircraft.status) or aircraft.status in CONFIG.states
         assert (
             EXCLUDED_CODES.search(f"{aircraft.key} {aircraft.label} {aircraft.attribution}") is None
         )

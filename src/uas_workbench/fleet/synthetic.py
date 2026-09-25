@@ -5,14 +5,28 @@ case (an unlogged flight, a duplicate upload, unlogged boots, fields a log canno
 the demo always shows them; the seed varies everything else. Counter behaviour follows
 what was measured on real logs (LIMITS.md): ArduPilot flushes its counter every 30 s and
 logs a boot count, PX4 saves it at disarm and has no boot count.
+
+The maintenance records (time in service, inspections done, components fitted, open work)
+are generated too, from a second stream of the same seed, and fixed so that every civil
+board state appears once when the life engine computes it. No board state is written
+anywhere: the engine derives it from these records and the flights.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import random
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
-from uas_workbench.flight.record import FaultEvent, FlightRecord, LifetimeCounter, Source, Unknown
+from uas_workbench.flight.record import (
+    FaultEvent,
+    FlightRecord,
+    LifetimeCounter,
+    Source,
+    Unknown,
+    is_known,
+)
+from uas_workbench.life import Component, InspectionDone, Installation, MaintenanceRecord, WorkOrder
 
 from .config import FleetConfig
 from .model import Aircraft, Fleet
@@ -32,7 +46,18 @@ CASES: dict[int, str] = {
     5: "fault_events",  # error messages in one flight
     6: "unknown_fields",  # no battery monitor, one flight without a GPS fix
 }
+# Aircraft index -> the maintenance case it demonstrates; the board state follows from it.
+LIFE_CASES: dict[int, str] = {
+    2: "propeller_due_soon",  # the propeller set is within 10 % of its hours limit
+    3: "inspection_in_tolerance",  # the 100-hour inspection overflown by less than 10 h
+    4: "battery_expired",  # one pack past its cycles (moved from SYN-01), one past its date
+    5: "work_open",  # a work order opened after the fault events: in maintenance
+    6: "no_record",  # nothing entered: status unknown, with that reason
+    7: "awaiting_parts",  # AOG
+}
 KINDS = ("fixed-wing", "VTOL", "fixed-wing", "quadrotor", "fixed-wing", "VTOL")
+UNLOGGED_S = 420.0
+H = 3600.0
 
 
 def _source(index: int) -> Source:
@@ -50,9 +75,6 @@ def generate(config: FleetConfig) -> Fleet:
         key = f"SYN-{index:02d}"
         source = _source(index)
         case = CASES.get(index, "clean")
-        status: str | Unknown = rng.choice(config.states)
-        if case == "unknown_fields":
-            status = Unknown("no maintenance record entered for this aircraft")
         aircraft.append(
             Aircraft(
                 key=key,
@@ -61,11 +83,22 @@ def generate(config: FleetConfig) -> Fleet:
                 synthetic=True,
                 licence="CC0",
                 attribution=attribution,
-                status=status,
             )
         )
         flights[key] = tuple(_flights(rng, config, key, source, case, attribution))
-    return Fleet(tuple(aircraft), flights)
+    # A second stream of the same seed: the maintenance records never alter the flights.
+    parts = random.Random(config.seed ^ 0x5F1E)
+    components: list[Component] = []
+    maintenance: dict[str, MaintenanceRecord] = {}
+    for index in range(1, config.aircraft + 1):
+        key = f"SYN-{index:02d}"
+        life_case = LIFE_CASES.get(index, "clean")
+        if life_case == "no_record":
+            continue
+        record, fitted = _maintenance(parts, config, key, index, life_case, flights)
+        maintenance[key] = record
+        components.extend(fitted)
+    return Fleet(tuple(aircraft), flights, tuple(components), maintenance)
 
 
 def _flights(
@@ -98,7 +131,7 @@ def _flights(
             counter_s += flight_s + 0.5  # saved at disarm, a moment after landing
         boot += 1
         if case == "unlogged_flight" and n == 2:
-            counter_s += 420.0  # the aircraft flew on after logging stopped
+            counter_s += UNLOGGED_S  # the aircraft flew on after logging stopped
         if case == "unlogged_boots" and n == 2:
             counter_s += 900.0
             boot += 2
@@ -190,3 +223,139 @@ def _replace(record: FlightRecord, changes: dict[str, object]) -> FlightRecord:
     import dataclasses
 
     return dataclasses.replace(record, **changes)  # type: ignore[arg-type]
+
+
+# ---- maintenance records ---------------------------------------------------------------
+
+
+def _first_start(records: tuple[FlightRecord, ...]) -> datetime:
+    return min(r.utc_start for r in records if is_known(r.utc_start))
+
+
+def _logged_s(records: tuple[FlightRecord, ...]) -> float:
+    """Flight time of the distinct logs (a duplicate upload counts once)."""
+    seen: set[tuple[object, float]] = set()
+    total = 0.0
+    for r in records:
+        mark = (r.utc_start, r.log_span_s)
+        if mark in seen:
+            continue
+        seen.add(mark)
+        if is_known(r.flight_time_s):
+            total += r.flight_time_s
+    return total
+
+
+def _pack(
+    rng: random.Random, key: str, id_: str, cycles_before: int, in_service: date, fitted: datetime
+) -> Component:
+    return Component(
+        id=id_,
+        kind="battery pack",
+        in_service_since=in_service,
+        hours_s_before=cycles_before * rng.uniform(900, 1500),
+        cycles_before=cycles_before,
+        installations=(Installation(key, fitted, None),),
+        synthetic=True,
+    )
+
+
+def _maintenance(
+    rng: random.Random,
+    config: FleetConfig,
+    key: str,
+    index: int,
+    case: str,
+    flights: dict[str, tuple[FlightRecord, ...]],
+) -> tuple[MaintenanceRecord, list[Component]]:
+    records = flights[key]
+    first = _first_start(records)
+    fitted = first - timedelta(days=1)
+    day0 = datetime.combine(config.first_day, time(0), tzinfo=UTC)
+    logged_s = _logged_s(records)
+    unlogged_s = UNLOGGED_S if CASES.get(index) == "unlogged_flight" else 0.0
+    rules = config.life
+
+    # Time in service before the first log, and the inspections done before it.
+    before_s = rng.uniform(20, 80) * H
+    hundred_at_s = max(0.0, before_s - rng.uniform(5, 40) * H)
+    if case == "inspection_in_tolerance":
+        tolerance_h = rules.inspections["100-hour inspection"].tolerance_hours
+        before_s = 110.0 * H
+        overflown_h = rng.uniform(2.0, tolerance_h - 3.0)
+        hundred_at_s = before_s + logged_s - (100.0 + overflown_h) * H
+    inspections = (
+        InspectionDone(
+            "100-hour inspection", day0 - timedelta(days=rng.randint(10, 60)), hundred_at_s
+        ),
+        InspectionDone("annual inspection", day0 - timedelta(days=rng.randint(30, 200)), 0.0),
+    )
+
+    # Two battery packs and one propeller set, fitted the day before the first log.
+    packs = [
+        _pack(rng, key, f"BAT-{index:02d}{s}", rng.randint(20, 150),
+              (day0 - timedelta(days=rng.randint(100, 400))).date(), fitted)
+        for s in ("A", "B")
+    ]  # fmt: skip
+    prop_before_s = rng.uniform(50, 200) * H
+    if case == "propeller_due_soon":
+        limit_h = rules.component_kinds["propeller set"].hours or 300.0
+        left_h = rng.uniform(2.0, rules.due_soon_fraction * limit_h - 5.0)
+        prop_before_s = limit_h * H - logged_s - unlogged_s - left_h * H
+    prop = Component(
+        id=f"PROP-{index:02d}",
+        kind="propeller set",
+        in_service_since=(day0 - timedelta(days=rng.randint(30, 300))).date(),
+        hours_s_before=prop_before_s,
+        cycles_before=0,
+        installations=(Installation(key, fitted, None),),
+        synthetic=True,
+    )
+    if case == "battery_expired":
+        cycles_limit = rules.component_kinds["battery pack"].cycles or 300
+        # Pack A came off SYN-01 an hour before this aircraft flew; its cycles came with it
+        # (14 CFR 43.10) and cross the limit on this airframe.
+        moved_at = first - timedelta(hours=1)
+        packs[0] = dataclasses.replace(
+            packs[0],
+            cycles_before=cycles_limit - 2,
+            installations=(
+                Installation(
+                    "SYN-01", _first_start(flights["SYN-01"]) - timedelta(days=1), moved_at
+                ),
+                Installation(key, moved_at, None),
+            ),
+        )
+        # Pack B is past its calendar life: in service since spring 2024, limit 24 months.
+        packs[1] = dataclasses.replace(packs[1], in_service_since=date(2024, 3, 15))
+
+    work: tuple[WorkOrder, ...] = ()
+    if case == "work_open":
+        second = sorted(r.utc_start for r in records if is_known(r.utc_start))[1]
+        work = (
+            WorkOrder(
+                second + timedelta(days=1),
+                "[synthetic] low-battery message in flight 2: inspect the battery connector "
+                "and the pack before the next flight",
+                "in_work",
+                True,
+            ),
+        )
+    if case == "awaiting_parts":
+        last = max(r.utc_start for r in records if is_known(r.utc_start))
+        work = (
+            WorkOrder(
+                last + timedelta(days=1),
+                "[synthetic] replacement propeller set on order after a ground strike",
+                "awaiting_parts",
+                True,
+            ),
+        )
+    record = MaintenanceRecord(
+        aircraft_key=key,
+        time_in_service_before_s=before_s,
+        inspections=inspections,
+        work_orders=work,
+        synthetic=True,
+    )
+    return record, [*packs, prop]
