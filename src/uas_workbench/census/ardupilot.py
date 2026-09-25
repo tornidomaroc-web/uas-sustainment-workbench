@@ -173,7 +173,7 @@ def _probe_param(got: _Collected, spec: FieldSpec) -> FieldResult:
     return FieldResult(present=True, filled=value != 0)
 
 
-def _firmware(texts: list[str]) -> str:
+def firmware_from_messages(texts: list[str]) -> str:
     for text in texts:
         if match := FIRMWARE.match(text):
             return f"{match.group(1)} {match.group(2)}"
@@ -224,7 +224,7 @@ def probe_dataflash(path: Path, group: str) -> LogCensus:
         source="ardupilot",
         group=group,
         log_ref=path.stem,
-        firmware=_firmware(got.texts),
+        firmware=firmware_from_messages(got.texts),
         duration_s=duration,
         airborne=airborne,
         fields=fields,
