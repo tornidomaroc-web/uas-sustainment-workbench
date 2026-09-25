@@ -64,6 +64,17 @@
   #due li.synthetic::after { content: "synthetic"; }
   #due li.real::after { content: "real data"; }
   td.source { font-size: .8rem; color: var(--muted); max-width: 26em; word-break: break-word; }
+  .run { margin: 12px 0; }
+  .run .question { font-weight: 600; margin: 0 0 6px; }
+  .run .question::before { content: "Q: "; color: var(--muted); }
+  .run .answer { margin: 0 0 8px; white-space: pre-wrap; }
+  .run .label { font-size: .8rem; color: var(--muted); }
+  .run details { margin-top: 6px; font-size: .88rem; }
+  .run summary { cursor: pointer; color: var(--accent); }
+  .run .call { margin: 6px 0 0 12px; }
+  .run pre { margin: 4px 0 0; padding: 8px; background: var(--grey-bg); border-radius: 6px;
+             overflow-x: auto; max-height: 16em; font-size: .78rem; }
+  .grounded { color: var(--ok); } .ungrounded { color: var(--bad); }
   footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
   a { color: var(--accent); }
 </style>
@@ -116,6 +127,12 @@
         <th class="num">Landings</th><th class="num">mAh</th><th class="num">Counter at boot s</th><th>Faults reported</th></tr></thead>
       <tbody></tbody>
     </table></div>
+  </section>
+
+  <section id="assistant">
+    <h2>Assistant: recorded runs, not live</h2>
+    <p class="sub" id="assistant-notice"></p>
+    <div id="runs"></div>
   </section>
 
   <footer id="footer"></footer>
@@ -232,6 +249,7 @@
     $('#detail-status').innerHTML = sh;
     const db = $('#due-list tbody');
     db.innerHTML = '';
+    $('#due-list').hidden = d.items.length === 0;  // no empty header when there is no record
     for (const i of d.items) {
       const row = document.createElement('tr');
       row.innerHTML = `<td>${esc(i.subject)}</td><td>${esc(i.basis)}</td>
@@ -272,6 +290,29 @@
       fb.appendChild(row);
     }
     $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  try {
+    const runs = await (await fetch('assistant.json')).json();
+    $('#assistant-notice').textContent = runs.notice;
+    const box = $('#runs');
+    for (const r of runs.runs) {
+      const div = document.createElement('div');
+      div.className = 'card run';
+      const calls = r.calls.map(c =>
+        `<div class="call">GET ${esc(c.path)}${Object.keys(c.query || {}).length ? '?' + esc(new URLSearchParams(c.query).toString()) : ''}` +
+        `<pre>${esc(JSON.stringify(c.result, null, 1))}</pre></div>`).join('');
+      const unsupported = (r.grounding_unsupported || []).length ? ' (unsupported: ' + esc(r.grounding_unsupported.join(', ')) + ')' : '';
+      div.innerHTML = `<p class="question">${esc(r.question)}</p>` +
+        `<p class="answer">${esc(r.answer)}</p>` +
+        `<p class="label">Recorded ${esc(r.recorded_utc)} with ${esc(r.model_tag)} (weights ${esc(String(r.model_digest).slice(0, 12))}), ` +
+        `computed as of ${esc(r.as_of)}, on the ${esc(r.fleet)}; ${r.synthetic ? 'synthetic data' : 'real data'}. ` +
+        `<span class="${r.grounding_verified ? 'grounded' : 'ungrounded'}">${r.grounding_verified ? 'Grounded' : 'Not grounded'}: every number, id and date checked against the records below${unsupported}.</span></p>` +
+        `<details><summary>${r.calls.length} call${r.calls.length === 1 ? '' : 's'} to the workbench API and the records returned</summary>${calls}</details>`;
+      box.appendChild(div);
+    }
+  } catch (e) {
+    $('#assistant-notice').textContent = 'No recorded runs in this build.';
   }
 
   $('#footer').innerHTML = 'Civil fleet sustainment only. Source, method and limits: ' +

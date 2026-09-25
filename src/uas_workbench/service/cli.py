@@ -3,7 +3,8 @@
     uasw seed            # synthetic fleet + real showcase excerpts into the SQLite store
     uasw serve           # HTTP API with /docs, /metrics; seeds first if the store is empty
     uasw ingest KEY LOG  # parse one or more logs into flight records for an aircraft
-    uasw export-static   # write site/fleet.json and site/index.html from the store
+    uasw export-static   # write site/fleet.json, assistant.json and index.html from the store
+    uasw ask "QUESTION"  # a local model answers through the service's read-only endpoints
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
 (showcase excerpts, default tests/fixtures).
@@ -94,6 +95,45 @@ def cmd_export_static(args: argparse.Namespace) -> None:
     log.info("exported", extra={"out": str(out)})
 
 
+def cmd_ask(args: argparse.Namespace) -> None:
+    """Ask the local model one question through the service's read-only endpoints."""
+    import json
+    from datetime import UTC, datetime
+    from urllib.parse import urlencode
+
+    from uas_workbench.assistant import OllamaBackend, ask
+    from uas_workbench.assistant.backends import json_http
+    from uas_workbench.assistant.recording import from_answer, save
+
+    base = args.url.rstrip("/")
+
+    def caller(path: str, query: dict[str, str]) -> object:
+        return json_http(f"{base}{path}?{urlencode(query)}" if query else f"{base}{path}", None)
+
+    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=UTC)
+    backend = OllamaBackend(args.model, host=args.ollama)
+    answer = ask(args.question, backend=backend, caller=caller, as_of=as_of)
+    print(answer.text)
+    print()
+    print(f"Calls ({len(answer.calls)}): " + ", ".join(f"GET {c.path}" for c in answer.calls))
+    print(
+        "Grounded: yes"
+        if answer.grounding.verified
+        else "Grounded: NO, unsupported: " + ", ".join(answer.grounding.unsupported)
+    )
+    print(f"Model {answer.model_tag} ({answer.model_digest[:12]}), as of {as_of.isoformat()}")
+    if args.record:
+        recording = from_answer(answer, datetime.now(UTC).replace(microsecond=0))
+        save(recording, args.record)
+        log.info(
+            "recorded", extra={"path": str(args.record), "grounded": answer.grounding.verified}
+        )
+    if args.json:
+        print(json.dumps([c.result for c in answer.calls], indent=1))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="uasw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -121,6 +161,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-static", help="write the static site from the store")
     p.add_argument("--out", type=Path, default=Path("site"))
     p.set_defaults(func=cmd_export_static)
+
+    p = sub.add_parser("ask", help="ask the local model a question through the running service")
+    p.add_argument("question")
+    p.add_argument("--url", default="http://127.0.0.1:8000", help="the running uasw service")
+    p.add_argument("--ollama", default="http://127.0.0.1:11434", help="the local Ollama server")
+    p.add_argument("--model", default="qwen3:8b")
+    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.add_argument("--record", type=Path, help="save the run as a replayable recording")
+    p.add_argument("--json", action="store_true", help="also print the records fetched")
+    p.set_defaults(func=cmd_ask)
     return parser
 
 

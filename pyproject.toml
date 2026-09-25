@@ -37,7 +37,7 @@ uasw = "uas_workbench.service.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/uas_workbench"]
-include = ["src/uas_workbench/**/*.toml", "src/uas_workbench/**/*.html"]
+include = ["src/uas_workbench/**/*.toml", "src/uas_workbench/**/*.html", "src/uas_workbench/**/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
