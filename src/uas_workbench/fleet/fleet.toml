@@ -31,10 +31,8 @@ first_day = "2026-08-03"
 # cycles (one flight record = one cycle: a take-off and a landing) and in calendar months;
 # whichever comes first applies. Source for that rule and for batteries as life-limited
 # parts: EASA, Means of Compliance to OSO #3 (19 Dec 2024),
-# https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf. The same "hours or
-# calendar, whichever first" structure appears in public manufacturer maintenance manuals,
-# e.g. https://dl.djicdn.com/downloads/Matrice_400/MTM/Matrice_400_Maintenance_Manual_v1.0_en.pdf
-# (basic service by flight hours or months); the numbers below are not taken from it.
+# https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf. The same rule for
+# inspections, hours or calendar months, is 14 CFR 91.409(a) and (b), cited below.
 #
 # Part 107 sets no inspection interval for small unmanned aircraft (14 CFR 107.15 requires a
 # condition for safe operation). The two inspections below borrow the shape of the manned
