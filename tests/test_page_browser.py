@@ -154,6 +154,26 @@ def test_clicking_an_aircraft_shows_its_due_list_with_sources(page: Any) -> None
     page.wait_for_selector("#flights tbody tr")
     assert "no maintenance record" in page.inner_text("#detail-status")
     assert page.locator("#due-list tbody tr").count() == 0
+    assert not page.locator("#due-list").is_visible()  # no empty table header without rows
+    assert page.problems == []
+
+
+def test_recorded_assistant_runs_are_labelled_and_show_their_evidence(page: Any) -> None:
+    section = page.locator("#assistant")
+    text = section.inner_text()
+    assert "recorded" in text.lower() and "not live" in text.lower()
+    assert "synthetic" in text.lower()
+    runs = page.locator("#assistant .run")
+    assert runs.count() >= 4
+    for i in range(runs.count()):
+        run = runs.nth(i)
+        assert run.locator(".question").inner_text().strip()
+        assert run.locator(".answer").inner_text().strip()
+        assert run.locator(".call").count() >= 1
+        label = run.locator(".label").inner_text()
+        assert "grounded" in label.lower() and ":" in label  # model tag like name:size
+        assert BROKEN.search(run.inner_text()) is None
+    assert "does not certify" in text or "cannot certify" in text
     assert page.problems == []
 
 

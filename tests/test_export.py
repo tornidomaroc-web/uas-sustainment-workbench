@@ -43,3 +43,14 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     assert syn04["due"]["items"] and syn04["due"]["as_of"] == data["as_of"]
     assert alfa["status"] == {"unknown": "no maintenance record entered for this aircraft"}
     assert alfa["due"]["items"] == []
+
+    # The recorded assistant runs travel with the page, labelled as recorded, not live.
+    runs = json.loads((out / "assistant.json").read_text(encoding="utf-8"))
+    assert "recorded" in runs["notice"].lower() and "not live" in runs["notice"].lower()
+    assert len(runs["runs"]) >= 4
+    for run in runs["runs"]:
+        assert run["synthetic"] is True and run["grounding_verified"] is True
+        assert run["model_tag"] and run["model_digest"] and run["recorded_utc"] and run["as_of"]
+        assert run["question"] and run["answer"] and run["calls"]
+        for call in run["calls"]:
+            assert call["path"].startswith("/") and "result" in call
