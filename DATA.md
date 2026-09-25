@@ -6,6 +6,8 @@
    field and how many carry real values. No positions, device ids or log ids.
 2. Three short excerpts of ALFA logs used as real-log test fixtures (`tests/fixtures/alfa/`,
    about 0.9 MB in total), described below.
+3. One excerpt of a PX4 Flight Review public log (`tests/fixtures/px4/`, 0.3 MB), described
+   below, with the one log link this repository contains.
 
 No other flight log is stored. A test (`tests/test_repo_hygiene.py`) fails CI if any other
 log file is tracked, and `tests/test_alfa_fixtures.py` checks that the excerpts hold no
@@ -58,6 +60,29 @@ position and no device id.
 - Why these three: they are consecutive flights of the same aircraft, so they test both a
   log that agrees with the autopilot's lifetime counter and one that does not.
 - The excerpts are not endorsed by the dataset authors.
+
+## Test fixture: one PX4 Flight Review excerpt
+
+`tests/fixtures/px4/flight_review_board_validation_2026-06-12_excerpt.ulg` is an excerpt of
+the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac20adb24c>.
+
+- Attribution: PX4 Flight Review public log "Amovlab Flycore PX4 basic flight validation -
+  2026-06-12", upload source "PX4 Flycore PR validation", firmware branch
+  `pr/amovlab-flycore-board`; the uploader gave no name. Licensed CC BY 4.0
+  (<https://creativecommons.org/licenses/by/4.0/>) by the upload terms of Flight Review.
+- Why this log, and why its link is here: this repository otherwise publishes no log id,
+  because a public log page shows the flight track and the hardware id of a real person's
+  aircraft. This log was uploaded as a board vendor's validation flight for a PX4 upstream
+  pull request, described as such in its own metadata, so linking it does not expose a
+  private individual, and the link satisfies the attribution CC BY 4.0 asks for. It is a
+  quadrotor: the point of the fixture is real PX4 data in CI, not airframe class.
+- Changes made (`uasw-census px4-excerpt`, `src/uas_workbench/census/excerpt.py`): only the
+  topics `vehicle_status`, `vehicle_land_detected`, `battery_status`, `vehicle_gps_position`,
+  `sensor_gps` and `failure_detector_status` are kept (this log has no `battery_status`);
+  every latitude, longitude, altitude, course and heading field is set to zero; the
+  `sys_uuid` info message and the multi-line info blocks (boot console output) are removed.
+  Formats, parameters and logged text messages are kept unchanged.
+- The excerpt is not endorsed by the uploader or by the PX4 project.
 
 ## Not used, and why
 

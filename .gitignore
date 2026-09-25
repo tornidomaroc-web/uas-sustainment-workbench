@@ -13,6 +13,7 @@ data/local/
 *.param
 # Exception: position-free ALFA excerpts made by `uasw-census alfa-excerpt` (DATA.md).
 !tests/fixtures/alfa/*.bin
+!tests/fixtures/px4/*.ulg
 
 # Downloaded third-party tools (official Flight Review script, pinned by hash)
 .cache/

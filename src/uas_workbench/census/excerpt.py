@@ -1,9 +1,11 @@
-"""Cut a privacy-safe excerpt from an ArduPilot DataFlash log, byte for byte.
+"""Cut privacy-safe excerpts from real flight logs for use as test fixtures.
 
-Keeps only the message types the maintenance counters read, zeroes position fields and
-masks the flight controller's unique id in boot messages. Everything kept is copied
-unchanged, so the excerpt is still a genuine DataFlash file that pymavlink reads as usual.
-This is how the real-log test fixtures in tests/fixtures/alfa/ are made (see DATA.md).
+ArduPilot DataFlash: keeps only the message types the maintenance counters read, byte for
+byte, zeroes position fields and masks the flight controller's unique id in boot messages.
+PX4 ULog: keeps only the topics the counters read, zeroes position fields, removes the
+sys_uuid info message and the multi-line info blocks (boot console output). Both outputs
+are genuine log files that pymavlink and pyulog read as usual. This is how the fixtures in
+tests/fixtures/ are made (see DATA.md).
 """
 
 from __future__ import annotations
@@ -11,6 +13,9 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass
+from pathlib import Path
+
+from pyulog import ULog
 
 HEAD = b"\xa3\x95"
 FMT_TYPE = 0x80
@@ -79,3 +84,31 @@ def excerpt(log: bytes, keep: frozenset[str] = KEEP) -> bytes:
                 out += message
         i += length
     return bytes(out)
+
+
+ULOG_KEEP: tuple[str, ...] = (
+    "vehicle_status",
+    "vehicle_land_detected",
+    "battery_status",
+    "vehicle_gps_position",
+    "sensor_gps",
+    "failure_detector_status",
+)
+# Any field that locates or orients the aircraft, in old and new PX4 field names.
+ULOG_ZERO = re.compile(
+    r"^(lat|lon|alt|alt_ellipsoid|latitude_deg|longitude_deg|altitude_msl_m|"
+    r"altitude_ellipsoid_m|cog_rad|heading|heading_offset|heading_accuracy)$"
+)
+
+
+def excerpt_ulog(src: Path) -> ULog:
+    """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
+    Write the result with ULog.write_ulog()."""
+    ulog = ULog(str(src), message_name_filter_list=list(ULOG_KEEP), disable_str_exceptions=True)
+    ulog.msg_info_dict.pop("sys_uuid", None)
+    ulog.msg_info_multiple_dict.clear()
+    for dataset in ulog.data_list:
+        for name, values in dataset.data.items():
+            if ULOG_ZERO.match(name):
+                values[:] = 0
+    return ulog

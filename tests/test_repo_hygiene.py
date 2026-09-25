@@ -14,7 +14,7 @@ RAW_SUFFIXES = {".ulg", ".bin", ".tlog", ".gpx", ".kmz", ".mat", ".log", ".param
 ALLOWED_EXCERPTS = {
     f"tests/fixtures/alfa/{name}.bin"
     for name in ("2018-07-30_16-30-14", "2018-07-30_16-46-36", "2018-07-30_17-28-50")
-}
+} | {"tests/fixtures/px4/flight_review_board_validation_2026-06-12_excerpt.ulg"}
 
 
 def tracked_files() -> list[str]:

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ardupilot, px4, report, sample
-from .excerpt import excerpt
+from .excerpt import excerpt, excerpt_ulog
 from .fetch import fetch_alfa, fetch_px4, pick_within_cap
 from .model import LogCensus, Source
 
@@ -102,6 +102,12 @@ def cmd_alfa_excerpt(args: argparse.Namespace) -> None:
         target = args.dest / f"{name}.bin"
         target.write_bytes(excerpt((args.src / f"{name}.bin").read_bytes()))
         log.info("wrote %s (%d bytes)", target, target.stat().st_size)
+
+
+def cmd_px4_excerpt(args: argparse.Namespace) -> None:
+    args.dest.parent.mkdir(parents=True, exist_ok=True)
+    excerpt_ulog(args.src).write_ulog(str(args.dest))
+    log.info("wrote %s (%d bytes)", args.dest, args.dest.stat().st_size)
 
 
 def _safe_probe(
@@ -204,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dest", type=Path, default=Path("tests/fixtures/alfa"))
     p.add_argument("--names", nargs="+", default=list(FIXTURE_LOGS))
     p.set_defaults(func=cmd_alfa_excerpt)
+
+    p = sub.add_parser("px4-excerpt", help="cut a position-free, id-free test fixture from a ULog")
+    p.add_argument("--src", type=Path, required=True)
+    p.add_argument("--dest", type=Path, required=True)
+    p.set_defaults(func=cmd_px4_excerpt)
 
     p = sub.add_parser("run", help="census every local log and write aggregate counts")
     p.add_argument("--px4", type=Path, default=RAW / "px4")
