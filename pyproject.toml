@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "uas-sustainment-workbench"
+version = "0.0.1"
+description = "Open-source maintenance and readiness tooling for small unmanned aircraft fleets, driven by PX4 and ArduPilot flight logs."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pyulog>=1.2.4,<2",
+    "pymavlink>=2.4.50,<3",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# The official Flight Review download script imports requests.
+fetch = ["requests>=2.31"]
+dev = [
+    "pytest>=8",
+    "mypy>=1.11",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+uasw-census = "uas_workbench.census.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uas_workbench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+mypy_path = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["pyulog", "pyulog.*", "pymavlink", "pymavlink.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["uas_workbench", "builders"]
