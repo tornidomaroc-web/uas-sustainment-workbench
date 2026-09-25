@@ -61,7 +61,8 @@ def test_flights_carry_explicit_unknowns_and_the_synthetic_flag(client: TestClie
     }
     assert first["battery_mah"] == {"unknown": "battery monitor disabled (BATT_MONITOR=0)"}
     assert first["landings"] == 1 and first["boot_count"] == 326
-    synthetic = client.get(f"/aircraft/{client.get('/aircraft').json()[0]['key']}/flights").json()
+    first_synthetic = next(a["key"] for a in client.get("/aircraft").json() if a["synthetic"])
+    synthetic = client.get(f"/aircraft/{first_synthetic}/flights").json()
     assert all(f["synthetic"] is True for f in synthetic)
 
 
