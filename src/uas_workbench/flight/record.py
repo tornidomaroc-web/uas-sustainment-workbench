@@ -1,0 +1,65 @@
+"""The normalised flight record and its value types."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal, TypeGuard
+
+Source = Literal["px4", "ardupilot"]
+
+
+@dataclass(frozen=True)
+class Unknown:
+    """A value the log cannot support, with the reason in plain words."""
+
+    reason: str
+
+
+type Maybe[T] = T | Unknown
+
+
+def is_known[T](value: Maybe[T]) -> TypeGuard[T]:
+    return not isinstance(value, Unknown)
+
+
+@dataclass(frozen=True)
+class FaultEvent:
+    """Something the autopilot reported as wrong, at `t_s` seconds after the log started."""
+
+    t_s: float
+    kind: str  # e.g. "error_message", "crash", "failure_detector:fd_motor", "err:subsys 12"
+    detail: str
+
+
+@dataclass(frozen=True)
+class LifetimeCounter:
+    """The autopilot's own lifetime flight-time counter as seen in this log.
+
+    at_boot is the value the log started with. last_seen is the last value written into the
+    log (ArduPilot flushes it every 30 s; PX4 never writes it mid-log, so both are equal).
+    """
+
+    at_boot_s: float
+    last_seen_s: float
+    last_seen_at_s: float
+
+
+@dataclass(frozen=True)
+class FlightRecord:
+    source: Source
+    log_ref: str
+    licence: str
+    attribution: str
+    firmware: str
+    log_span_s: float
+    aircraft_key: Maybe[str]
+    utc_start: Maybe[datetime]
+    flight_time_s: Maybe[float]
+    arm_cycles: Maybe[int]
+    landings: Maybe[int]
+    battery_mah: Maybe[float]
+    battery_wh: Maybe[float]
+    fault_events: Maybe[tuple[FaultEvent, ...]]
+    boot_count: Maybe[int]
+    lifetime: Maybe[LifetimeCounter]
