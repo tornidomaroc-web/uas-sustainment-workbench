@@ -35,6 +35,8 @@ jobs:
           uasw --db /tmp/fleet.sqlite seed
           uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
           test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
+          grep -q '"status_reasons"' /tmp/site/fleet.json
+          grep -q 'cycles past its' /tmp/site/fleet.json
 
   container:
     runs-on: ubuntu-latest
@@ -52,7 +54,9 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8000/aircraft | grep -q '"alfa-fixed-wing"'
           curl -fsS http://127.0.0.1:8000/aircraft/alfa-fixed-wing/reconcile | grep -q "355 s of flight"
-          curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_flights_stored
+          curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/due | grep -q '"unserviceable"'
+          curl -fsS http://127.0.0.1:8000/fleet/due | grep -q "cycles past its"
+          curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_aircraft_by_status
           docker logs uasw | head -5
       - name: Stop
         if: always()

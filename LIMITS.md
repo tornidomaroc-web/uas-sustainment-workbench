@@ -54,6 +54,26 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **PX4 has no boot counter**, so unlogged boots between two logs cannot be counted; on
   ArduPilot `STAT_BOOTCNT` shows them.
 
+## Limits of the life engine
+
+- **Usage is only as complete as the logs plus the counter.** Flight time comes from the
+  logs, plus the flight `reconcile()` found no log covers; on ArduPilot that credit is
+  short by up to one 30 s flush, and on PX4 a power loss while armed leaves flight the
+  counter never saw. Hours before the first log are an operator record.
+- **A cycle is one flight record.** No public log carries a battery cycle count that is
+  filled in, and a log is not a flight (above), so one record with flight time counts as
+  one cycle: one take-off and one landing. A flight with several landings is still one.
+- **Which part is on which airframe is an operator record.** Logs identify the flight
+  controller only, never a battery pack, a motor or a propeller, so every installation
+  window is entered by hand and a flight with no UTC start cannot be assigned to any
+  component; it counts for the airframe and a note says so.
+- **Calendar limits assume the stated in-service date** and run to the end of the month N
+  months later. A part with no known in-service date has no calendar item.
+- **The limits are placeholder defaults.** Every value in `fleet.toml` cites where its
+  form comes from, none is a manufacturer's number, and Part 107 sets no inspection
+  interval at all; the two inspections borrow the manned Part 91 shape so the tolerance
+  and calendar logic have a public source.
+
 ## Limits of the ArduPilot evidence
 
 Everything ArduPilot-side rests on one aircraft, ten logs on two days in July 2018,
