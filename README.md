@@ -41,6 +41,19 @@ counter), where every value the log cannot support is an explicit `Unknown` with
 flight no log covers: on the ALFA excerpts, "355 s of flight on aircraft alfa-fixed-wing is
 not covered by any log". Measured limits are in [LIMITS.md](LIMITS.md).
 
+**A service you can run.** `docker compose up` starts an HTTP API over a SQLite store seeded
+with a synthetic fleet of six aircraft plus the two real showcase aircraft. `/docs` is the
+auto-generated API reference; `/aircraft`, `/aircraft/{key}/flights` and
+`/aircraft/{key}/reconcile` return the records and findings; `/ingest` parses an uploaded log
+and keeps no raw copy; `/metrics` is Prometheus text and every request is one JSON log line
+with a request id. The static demo at
+<https://tornidomaroc-web.github.io/uas-sustainment-workbench/> is the same data, generated
+by CI from the seeded fleet on every merge.
+
+Every aircraft, flight and finding carries `synthetic: true` or `false`. The synthetic fleet
+is generated from a seed (`fleet.toml`) and describes no real aircraft; its board states use
+civil airworthiness terms only. It exists so `reconcile()` has consecutive logs to compare.
+
 ## What comes next
 
 1. A component-life engine (hours, cycles, calendar, whichever comes first) and a readiness
@@ -58,16 +71,22 @@ not covered by any log". Measured limits are in [LIMITS.md](LIMITS.md).
 ## Run it
 
 ```bash
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[dev,fetch]"
-ruff check . && mypy && pytest                     # no network, no downloads needed
-
-uasw-census px4-select && uasw-census px4-fetch   # ~1.3 GB of public logs, polite rate
-uasw-census alfa-fetch                            # ten ALFA logs, ~345 MB
-uasw-census run                                   # writes results/census.{md,json}
+docker compose up                 # then open http://localhost:8000/docs
 ```
 
-Downloaded logs go to `data/raw/`, which git ignores.
+Without Docker:
+
+```bash
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -e ".[dev,fetch]"
+uasw serve                                        # seeds on first start; /docs, /metrics
+uasw ingest my-aircraft path/to/log.ulg           # add your own logs (never stored raw)
+uasw export-static --out site                     # the static demo, from the same store
+ruff check . && mypy && pytest                    # no network, no downloads needed
+```
+
+The census that measured the public logs is `uasw-census` (`px4-select`, `px4-fetch`,
+`alfa-fetch`, `run`); downloaded logs go to `data/raw/`, which git ignores.
 
 ## Licence
 

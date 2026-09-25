@@ -84,6 +84,15 @@ the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac2
   Formats, parameters and logged text messages are kept unchanged.
 - The excerpt is not endorsed by the uploader or by the PX4 project.
 
+## Synthetic fleet
+
+`uas_workbench/fleet/synthetic.py` generates the demo fleet from the seed in `fleet.toml`.
+Its aircraft are named `SYN-01` to `SYN-06`, every record carries `synthetic: true`,
+`licence: CC0` and an attribution naming the generator and seed, and no value in it is
+taken from any real aircraft. Counter behaviour copies what LIMITS.md measured (ArduPilot
+flushes every 30 s and logs a boot count; PX4 saves at disarm). The board states come from
+the civil vocabulary in `fleet.toml`, with its source cited there.
+
 ## Not used, and why
 
 - ArduPilot autotest logs: no licence statement.
