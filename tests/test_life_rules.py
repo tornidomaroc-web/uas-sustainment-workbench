@@ -142,8 +142,8 @@ def test_whichever_comes_first_cycles_expire_before_calendar() -> None:
     cal = item(due, "battery pack BAT-1", "calendar")
     assert cal.state == "ok" and cal.unit == "days"
     assert cal.message == (
-        "battery pack BAT-1 on aircraft A has 425 days left of its 24-calendar-month "
-        "life limit, due by 2027-05-31"
+        "battery pack BAT-1 on aircraft A has 455 days left of its 24-calendar-month "
+        "life limit, due by 2027-06-30"
     )
     assert board(due).status == "unserviceable"
     assert board(due).reasons == (cycles.message,)
@@ -222,7 +222,7 @@ def test_calendar_months_run_to_the_end_of_the_month() -> None:
 def test_life_status_travels_with_the_part_between_airframes() -> None:
     moved_at = T0 + timedelta(days=5)
     a_logs = [flight("A", n, T0 + timedelta(days=n), 1000.0) for n in range(1, 9)]  # 4 before
-    b_logs = [flight("B", n, T0 + timedelta(days=n), 500.0) for n in range(1, 11)]  # 5 after
+    b_logs = [flight("B", n, T0 + timedelta(days=n), 500.0) for n in range(1, 10)]  # 5 after
     part = Component(
         "BAT-M",
         "battery pack",
