@@ -28,5 +28,32 @@ jobs:
         run: ruff check . && ruff format --check .
       - name: Types (strict)
         run: python -m mypy
-      - name: Tests (synthetic fixtures only; no network, no real logs)
+      - name: Tests (synthetic fixtures and licensed excerpts only; no network)
         run: python -m pytest -rs
+      - name: Static demo builds from the code
+        run: |
+          uasw --db /tmp/fleet.sqlite seed
+          uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
+          test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t uasw:ci .
+      - name: Start and probe the service
+        run: |
+          docker run -d --name uasw -p 8000:8000 uasw:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/health && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/aircraft | grep -q '"alfa-fixed-wing"'
+          curl -fsS http://127.0.0.1:8000/aircraft/alfa-fixed-wing/reconcile | grep -q "355 s of flight"
+          curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_flights_stored
+          docker logs uasw | head -5
+      - name: Stop
+        if: always()
+        run: docker rm -f uasw
