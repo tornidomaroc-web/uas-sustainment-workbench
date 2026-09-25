@@ -1,0 +1,26 @@
+# Fleet policy. Every value here comes from a public civil source, cited next to it.
+# Nothing in this file describes a real fleet.
+
+[vocabulary]
+# Board states in civil airworthiness terms. Source: SKYbrary, "Minimum Equipment List (MEL)",
+# https://skybrary.aero/articles/minimum-equipment-list-mel. AOG = aircraft on ground,
+# awaiting parts. Only these civil terms are used for aircraft state in this project.
+states = [
+    "serviceable",
+    "serviceable with deferred defects",
+    "unserviceable",
+    "in maintenance",
+    "AOG",
+]
+
+[reconcile]
+# ArduPilot AP_Stats writes its lifetime counters every 30 s
+# (libraries/AP_Stats/AP_Stats.h, flush_interval_ms = 30000), so a counter can lag a log by
+# up to one flush. Differences inside this tolerance are not findings.
+tolerance_s = 30
+
+[synthetic]
+# The seeded fleet used for the demo. Change the seed and the whole fleet changes.
+seed = 20260925
+aircraft = 6
+first_day = "2026-08-03"
