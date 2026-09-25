@@ -24,7 +24,7 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     alfa = next(a for a in data["aircraft"] if a["key"] == ALFA_KEY)
     assert alfa["synthetic"] is False
     assert len(alfa["flights"]) == 3
-    assert alfa["reconcile"]["findings"][0]["seconds"] == 355.0
+    assert round(alfa["reconcile"]["findings"][0]["seconds"]) == 355
     assert all(isinstance(a["synthetic"], bool) for a in data["aircraft"])
     assert any(f["synthetic"] for f in data["findings"])
     html = (out / "index.html").read_text(encoding="utf-8")

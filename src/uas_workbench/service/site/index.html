@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UAS Sustainment Workbench</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #dedcd6; --card: #ffffff;
+          --accent: #1f5f8b; --warn: #a6420b; --ok: #2f6f3e; --badge: #eeece6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #171716; --fg: #ecebe7; --muted: #a09f99; --line: #34332f; --card: #1f1f1d;
+            --accent: #7cb5e0; --warn: #f0a070; --ok: #8fd19e; --badge: #2a2a27; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+  .notice { border: 1px solid var(--line); background: var(--card); padding: 10px 12px;
+            border-radius: 6px; color: var(--muted); font-size: .92rem; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); font-size: .93rem; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  tr.row { cursor: pointer; }
+  tr.row:hover, tr.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: .78rem;
+           background: var(--badge); color: var(--muted); white-space: nowrap; }
+  .badge.real { color: var(--ok); border: 1px solid var(--ok); background: transparent; }
+  .unknown { color: var(--muted); font-style: italic; }
+  .finding { color: var(--warn); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>UAS Sustainment Workbench</h1>
+  <div class="notice" id="notice">Loading fleet.json…</div>
+
+  <h2>Fleet</h2>
+  <div class="wrap"><table id="fleet">
+    <thead><tr><th>Aircraft</th><th>Data</th><th>Autopilot</th><th>Status</th>
+      <th class="num">Flights</th><th class="num">Flight hours (known)</th><th class="num">Findings</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+
+  <section id="detail" hidden>
+    <h2 id="detail-title"></h2>
+    <p id="detail-attribution" class="unknown"></p>
+    <h3>Reconciliation against the autopilot's lifetime counter</h3>
+    <div id="detail-reconcile"></div>
+    <h3>Flights</h3>
+    <div class="wrap"><table id="flights">
+      <thead><tr><th>Log</th><th>UTC start</th><th class="num">Flight s</th><th class="num">Arm cycles</th>
+        <th class="num">Landings</th><th class="num">mAh</th><th class="num">Counter at boot s</th><th>Faults</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+<script>
+(async () => {
+  const data = await (await fetch('fleet.json')).json();
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const val = (v, digits) => (v && typeof v === 'object' && 'unknown' in v)
+      ? `<span class="unknown" title="${esc(v.unknown)}">unknown</span>`
+      : (typeof v === 'number' ? v.toFixed(digits ?? 0) : esc(v));
+  $('#notice').textContent = data.notice + ` Generated ${data.generated_utc}, seed ${data.seed}.`;
+  const tbody = $('#fleet tbody');
+  for (const a of data.aircraft) {
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.innerHTML = `<td><strong>${esc(a.key)}</strong><br><span class="unknown">${esc(a.label)}</span></td>
+      <td><span class="badge ${a.synthetic ? '' : 'real'}">${a.synthetic ? 'synthetic' : 'real, ' + esc(a.licence)}</span></td>
+      <td>${esc(a.source)}</td><td>${val(a.status)}</td>
+      <td class="num">${a.flights}</td><td class="num">${(a.flight_time_known_s / 3600).toFixed(1)}</td>
+      <td class="num ${a.findings ? 'finding' : ''}">${a.findings}</td>`;
+    tr.onclick = () => show(a, tr);
+    tbody.appendChild(tr);
+  }
+  function show(a, tr) {
+    document.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
+    tr.classList.add('selected');
+    $('#detail').hidden = false;
+    $('#detail-title').textContent = `${a.key}: ${a.label}`;
+    $('#detail-attribution').textContent = a.attribution;
+    const r = a.reconcile;
+    let html = '';
+    if (r.findings.length) html += '<ul>' + r.findings.map(f => `<li class="finding">${esc(f.message)}</li>`).join('') + '</ul>';
+    else html += '<p>No findings: every interval between consecutive logs agrees with the counter within ' + r.tolerance_s + ' s.</p>';
+    if (r.coverage.length) html += '<ul>' + r.coverage.map(c =>
+      `<li>${esc(c.log_ref)} → ${esc(c.next_log_ref)}: ${c.unlogged_s.toFixed(1)} s not covered, boots between: ${val(c.boots_between)}</li>`).join('') + '</ul>';
+    const un = Object.entries(r.unchecked);
+    if (un.length) html += '<p class="unknown">Unchecked: ' + un.map(([k, v]) => `${esc(k)} (${esc(v)})`).join('; ') + '</p>';
+    $('#detail-reconcile').innerHTML = html;
+    const fb = $('#flights tbody');
+    fb.innerHTML = '';
+    for (const f of a.flights) {
+      const faults = (f.fault_events && f.fault_events.unknown) ? val(f.fault_events)
+        : (f.fault_events.length ? f.fault_events.map(e => esc(e.kind + ': ' + e.detail)).join('<br>') : 'none reported');
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${esc(f.log_ref)}${f.synthetic ? ' <span class="badge">synthetic</span>' : ''}</td>
+        <td>${val(typeof f.utc_start === 'string' ? f.utc_start.replace('T', ' ').slice(0, 19) : f.utc_start)}</td>
+        <td class="num">${val(f.flight_time_s, 1)}</td><td class="num">${val(f.arm_cycles)}</td>
+        <td class="num">${val(f.landings)}</td><td class="num">${val(f.battery_mah)}</td>
+        <td class="num">${val(f.lifetime && f.lifetime.at_boot_s !== undefined ? f.lifetime.at_boot_s : f.lifetime)}</td>
+        <td>${faults}</td>`;
+      fb.appendChild(row);
+    }
+    $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  $('#footer').innerHTML = `${data.findings.length} finding(s) across ${data.aircraft.length} aircraft. ` +
+    'Every value a log cannot support is shown as <span class="unknown">unknown</span> with its reason on hover. ' +
+    'Source and method: <a href="https://github.com/tornidomaroc-web/uas-sustainment-workbench">the repository</a>.';
+})();
+</script>
+</body>
+</html>
