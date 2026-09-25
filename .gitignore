@@ -15,6 +15,9 @@ data/local/
 !tests/fixtures/alfa/*.bin
 !tests/fixtures/px4/*.ulg
 
+# Static demo output (uasw export-static); CI generates and publishes it
+/site/
+
 # Downloaded third-party tools (official Flight Review script, pinned by hash)
 .cache/
 
