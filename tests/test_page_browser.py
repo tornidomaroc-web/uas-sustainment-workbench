@@ -107,6 +107,56 @@ def test_every_fleet_cell_is_filled_and_status_is_civil(page: Any) -> None:
     assert sum("real" in t for t in labels) == 2
 
 
+def test_every_board_state_is_shown_and_every_non_serviceable_one_carries_its_reason(
+    page: Any,
+) -> None:
+    statuses = cells(page, "#fleet tbody td.status")
+    first_lines = {s.split("\n")[0] for s in statuses}
+    assert first_lines == set(CONFIG.states) | {"unknown"}
+    for status in statuses:
+        pill, *reason = status.split("\n")
+        if pill == "serviceable":
+            assert reason == [], status
+        else:
+            assert reason and reason[0].strip(), f"no reason shown for {pill!r}"
+            assert BROKEN.search(status) is None, status
+
+
+def test_due_soon_and_overdue_items_are_readable_at_the_top(page: Any) -> None:
+    items = page.locator("#due li")
+    assert items.count() >= 3
+    texts = items.all_inner_texts()
+    assert all(t.strip() and BROKEN.search(t) is None for t in texts)
+    assert page.locator("#due li.overdue").count() >= 1
+    assert page.locator("#due li.due-soon").count() >= 1
+    assert "h left of its" in " ".join(texts)
+    assert "cycles past its" in " ".join(texts)
+    due = page.locator("#due").bounding_box()
+    fleet = page.locator("#fleet").bounding_box()
+    assert due is not None and fleet is not None and due["y"] < fleet["y"]
+
+
+def test_clicking_an_aircraft_shows_its_due_list_with_sources(page: Any) -> None:
+    page.locator("#fleet tbody tr[data-key='SYN-04']").click()
+    page.wait_for_selector("#due-list tbody tr")
+    rows = page.locator("#due-list tbody tr")
+    assert rows.count() >= 3
+    for text in cells(page, "#due-list tbody td"):
+        assert text and BROKEN.search(text) is None, text
+    detail = page.inner_text("#due-list")
+    assert "battery pack" in detail and "overdue" in detail
+    assert "http" in detail  # the source column
+    reasons = page.locator("#detail-status li")
+    assert reasons.count() >= 2
+    assert page.problems == []
+    # A real aircraft: no record, so the list says why instead of showing nothing.
+    page.locator(f"#fleet tbody tr[data-key='{ALFA_KEY}']").click()
+    page.wait_for_selector("#flights tbody tr")
+    assert "no maintenance record" in page.inner_text("#detail-status")
+    assert page.locator("#due-list tbody tr").count() == 0
+    assert page.problems == []
+
+
 def test_clicking_an_aircraft_shows_its_flights(page: Any) -> None:
     page.locator(f"#fleet tbody tr[data-key='{ALFA_KEY}']").click()
     page.wait_for_selector("#flights tbody tr")

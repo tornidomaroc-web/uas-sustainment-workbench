@@ -31,3 +31,15 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     assert any(f["synthetic"] for f in data["findings"])
     html = (out / "index.html").read_text(encoding="utf-8")
     assert "fleet.json" in html and "synthetic" in html.lower()
+
+    # The due view travels with the page: per aircraft, and the fleet's due-soon and overdue
+    # items at the top, worst first, computed at the stated time.
+    assert data["as_of"]
+    assert all(i["state"] != "ok" for i in data["due"])
+    assert any(i["state"] == "overdue" for i in data["due"])
+    assert any(i["state"] == "due_soon" for i in data["due"])
+    syn04 = next(a for a in data["aircraft"] if a["key"] == "SYN-04")
+    assert syn04["status"] == "unserviceable" and syn04["status_reasons"]
+    assert syn04["due"]["items"] and syn04["due"]["as_of"] == data["as_of"]
+    assert alfa["status"] == {"unknown": "no maintenance record entered for this aircraft"}
+    assert alfa["due"]["items"] == []
