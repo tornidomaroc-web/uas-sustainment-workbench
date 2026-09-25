@@ -1,0 +1,72 @@
+{
+ "slug": "what-flight-do-the-logs-miss-on-the-real-alfa-aircraft-alfa-",
+ "question": "What flight do the logs miss on the real ALFA aircraft alfa-fixed-wing?",
+ "answer": "The logs miss a flight of 355 seconds on the real ALFA aircraft alfa-fixed-wing, which occurred between the log references \"2018-07-30_16-46-36\" and \"2018-07-30_17-28-50\".",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-25T23:18:21+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "",
+   "tool_calls": [
+    {
+     "name": "reconcile_aircraft",
+     "arguments": {
+      "key": "alfa-fixed-wing"
+     }
+    }
+   ]
+  },
+  {
+   "content": "The logs miss a flight of 355 seconds on the real ALFA aircraft alfa-fixed-wing, which occurred between the log references \"2018-07-30_16-46-36\" and \"2018-07-30_17-28-50\".",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "reconcile_aircraft",
+   "arguments": {
+    "key": "alfa-fixed-wing"
+   },
+   "path": "/aircraft/alfa-fixed-wing/reconcile",
+   "query": {},
+   "result": {
+    "aircraft_key": "alfa-fixed-wing",
+    "synthetic": false,
+    "tolerance_s": 30.0,
+    "coverage": [
+     {
+      "log_ref": "2018-07-30_16-30-14",
+      "next_log_ref": "2018-07-30_16-46-36",
+      "unlogged_s": -8.399978000001283,
+      "boots_between": 0
+     },
+     {
+      "log_ref": "2018-07-30_16-46-36",
+      "next_log_ref": "2018-07-30_17-28-50",
+      "unlogged_s": 354.9997709999989,
+      "boots_between": 0
+     }
+    ],
+    "findings": [
+     {
+      "aircraft_key": "alfa-fixed-wing",
+      "log_ref": "2018-07-30_16-46-36",
+      "kind": "unlogged_flight",
+      "seconds": 354.9997709999989,
+      "message": "355 s of flight on aircraft alfa-fixed-wing is not covered by any log (after 2018-07-30_16-46-36, before 2018-07-30_17-28-50)",
+      "synthetic": false
+     }
+    ],
+    "unchecked": {
+     "2018-07-30_17-28-50": "last known log of this aircraft; the counter was not seen again"
+    }
+   }
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}

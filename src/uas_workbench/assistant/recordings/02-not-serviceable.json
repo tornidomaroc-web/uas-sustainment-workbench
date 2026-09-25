@@ -1,0 +1,188 @@
+{
+ "slug": "which-aircraft-are-not-serviceable-and-what-stops-each-one",
+ "question": "Which aircraft are not serviceable, and what stops each one?",
+ "answer": "Aircraft SYN-04 is not serviceable because its battery pack BAT-04A is 6 cycles past its 300-cycle life limit, and battery pack BAT-04B passed its 24-calendar-month life limit on 2026-03-31. Aircraft SYN-03 is serviceable with deferred defects because its 100-hour inspection is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done. Aircraft SYN-05 is in maintenance since 2026-08-07 due to a synthetic low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight. Aircraft SYN-07 is on the ground awaiting parts since 2026-08-14 due to a synthetic replacement propeller set on order after a ground strike. No other aircraft are not serviceable. Hours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-25T23:18:17+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "",
+   "tool_calls": [
+    {
+     "name": "list_aircraft",
+     "arguments": {}
+    }
+   ]
+  },
+  {
+   "content": "Aircraft SYN-04 is not serviceable because its battery pack BAT-04A is 6 cycles past its 300-cycle life limit, and battery pack BAT-04B passed its 24-calendar-month life limit on 2026-03-31. Aircraft SYN-03 is serviceable with deferred defects because its 100-hour inspection is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done. Aircraft SYN-05 is in maintenance since 2026-08-07 due to a synthetic low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight. Aircraft SYN-07 is on the ground awaiting parts since 2026-08-14 due to a synthetic replacement propeller set on order after a ground strike. No other aircraft are not serviceable. Hours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "list_aircraft",
+   "arguments": {},
+   "path": "/aircraft",
+   "query": {},
+   "result": [
+    {
+     "key": "alfa-fixed-wing",
+     "label": "ALFA fixed-wing (real flights, 2018)",
+     "source": "ardupilot",
+     "synthetic": false,
+     "licence": "CC BY 4.0",
+     "attribution": "ALFA dataset, Keipour, Mousaei and Scherer, Carnegie Mellon University, CC BY 4.0; excerpt with positions and device id removed",
+     "status": {
+      "unknown": "no maintenance record entered for this aircraft"
+     },
+     "status_reasons": [],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 3,
+     "flight_time_known_s": 1967.8,
+     "findings": 1
+    },
+    {
+     "key": "px4-validation-quadrotor",
+     "label": "PX4 board-validation quadrotor (real flight, 2026)",
+     "source": "px4",
+     "synthetic": false,
+     "licence": "CC BY 4.0",
+     "attribution": "PX4 Flight Review public log, board-support validation flight of 2026-06-12, CC BY 4.0; excerpt with positions and device id removed",
+     "status": {
+      "unknown": "no maintenance record entered for this aircraft"
+     },
+     "status_reasons": [],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 1,
+     "flight_time_known_s": 199.1,
+     "findings": 0
+    },
+    {
+     "key": "SYN-01",
+     "label": "Synthetic fixed-wing 01",
+     "source": "px4",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "serviceable",
+     "status_reasons": [],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 5,
+     "flight_time_known_s": 7516.9,
+     "findings": 0
+    },
+    {
+     "key": "SYN-02",
+     "label": "Synthetic VTOL 02",
+     "source": "ardupilot",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "serviceable",
+     "status_reasons": [],
+     "overdue": 0,
+     "due_soon": 1,
+     "flights": 6,
+     "flight_time_known_s": 10244.3,
+     "findings": 1
+    },
+    {
+     "key": "SYN-03",
+     "label": "Synthetic fixed-wing 03",
+     "source": "px4",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "serviceable with deferred defects",
+     "status_reasons": [
+      "the 100-hour inspection of aircraft SYN-03 is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done"
+     ],
+     "overdue": 1,
+     "due_soon": 0,
+     "flights": 7,
+     "flight_time_known_s": 11175.4,
+     "findings": 0
+    },
+    {
+     "key": "SYN-04",
+     "label": "Synthetic quadrotor 04",
+     "source": "ardupilot",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "unserviceable",
+     "status_reasons": [
+      "battery pack BAT-04A on aircraft SYN-04 is 6 cycles past its 300-cycle life limit",
+      "battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-03-31"
+     ],
+     "overdue": 2,
+     "due_soon": 0,
+     "flights": 3,
+     "flight_time_known_s": 3795.2,
+     "findings": 1
+    },
+    {
+     "key": "SYN-05",
+     "label": "Synthetic fixed-wing 05",
+     "source": "px4",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "in maintenance",
+     "status_reasons": [
+      "aircraft SYN-05 is in maintenance since 2026-08-07: [synthetic] low-battery message in flight 2: inspect the battery connector and the pack before the next flight"
+     ],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 6,
+     "flight_time_known_s": 7139.8,
+     "findings": 0
+    },
+    {
+     "key": "SYN-06",
+     "label": "Synthetic VTOL 06",
+     "source": "ardupilot",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": {
+      "unknown": "no maintenance record entered for this aircraft"
+     },
+     "status_reasons": [],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 3,
+     "flight_time_known_s": 2181.0,
+     "findings": 0
+    },
+    {
+     "key": "SYN-07",
+     "label": "Synthetic fixed-wing 07",
+     "source": "px4",
+     "synthetic": true,
+     "licence": "CC0",
+     "attribution": "synthetic fleet generator, seed 20260925",
+     "status": "AOG",
+     "status_reasons": [
+      "aircraft SYN-07 is on the ground awaiting parts since 2026-08-14: [synthetic] replacement propeller set on order after a ground strike"
+     ],
+     "overdue": 0,
+     "due_soon": 0,
+     "flights": 6,
+     "flight_time_known_s": 10882.1,
+     "findings": 0
+    }
+   ]
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}

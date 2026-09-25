@@ -1,0 +1,162 @@
+{
+ "slug": "why-does-syn-03-carry-a-deferred-defect",
+ "question": "Why does SYN-03 carry a deferred defect?",
+ "answer": "SYN-03 carries a deferred defect because the 100-hour inspection is 3.6 hours overdue, but it is within the 10-hour tolerance that allows flight only to reach a place where the inspection can be done.",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-25T23:18:19+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "",
+   "tool_calls": [
+    {
+     "name": "aircraft_due",
+     "arguments": {
+      "key": "SYN-03"
+     }
+    }
+   ]
+  },
+  {
+   "content": "SYN-03 carries a deferred defect because the 100-hour inspection is 3.6 hours overdue, but it is within the 10-hour tolerance that allows flight only to reach a place where the inspection can be done.",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "aircraft_due",
+   "arguments": {
+    "key": "SYN-03"
+   },
+   "path": "/aircraft/SYN-03/due",
+   "query": {
+    "as_of": "2026-10-01T00:00:00Z"
+   },
+   "result": {
+    "aircraft_key": "SYN-03",
+    "synthetic": true,
+    "as_of": "2026-10-01T00:00:00Z",
+    "status": "serviceable with deferred defects",
+    "status_reasons": [
+     "the 100-hour inspection of aircraft SYN-03 is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done"
+    ],
+    "time_in_service_s": 404928.6,
+    "items": [
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "the 100-hour inspection",
+      "component_id": null,
+      "basis": "hours",
+      "unit": "h",
+      "used": 103.578,
+      "limit": 100.0,
+      "remaining": -3.578,
+      "tolerance": 10.0,
+      "state": "overdue_within_tolerance",
+      "source": "14 CFR 91.409(b), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409",
+      "message": "the 100-hour inspection of aircraft SYN-03 is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "propeller set PROP-03",
+      "component_id": "PROP-03",
+      "basis": "hours",
+      "unit": "h",
+      "used": 184.997,
+      "limit": 300.0,
+      "remaining": 115.003,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "14 CFR 43.10, https://www.ecfr.gov/current/title-14/chapter-I/subchapter-C/part-43/section-43.10; 300 h is an editable default",
+      "message": "propeller set PROP-03 on aircraft SYN-03 has 115.0 h left of its 300 h life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "battery pack BAT-03B",
+      "component_id": "BAT-03B",
+      "basis": "cycles",
+      "unit": "cycles",
+      "used": 83.0,
+      "limit": 300.0,
+      "remaining": 217.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-03B on aircraft SYN-03 has 217 cycles left of its 300-cycle life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "battery pack BAT-03A",
+      "component_id": "BAT-03A",
+      "basis": "cycles",
+      "unit": "cycles",
+      "used": 50.0,
+      "limit": 300.0,
+      "remaining": 250.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-03A on aircraft SYN-03 has 250 cycles left of its 300-cycle life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "battery pack BAT-03A",
+      "component_id": "BAT-03A",
+      "basis": "calendar",
+      "unit": "days",
+      "used": 281.0,
+      "limit": 24.0,
+      "remaining": 456.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-03A on aircraft SYN-03 has 456 days left of its 24-calendar-month life limit, due by 2027-12-31",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "the annual inspection",
+      "component_id": null,
+      "basis": "calendar",
+      "unit": "days",
+      "used": 118.0,
+      "limit": 12.0,
+      "remaining": 272.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "14 CFR 91.409(a)(1), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409",
+      "message": "the annual inspection of aircraft SYN-03 is due by 2027-06-30, in 272 days",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-03",
+      "subject": "battery pack BAT-03B",
+      "component_id": "BAT-03B",
+      "basis": "calendar",
+      "unit": "days",
+      "used": 201.0,
+      "limit": 24.0,
+      "remaining": 547.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-03B on aircraft SYN-03 has 547 days left of its 24-calendar-month life limit, due by 2028-03-31",
+      "synthetic": true
+     }
+    ],
+    "notes": [
+     "log SYN-03-2026-08-11-01.synthetic of aircraft SYN-03 is a duplicate of SYN-03-2026-08-11-01-upload2.synthetic and is not counted"
+    ]
+   }
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}

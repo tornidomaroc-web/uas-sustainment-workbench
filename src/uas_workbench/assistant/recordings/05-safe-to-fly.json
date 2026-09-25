@@ -1,0 +1,160 @@
+{
+ "slug": "is-syn-07-safe-to-fly",
+ "question": "Is SYN-07 safe to fly?",
+ "answer": "The aircraft SYN-07 is currently on the ground awaiting parts since 2026-08-14 and is marked as \"AOG\" (Aircraft On Ground). It is awaiting a replacement propeller set that is on order after a ground strike. The workbench does not certify airworthiness.",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-25T23:18:23+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "",
+   "tool_calls": [
+    {
+     "name": "aircraft_due",
+     "arguments": {
+      "key": "SYN-07"
+     }
+    }
+   ]
+  },
+  {
+   "content": "The aircraft SYN-07 is currently on the ground awaiting parts since 2026-08-14 and is marked as \"AOG\" (Aircraft On Ground). It is awaiting a replacement propeller set that is on order after a ground strike. The workbench does not certify airworthiness.",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "aircraft_due",
+   "arguments": {
+    "key": "SYN-07"
+   },
+   "path": "/aircraft/SYN-07/due",
+   "query": {
+    "as_of": "2026-10-01T00:00:00Z"
+   },
+   "result": {
+    "aircraft_key": "SYN-07",
+    "synthetic": true,
+    "as_of": "2026-10-01T00:00:00Z",
+    "status": "AOG",
+    "status_reasons": [
+     "aircraft SYN-07 is on the ground awaiting parts since 2026-08-14: [synthetic] replacement propeller set on order after a ground strike"
+    ],
+    "time_in_service_s": 199708.60788665246,
+    "items": [
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "battery pack BAT-07A",
+      "component_id": "BAT-07A",
+      "basis": "cycles",
+      "unit": "cycles",
+      "used": 145.0,
+      "limit": 300.0,
+      "remaining": 155.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-07A on aircraft SYN-07 has 155 cycles left of its 300-cycle life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "battery pack BAT-07B",
+      "component_id": "BAT-07B",
+      "basis": "cycles",
+      "unit": "cycles",
+      "used": 109.0,
+      "limit": 300.0,
+      "remaining": 191.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-07B on aircraft SYN-07 has 191 cycles left of its 300-cycle life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "propeller set PROP-07",
+      "component_id": "PROP-07",
+      "basis": "hours",
+      "unit": "h",
+      "used": 54.816,
+      "limit": 300.0,
+      "remaining": 245.184,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "14 CFR 43.10, https://www.ecfr.gov/current/title-14/chapter-I/subchapter-C/part-43/section-43.10; 300 h is an editable default",
+      "message": "propeller set PROP-07 on aircraft SYN-07 has 245.2 h left of its 300 h life limit",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "the 100-hour inspection",
+      "component_id": null,
+      "basis": "hours",
+      "unit": "h",
+      "used": 12.058,
+      "limit": 100.0,
+      "remaining": 87.942,
+      "tolerance": 10.0,
+      "state": "ok",
+      "source": "14 CFR 91.409(b), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409",
+      "message": "the 100-hour inspection of aircraft SYN-07 is due in 87.9 h",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "battery pack BAT-07B",
+      "component_id": "BAT-07B",
+      "basis": "calendar",
+      "unit": "days",
+      "used": 427.0,
+      "limit": 24.0,
+      "remaining": 303.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-07B on aircraft SYN-07 has 303 days left of its 24-calendar-month life limit, due by 2027-07-31",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "battery pack BAT-07A",
+      "component_id": "BAT-07A",
+      "basis": "calendar",
+      "unit": "days",
+      "used": 417.0,
+      "limit": 24.0,
+      "remaining": 334.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
+      "message": "battery pack BAT-07A on aircraft SYN-07 has 334 days left of its 24-calendar-month life limit, due by 2027-08-31",
+      "synthetic": true
+     },
+     {
+      "aircraft_key": "SYN-07",
+      "subject": "the annual inspection",
+      "component_id": null,
+      "basis": "calendar",
+      "unit": "days",
+      "used": 128.0,
+      "limit": 12.0,
+      "remaining": 242.0,
+      "tolerance": 0.0,
+      "state": "ok",
+      "source": "14 CFR 91.409(a)(1), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409",
+      "message": "the annual inspection of aircraft SYN-07 is due by 2027-05-31, in 242 days",
+      "synthetic": true
+     }
+    ],
+    "notes": []
+   }
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}
