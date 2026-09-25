@@ -1,0 +1,11 @@
+services:
+  workbench:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - fleet-data:/data
+    # Seeds the synthetic fleet on first start, then serves /docs, /aircraft, /metrics.
+
+volumes:
+  fleet-data:
