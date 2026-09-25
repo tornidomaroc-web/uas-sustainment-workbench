@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ardupilot, px4, report, sample
+from .excerpt import excerpt
 from .fetch import fetch_alfa, fetch_px4, pick_within_cap
 from .model import LogCensus, Source
 
@@ -90,6 +91,17 @@ def cmd_px4_fetch(args: argparse.Namespace) -> None:
 
 def cmd_alfa_fetch(args: argparse.Namespace) -> None:
     fetch_alfa(args.dest)
+
+
+FIXTURE_LOGS = ("2018-07-30_16-30-14", "2018-07-30_16-46-36", "2018-07-30_17-28-50")
+
+
+def cmd_alfa_excerpt(args: argparse.Namespace) -> None:
+    args.dest.mkdir(parents=True, exist_ok=True)
+    for name in args.names:
+        target = args.dest / f"{name}.bin"
+        target.write_bytes(excerpt((args.src / f"{name}.bin").read_bytes()))
+        log.info("wrote %s (%d bytes)", target, target.stat().st_size)
 
 
 def _safe_probe(
@@ -186,6 +198,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("alfa-fetch", help="extract the ALFA DataFlash logs by HTTP range")
     p.add_argument("--dest", type=Path, default=RAW / "alfa")
     p.set_defaults(func=cmd_alfa_fetch)
+
+    p = sub.add_parser("alfa-excerpt", help="cut position-free test fixtures from ALFA logs")
+    p.add_argument("--src", type=Path, default=RAW / "alfa")
+    p.add_argument("--dest", type=Path, default=Path("tests/fixtures/alfa"))
+    p.add_argument("--names", nargs="+", default=list(FIXTURE_LOGS))
+    p.set_defaults(func=cmd_alfa_excerpt)
 
     p = sub.add_parser("run", help="census every local log and write aggregate counts")
     p.add_argument("--px4", type=Path, default=RAW / "px4")

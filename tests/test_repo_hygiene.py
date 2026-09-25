@@ -1,4 +1,7 @@
-"""Raw public flight logs carry GPS tracks and device ids of real people. None may be tracked."""
+"""Raw public flight logs carry GPS tracks and device ids of real people. None may be tracked.
+
+The only log files allowed are the named, position-free ALFA excerpts; their content is
+checked in test_alfa_fixtures.py."""
 
 import shutil
 import subprocess
@@ -8,6 +11,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_SUFFIXES = {".ulg", ".bin", ".tlog", ".gpx", ".kmz", ".mat", ".log", ".param"}
+ALLOWED_EXCERPTS = {
+    f"tests/fixtures/alfa/{name}.bin"
+    for name in ("2018-07-30_16-30-14", "2018-07-30_16-46-36", "2018-07-30_17-28-50")
+}
 
 
 def tracked_files() -> list[str]:
@@ -24,7 +31,11 @@ def tracked_files() -> list[str]:
 
 
 def test_no_raw_flight_log_is_tracked_or_stageable() -> None:
-    offending = [f for f in tracked_files() if Path(f).suffix.lower() in RAW_SUFFIXES]
+    offending = [
+        f
+        for f in tracked_files()
+        if Path(f).suffix.lower() in RAW_SUFFIXES and f not in ALLOWED_EXCERPTS
+    ]
     assert offending == []
 
 

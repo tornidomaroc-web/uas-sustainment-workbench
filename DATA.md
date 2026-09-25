@@ -2,10 +2,14 @@
 
 ## What this repository contains
 
-Aggregate counts only (`results/census.json`, `results/census.md`): how many logs carry a
-field and how many carry real values. No positions, no device or vehicle ids, no log
-contents, no raw log files. A test (`tests/test_repo_hygiene.py`) fails CI if a raw log
-format is ever tracked.
+1. Aggregate counts (`results/census.json`, `results/census.md`): how many logs carry a
+   field and how many carry real values. No positions, device ids or log ids.
+2. Three short excerpts of ALFA logs used as real-log test fixtures (`tests/fixtures/alfa/`,
+   about 0.9 MB in total), described below.
+
+No other flight log is stored. A test (`tests/test_repo_hygiene.py`) fails CI if any other
+log file is tracked, and `tests/test_alfa_fixtures.py` checks that the excerpts hold no
+position and no device id.
 
 ## Sources
 
@@ -37,6 +41,23 @@ format is ever tracked.
 - Access: HTTP range requests extract only the ten `.bin` members (about 144 MB of 541 MB);
   zipfile verifies each member's CRC-32.
 - Privacy: flight tracks around the collection site; kept in `data/raw/alfa/`, git-ignored.
+
+## Test fixtures: ALFA excerpts
+
+`tests/fixtures/alfa/2018-07-30_16-30-14.bin`, `2018-07-30_16-46-36.bin` and
+`2018-07-30_17-28-50.bin` are excerpts of the ALFA DataFlash logs with the same names.
+
+- Attribution: A. Keipour, M. Mousaei, S. Scherer, "ALFA: A Dataset for UAV Fault and Anomaly
+  Detection", Carnegie Mellon University, <https://doi.org/10.1184/R1/12707963.v1>,
+  licensed CC BY 4.0 (<https://creativecommons.org/licenses/by/4.0/>).
+- Changes made (produced by `uasw-census alfa-excerpt`, `src/uas_workbench/census/excerpt.py`):
+  only the message types `PARM`, `MSG`, `MODE`, `STAT` and `GPS` are kept, each copied byte
+  for byte; `GPS` latitude, longitude, altitude and course are set to zero; the flight
+  controller's unique id in boot messages is replaced with `XXXXXXXX`. Every other message
+  type, including all attitude, position and sensor data, is removed.
+- Why these three: they are consecutive flights of the same aircraft, so they test both a
+  log that agrees with the autopilot's lifetime counter and one that does not.
+- The excerpts are not endorsed by the dataset authors.
 
 ## Not used, and why
 
