@@ -34,20 +34,25 @@ autopilot's own lifetime counter to within 13 s on 6 of 9 consecutive flights; t
 revealed flights the logs missed. A test runs this check on real log excerpts
 ([`tests/test_alfa_fixtures.py`](tests/test_alfa_fixtures.py)).
 
+**`FlightRecord` and `reconcile()`.** One typed record per log (aircraft key, UTC start,
+flight time, arm cycles, landings, battery energy, fault events, the autopilot's lifetime
+counter), where every value the log cannot support is an explicit `Unknown` with its reason.
+`reconcile()` compares consecutive logs of one aircraft against that counter and reports
+flight no log covers: on the ALFA excerpts, "355 s of flight on aircraft alfa-fixed-wing is
+not covered by any log". Measured limits are in [LIMITS.md](LIMITS.md).
+
 ## What comes next
 
-1. `FlightRecord`: one normalised record per flight from PX4 and ArduPilot logs, with a
-   reconciliation check against the autopilot's lifetime counters that flags missing logs.
-2. A component-life engine (hours, cycles, calendar, whichever comes first) and a readiness
+1. A component-life engine (hours, cycles, calendar, whichever comes first) and a readiness
    board.
-3. An assistant that answers maintenance questions through the tool's own API.
+2. An assistant that answers maintenance questions through the tool's own API.
 
 ## Scope and non-goals
 
 - Civil fleet sustainment only: usage counters, component life, inspections, readiness.
 - No payload, targeting, engagement or counter-UAS functions.
 - Public and synthetic data only. Not endorsed by, or built for, any armed force.
-- No raw flight logs in this repository. The only log files are three short excerpts with
+- No raw flight logs in this repository. The only log files are four short excerpts with
   positions and device ids removed. See [DATA.md](DATA.md).
 
 ## Run it

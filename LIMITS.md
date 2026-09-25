@@ -1,0 +1,64 @@
+# What the logs cannot tell, measured
+
+Every number here was measured on 2026-09-25 on public logs: 40 PX4 Flight Review logs (20
+fixed-wing and 20 VTOL aircraft, one log each), 3 consecutive logs of one further PX4 VTOL,
+and the 10 ArduPilot DataFlash logs of the CMU ALFA dataset. `results/census.md` has the
+field-level tables. This file is about what that means for a maintenance tool.
+
+## Limits of the data itself
+
+- **Only the flight controller is identified.** PX4 logs carry the controller's `sys_uuid`
+  (in 100 % of logs); ArduPilot logs print the controller's id in a boot message. Nothing
+  identifies the airframe, motors, propellers, servos, ESCs or battery pack. Swap the
+  controller into another airframe and the counters follow the wrong aircraft. The
+  operator has to tell the tool which airframe a log belongs to; `reconcile()` takes that
+  as `aircraft_key`.
+- **No battery pack identity, cycle count or health** in public logs: PX4 `cycle_count`
+  and `state_of_health` were present in 95 % of logs and filled in 1 of 40; `serial_number`
+  never. Pack assignment and cycle counting must be done by the tool and marked as such.
+- **No ESC data** in 38 of 40 PX4 logs and 10 of 10 ALFA logs. Motor counters from ESC
+  telemetry are out of v0.1.
+- **Parts, repairs, inspections and calendar age** are never in a log.
+
+## Limits of what a single log can say
+
+- **A log is not a flight.** Logging starts and stops on its own rules (PX4 by default at
+  arming and disarming; ArduPilot with its own logging settings). Flight can happen after
+  a log stops: on ALFA, 355 s of flight followed the end of `2018-07-30_16-46-36` with no
+  log at all. Only the autopilot's lifetime counter shows it, hence `reconcile()`.
+- **PX4 arm cycles**: because logging starts at arming, the arming transition is not in
+  the log in 35 of 40 logs; the tool counts a log that opens armed as one cycle.
+- **UTC date** needs a GPS fix: unknown in 6 of 40 PX4 logs (bench runs, indoor flights).
+- **Battery energy**: PX4 reports mAh in 38 of 40 logs; Wh is integrated from voltage and
+  current, missing in 3 of 40. ArduPilot logs nothing when `BATT_MONITOR=0`, which is how
+  the ALFA aircraft flew.
+- **Fault events** are what the autopilot chose to report: PX4 ERROR-level messages and
+  failure-detector flags (15 of 40 logs have at least one), ArduPilot `ERR` messages and
+  crash flags. Absence of a reported fault is not absence of a fault.
+
+## Limits of reconcile()
+
+- **It needs the next log of the same aircraft.** The counter a log booted with is only
+  meaningful against a later boot. The last log of every aircraft is always "unchecked",
+  and the 40 census logs, one per aircraft, produce no coverage at all.
+- **PX4 saves its counter only at disarm** (`LandDetector.cpp`, `commit_no_notification`),
+  so it is never written inside a log, and a power loss while armed loses that session's
+  flight time from the counter for good. Measured on 3 consecutive logs of one VTOL: the
+  counter advanced 4612.0 s over a log showing 4611.4 s of flight (0.6 s apart). The third
+  upload was a byte-identical duplicate of the second; the tool names it instead of
+  reporting −5150 s.
+- **ArduPilot writes its counter into the log every 30 s** (`AP_Stats`,
+  `flush_interval_ms`), so the derivation can be checked inside one log: on ALFA the
+  counter advanced 304, 260 and 1407 s against 312, 260 and 1395 s derived. The 30 s flush
+  is the tolerance; a counter can under-count by up to one flush per power cycle.
+- **PX4 has no boot counter**, so unlogged boots between two logs cannot be counted; on
+  ArduPilot `STAT_BOOTCNT` shows them.
+
+## Limits of the ArduPilot evidence
+
+Everything ArduPilot-side rests on one aircraft, ten logs on two days in July 2018,
+`ArduPlane V3.9.0-beta1`, flown with `ARMING_REQUIRE=0` (always armed, so no arm events
+are ever logged) and `BATT_MONITOR=0` (no battery data). It shows that flight time,
+landings, UTC date, the lifetime counter and reconciliation work on real ArduPlane logs.
+It shows nothing about arm cycles, battery energy, `ERR` messages, `ARM`/`BAT` messages or
+current ArduPilot firmware; those paths are tested only on synthetic logs.
