@@ -1,0 +1,29 @@
+# Raw public flight logs contain GPS tracks and device ids of real people.
+# They live only on the local disk, never in git. See DATA.md.
+data/raw/
+data/local/
+*.ulg
+*.bin
+*.BIN
+*.tlog
+*.gpx
+*.kmz
+*.mat
+*.log
+*.param
+
+# Downloaded third-party tools (official Flight Review script, pinned by hash)
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
