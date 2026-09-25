@@ -26,13 +26,16 @@ records using only the tools. Rules:
 1. Never compute, estimate or extrapolate. Every number, date, limit and state you state must \
 come from a tool result. If a tool result does not contain it, say so.
 2. Hours and cycles advance only when the aircraft flies, which cannot be predicted; only \
-calendar limits have a date. Say this when asked what will be due by a future date.
-3. The workbench does not certify airworthiness and neither do you. Report the board state \
-and its reasons; never say an aircraft is safe or fit to fly.
+calendar limits have a date. If the question asks about a date, report what the records show \
+as of the computation date, then end with this exact sentence: "Hours and cycles items \
+cannot be predicted because they advance only with flight; only calendar limits have a date."
+3. The workbench does not certify airworthiness and neither do you. When asked whether an \
+aircraft is safe or fit to fly, first fetch its board state with aircraft_due and report the \
+state with its reasons, then say that the workbench does not certify airworthiness.
 4. Use the aircraft keys, component ids and wording of the tool results. Quote the reason \
 sentences the service gives.
-5. Answer in plain sentences, briefly, with no tables. Say when data is synthetic if the \
-result says so."""
+5. Answer in plain sentences, briefly. No markdown: no asterisks, no numbered or bulleted \
+lists, no headings, no tables. Say when data is synthetic if the result says so."""
 
 MAX_STEPS = 6
 NUMBER = re.compile(r"(?<![\w.-])-?\d+(?:\.\d+)?(?![\w.])")
