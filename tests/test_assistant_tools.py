@@ -19,7 +19,7 @@ def routes() -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for r in app.routes:
         if isinstance(r, APIRoute):
-            out.setdefault(r.path, set()).update(r.methods)
+            out.setdefault(r.path, set()).update(r.methods or ())
     return out
 
 

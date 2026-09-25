@@ -12,6 +12,9 @@ from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
+from uas_workbench.assistant.recording import NOTICE as ASSISTANT_NOTICE
+from uas_workbench.assistant.recording import load_recordings
+from uas_workbench.assistant.recording import to_json as recording_to_json
 from uas_workbench.fleet import FleetConfig, load_config
 
 from .app import aircraft_view, due_view, fleet_due, flight_view, reconcile_view
@@ -56,6 +59,13 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
         "due": [i.model_dump(mode="json") for i in fleet_due(store, cfg, now)],
     }
     (out_dir / "fleet.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
+    runs = {
+        "notice": ASSISTANT_NOTICE,
+        "runs": [recording_to_json(r) for r in load_recordings()],
+    }
+    (out_dir / "assistant.json").write_text(
+        json.dumps(runs, indent=1, ensure_ascii=False), encoding="utf-8"
+    )
     page = resources.files("uas_workbench.service").joinpath("site/index.html")
     (out_dir / "index.html").write_text(page.read_text("utf-8"), encoding="utf-8")
     return out_dir

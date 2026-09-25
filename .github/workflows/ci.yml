@@ -37,6 +37,7 @@ jobs:
           test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
           grep -q '"status_reasons"' /tmp/site/fleet.json
           grep -q 'cycles past its' /tmp/site/fleet.json
+          test -s /tmp/site/assistant.json && grep -q '"grounding_verified": true' /tmp/site/assistant.json
 
   container:
     runs-on: ubuntu-latest
