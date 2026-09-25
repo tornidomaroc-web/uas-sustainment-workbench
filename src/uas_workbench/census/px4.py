@@ -172,6 +172,17 @@ def _probe_logged_errors(ulog: ULog) -> FieldResult:
     )
 
 
+def firmware_version(ulog: ULog) -> str:
+    """pyulog's own formatter returns None for development builds (release type < 64), which
+    are half of public logs; keep their version number and mark them instead."""
+    version = ulog.get_version_info()
+    if version is None:
+        return "unknown"
+    major, minor, patch, kind = version[:4]
+    label = ulog.get_version_info_str() or f"v{major}.{minor}.{patch}"
+    return label if kind >= 64 else f"{label} (dev)"
+
+
 def probe_ulog(path: Path, group: str) -> LogCensus:
     ulog = ULog(str(path), message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
 
@@ -208,7 +219,7 @@ def probe_ulog(path: Path, group: str) -> LogCensus:
         source="px4",
         group=group,
         log_ref=path.stem,
-        firmware=ulog.get_version_info_str() or "unknown",
+        firmware=firmware_version(ulog),
         duration_s=(ulog.last_timestamp - ulog.start_timestamp) / 1e6,
         airborne=airborne,
         fields=fields,
