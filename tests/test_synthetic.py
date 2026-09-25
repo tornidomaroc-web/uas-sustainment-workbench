@@ -47,12 +47,15 @@ def test_everything_synthetic_is_marked_and_civil() -> None:
 def test_fleet_contains_the_reconciliation_cases() -> None:
     fleet = generate(CONFIG)
     kinds: set[str] = set()
+    findings_by_aircraft: dict[str, int] = {}
     duplicates = 0
     boot_gaps = 0
     unknown_fields = 0
     for aircraft in fleet.aircraft:
         result = reconcile(fleet.flights[aircraft.key], aircraft_key=aircraft.key)
         kinds |= {f.kind for f in result.findings}
+        if result.findings:
+            findings_by_aircraft[aircraft.key] = len(result.findings)
         duplicates += sum(1 for v in result.unchecked.values() if v.startswith("duplicate of"))
         boot_gaps += sum(
             1 for c in result.coverage if is_known(c.boots_between) and c.boots_between > 0
@@ -62,6 +65,8 @@ def test_fleet_contains_the_reconciliation_cases() -> None:
                 1 for f in dataclasses.fields(r) if isinstance(getattr(r, f.name), Unknown)
             )
     assert "unlogged_flight" in kinds
+    assert "counter_mismatch" not in kinds  # the generator never contradicts its own counter
+    assert findings_by_aircraft == {"SYN-02": 1, "SYN-04": 1}
     assert duplicates >= 1
     assert boot_gaps >= 1
     assert unknown_fields >= 1  # the fleet also shows what a log cannot say
