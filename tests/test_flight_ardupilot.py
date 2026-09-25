@@ -28,7 +28,7 @@ def modern_plane(path: Path) -> Path:
     """An ArduPlane 4.x style log: ARM messages, BAT with energy, one ERR, two flights."""
     b = _formats()
     b.msg("MSG", 10 * S, "ArduPlane V4.5.7 (1234abcd)")
-    b.msg("MSG", 10 * S, "CubeOrange DEADBEEF 00000000 00000001")
+    b.msg("MSG", 10 * S, "FCBoard DEADBEEF 00000000 00000001")
     for name, value in [("STAT_FLTTIME", 3600.0), ("STAT_BOOTCNT", 12.0), ("BATT_MONITOR", 4.0)]:
         b.msg("PARM", 10 * S, name, value)
     # GPS week 2300, 100 000 s into the week: 2024-02-05 03:46:40 GPS, 03:46:22 UTC

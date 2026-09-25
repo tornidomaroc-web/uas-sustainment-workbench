@@ -66,10 +66,12 @@ position and no device id.
 `tests/fixtures/px4/flight_review_board_validation_2026-06-12_excerpt.ulg` is an excerpt of
 the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac20adb24c>.
 
-- Attribution: PX4 Flight Review public log "Amovlab Flycore PX4 basic flight validation -
-  2026-06-12", upload source "PX4 Flycore PR validation", firmware branch
-  `pr/amovlab-flycore-board`; the uploader gave no name. Licensed CC BY 4.0
+- Attribution: PX4 Flight Review contributors, public log linked above, a basic flight
+  validation of 2026-06-12; the uploader gave no name. Licensed CC BY 4.0
   (<https://creativecommons.org/licenses/by/4.0/>) by the upload terms of Flight Review.
+  CC BY 4.0 asks for the creator, a link, the licence and a note of changes, which this
+  entry gives; the log's own title and hardware name are left out because this repository
+  names no real aircraft or drone product.
 - Why this log, and why its link is here: this repository otherwise publishes no log id,
   because a public log page shows the flight track and the hardware id of a real person's
   aircraft. This log was uploaded as a board vendor's validation flight for a PX4 upstream
@@ -80,18 +82,21 @@ the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac2
   topics `vehicle_status`, `vehicle_land_detected`, `battery_status`, `vehicle_gps_position`,
   `sensor_gps` and `failure_detector_status` are kept (this log has no `battery_status`);
   every latitude, longitude, altitude, course and heading field is set to zero; the
-  `sys_uuid` info message and the multi-line info blocks (boot console output) are removed.
+  `sys_uuid` info message, the hardware name, hardware subtype and firmware branch info
+  messages (`ver_hw`, `ver_hw_subtype`, `ver_sw_branch`) and the multi-line info blocks
+  (boot console output) are removed.
   Formats, parameters and logged text messages are kept unchanged.
 - The excerpt is not endorsed by the uploader or by the PX4 project.
 
 ## Synthetic fleet
 
 `uas_workbench/fleet/synthetic.py` generates the demo fleet from the seed in `fleet.toml`.
-Its aircraft are named `SYN-01` to `SYN-06`, every record carries `synthetic: true`,
+Its aircraft are named `SYN-01` to `SYN-07`, every record carries `synthetic: true`,
 `licence: CC0` and an attribution naming the generator and seed, and no value in it is
 taken from any real aircraft. Counter behaviour copies what LIMITS.md measured (ArduPilot
-flushes every 30 s and logs a boot count; PX4 saves at disarm). The board states come from
-the civil vocabulary in `fleet.toml`, with its source cited there.
+flushes every 30 s and logs a boot count; PX4 saves at disarm). Its maintenance records,
+components and work orders are generated too and marked synthetic; the board states are
+computed from them by the life engine, in the civil vocabulary of `fleet.toml`.
 
 ## Not used, and why
 

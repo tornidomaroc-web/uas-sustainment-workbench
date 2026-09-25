@@ -12,7 +12,7 @@ def entry(log_id: str, uuid: str | None, **overrides: Any) -> dict[str, Any]:
         "mav_type": "Fixed Wing",
         "duration_s": 600,
         "log_date": "2025-05-01",
-        "sys_hw": "PX4_FMU_V6X",
+        "sys_hw": "TEST_BOARD",
         "ver_sw_release": "v1.15.2 255",
         "download_url": f"https://example.invalid/{log_id}.ulg",
     }

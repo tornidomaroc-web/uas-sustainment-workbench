@@ -101,12 +101,24 @@ ULOG_ZERO = re.compile(
 )
 
 
+# Info fields that name the hardware product or its vendor's firmware branch. This project
+# names no real aircraft or drone product, so they are dropped with the device id.
+ULOG_DROP_INFO: tuple[str, ...] = ("sys_uuid", "ver_hw", "ver_hw_subtype", "ver_sw_branch")
+
+
+def strip_identity(ulog: ULog) -> ULog:
+    """Remove the device id, the hardware name and the multi-line info blocks, in place."""
+    for key in ULOG_DROP_INFO:
+        ulog.msg_info_dict.pop(key, None)
+    ulog.msg_info_multiple_dict.clear()
+    return ulog
+
+
 def excerpt_ulog(src: Path) -> ULog:
     """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
     Write the result with ULog.write_ulog()."""
     ulog = ULog(str(src), message_name_filter_list=list(ULOG_KEEP), disable_str_exceptions=True)
-    ulog.msg_info_dict.pop("sys_uuid", None)
-    ulog.msg_info_multiple_dict.clear()
+    strip_identity(ulog)
     for dataset in ulog.data_list:
         for name, values in dataset.data.items():
             if ULOG_ZERO.match(name):
