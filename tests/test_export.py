@@ -23,7 +23,9 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     assert data["generated_utc"]
     alfa = next(a for a in data["aircraft"] if a["key"] == ALFA_KEY)
     assert alfa["synthetic"] is False
-    assert len(alfa["flights"]) == 3
+    assert alfa["flights"] == 3  # the count, as the API returns it
+    assert len(alfa["records"]) == 3
+    assert all(isinstance(a["flights"], int) for a in data["aircraft"])
     assert round(alfa["reconcile"]["findings"][0]["seconds"]) == 355
     assert all(isinstance(a["synthetic"], bool) for a in data["aircraft"])
     assert any(f["synthetic"] for f in data["findings"])

@@ -34,7 +34,8 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
         aircraft.append(
             {
                 **aircraft_view(store, a, cfg).model_dump(mode="json"),
-                "flights": [flight_view(r).model_dump(mode="json") for r in store.flights(a.key)],
+                # "flights" stays the count from the aircraft view; the records go under "records".
+                "records": [flight_view(r).model_dump(mode="json") for r in store.flights(a.key)],
                 "reconcile": result.model_dump(mode="json"),
             }
         )
