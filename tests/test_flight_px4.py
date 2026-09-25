@@ -90,3 +90,13 @@ def test_invalid_discharge_falls_back_to_integrated_current(tmp_path: Path) -> N
     r = read_ulog(b.write(tmp_path / "amps.ulg"), **ATTR)
     assert r.battery_mah == pytest.approx(2000.0)  # 2 A for one hour
     assert r.battery_wh == pytest.approx(0.0)  # no voltage samples: nothing to integrate
+
+
+def test_a_log_that_opens_armed_is_one_arm_cycle(tmp_path: Path) -> None:
+    """PX4 starts logging at arming by default, so the arm transition is never in the log."""
+    b = _formats(ULogBuilder(start_us=0))
+    status = b.subscribe("vehicle_status")
+    for t, armed in [(0, 2), (100, 2), (200, 1)]:
+        b.data(status, {"timestamp": t * S, "arming_state": armed})
+    r = read_ulog(b.write(tmp_path / "armed.ulg"), **ATTR)
+    assert r.arm_cycles == 1
