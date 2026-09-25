@@ -1,0 +1,837 @@
+{
+  "meta": {
+    "generated_utc": "2026-09-25T03:24:54+00:00",
+    "px4_index": {
+      "dbinfo_entries": 469733,
+      "spec": {
+        "per_group": 20,
+        "min_duration_s": 120,
+        "min_date": "2023-01-01",
+        "seed": 20260925
+      },
+      "index_stats": {
+        "fixed_wing": {
+          "logs": 13041,
+          "with_uuid": 12989,
+          "vehicles": 1932,
+          "with_logged_errors": 4170
+        },
+        "vtol": {
+          "logs": 18509,
+          "with_uuid": 18490,
+          "vehicles": 2010,
+          "with_logged_errors": 4847
+        }
+      }
+    }
+  },
+  "groups": [
+    {
+      "source": "ardupilot",
+      "group": "alfa_fixed_wing",
+      "logs": 10,
+      "unreadable": 0,
+      "airborne": 9,
+      "median_duration_s": 920.6,
+      "firmware": {
+        "ArduPlane 3.9": 10
+      },
+      "fields": [
+        {
+          "key": "MSG boot banner with MCU id",
+          "counter": "aircraft_key",
+          "filled_means": "id pattern found",
+          "extra": true,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "ARM.ArmState",
+          "counter": "arm_cycles",
+          "filled_means": "armed (1) observed",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "EV.Id",
+          "counter": "arm_cycles",
+          "filled_means": "ARMED event (10) observed",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "STAT.isFlying",
+          "counter": "landings",
+          "filled_means": "changes state (both values seen)",
+          "extra": false,
+          "present": 10,
+          "filled": 9,
+          "filled_airborne": 9
+        },
+        {
+          "key": "STAT.Armed",
+          "counter": "arm_cycles",
+          "filled_means": "armed observed",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "STAT.Crash",
+          "counter": "fault_events",
+          "filled_means": "crash flagged",
+          "extra": false,
+          "present": 10,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "STAT.Hit",
+          "counter": "fault_events",
+          "filled_means": "hit flagged",
+          "extra": false,
+          "present": 10,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "BAT.CurrTot (CURR before 3.10)",
+          "counter": "battery_energy",
+          "filled_means": "> 0 mAh",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "BAT.EnrgTot (CURR before 3.10)",
+          "counter": "battery_energy",
+          "filled_means": "> 0 Wh",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "BAT.SH",
+          "counter": "battery_energy",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "ESC.RPM",
+          "counter": "esc_data",
+          "filled_means": "non-zero rpm",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "ESC.Temp",
+          "counter": "esc_data",
+          "filled_means": "non-zero temperature",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "ESC.Err",
+          "counter": "esc_data",
+          "filled_means": "errors reported (> 0)",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "ERR.ECode",
+          "counter": "fault_events",
+          "filled_means": "non-zero error code",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "GPS.GWk",
+          "counter": "utc_date",
+          "filled_means": "non-zero GPS week",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "RCOU.C1..C14",
+          "counter": "esc_data",
+          "filled_means": "any output non-zero (load proxy)",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "PARM STAT_FLTTIME",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "PARM STAT_BOOTCNT",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "PARM STAT_RUNTIME",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 10,
+          "filled": 10,
+          "filled_airborne": 9
+        },
+        {
+          "key": "PARM STAT_FLTCNT",
+          "counter": "landings",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "PARM BRD_SERIAL_NUM",
+          "counter": "aircraft_key",
+          "filled_means": "non-zero (user-set)",
+          "extra": true,
+          "present": 10,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "PARM BATT_SERIAL_NUM",
+          "counter": "battery_energy",
+          "filled_means": "not 0 or -1",
+          "extra": true,
+          "present": 0,
+          "filled": 0,
+          "filled_airborne": 0
+        }
+      ],
+      "counters": [
+        {
+          "name": "aircraft_key",
+          "derivable": 10,
+          "derivable_airborne": 9
+        },
+        {
+          "name": "utc_date",
+          "derivable": 10,
+          "derivable_airborne": 9
+        },
+        {
+          "name": "flight_time",
+          "derivable": 9,
+          "derivable_airborne": 9
+        },
+        {
+          "name": "arm_cycles",
+          "derivable": 0,
+          "derivable_airborne": 0
+        },
+        {
+          "name": "landings",
+          "derivable": 9,
+          "derivable_airborne": 9
+        },
+        {
+          "name": "battery_energy",
+          "derivable": 0,
+          "derivable_airborne": 0
+        },
+        {
+          "name": "esc_data",
+          "derivable": 0,
+          "derivable_airborne": 0
+        },
+        {
+          "name": "fault_events",
+          "derivable": 0,
+          "derivable_airborne": 0
+        },
+        {
+          "name": "lifetime_hours",
+          "derivable": 10,
+          "derivable_airborne": 9
+        }
+      ]
+    },
+    {
+      "source": "px4",
+      "group": "fixed_wing",
+      "logs": 20,
+      "unreadable": 0,
+      "airborne": 18,
+      "median_duration_s": 429.9,
+      "firmware": {
+        "v0.0": 1,
+        "v1.11": 2,
+        "v1.13": 2,
+        "v1.14": 6,
+        "v1.15": 4,
+        "v1.16": 2,
+        "v1.17": 1,
+        "v1.9": 1,
+        "v180.6": 1
+      },
+      "fields": [
+        {
+          "key": "info sys_uuid",
+          "counter": "aircraft_key",
+          "filled_means": "non-empty and not all zeros",
+          "extra": false,
+          "present": 20,
+          "filled": 20,
+          "filled_airborne": 18
+        },
+        {
+          "key": "vehicle_status.arming_state",
+          "counter": "arm_cycles",
+          "filled_means": "ARMED (2) observed",
+          "extra": false,
+          "present": 20,
+          "filled": 18,
+          "filled_airborne": 18
+        },
+        {
+          "key": "vehicle_status.armed_time",
+          "counter": "arm_cycles",
+          "filled_means": "non-zero timestamp",
+          "extra": false,
+          "present": 16,
+          "filled": 14,
+          "filled_airborne": 14
+        },
+        {
+          "key": "vehicle_status.takeoff_time",
+          "counter": "flight_time",
+          "filled_means": "non-zero timestamp",
+          "extra": false,
+          "present": 16,
+          "filled": 13,
+          "filled_airborne": 13
+        },
+        {
+          "key": "vehicle_land_detected.landed",
+          "counter": "landings",
+          "filled_means": "changes state (both values seen)",
+          "extra": false,
+          "present": 20,
+          "filled": 18,
+          "filled_airborne": 18
+        },
+        {
+          "key": "battery_status.discharged_mah",
+          "counter": "battery_energy",
+          "filled_means": "> 0 mAh",
+          "extra": false,
+          "present": 19,
+          "filled": 17,
+          "filled_airborne": 16
+        },
+        {
+          "key": "battery_status.voltage_v",
+          "counter": "battery_energy",
+          "filled_means": "> 0 V",
+          "extra": false,
+          "present": 19,
+          "filled": 19,
+          "filled_airborne": 18
+        },
+        {
+          "key": "battery_status.current_a",
+          "counter": "battery_energy",
+          "filled_means": "> 0 A",
+          "extra": true,
+          "present": 19,
+          "filled": 18,
+          "filled_airborne": 17
+        },
+        {
+          "key": "battery_status.cycle_count",
+          "counter": "battery_energy",
+          "filled_means": "> 0",
+          "extra": false,
+          "present": 19,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "battery_status.state_of_health",
+          "counter": "battery_energy",
+          "filled_means": "> 0 %",
+          "extra": false,
+          "present": 17,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "battery_status.serial_number",
+          "counter": "battery_energy",
+          "filled_means": "non-zero",
+          "extra": true,
+          "present": 18,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "esc_status.esc[].esc_rpm",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports non-zero rpm",
+          "extra": false,
+          "present": 1,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "esc_status.esc[].esc_temperature",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports non-zero temperature",
+          "extra": false,
+          "present": 1,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "esc_status.esc[].esc_errorcount",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports errors (> 0)",
+          "extra": false,
+          "present": 1,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "actuator_outputs.output[]",
+          "counter": "esc_data",
+          "filled_means": "any output non-zero (load proxy)",
+          "extra": false,
+          "present": 17,
+          "filled": 17,
+          "filled_airborne": 16
+        },
+        {
+          "key": "failure_detector_status.fd_motor",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 14,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "failure_detector_status.fd_imbalanced_prop",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 16,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "failure_detector_status.fd_battery",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 16,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "vehicle_gps_position.time_utc_usec",
+          "counter": "utc_date",
+          "filled_means": "non-zero (GPS time known)",
+          "extra": false,
+          "present": 18,
+          "filled": 18,
+          "filled_airborne": 17
+        },
+        {
+          "key": "sensor_gps.time_utc_usec",
+          "counter": "utc_date",
+          "filled_means": "non-zero (GPS time known)",
+          "extra": true,
+          "present": 14,
+          "filled": 14,
+          "filled_airborne": 13
+        },
+        {
+          "key": "param LND_FLIGHT_T_HI",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 19,
+          "filled": 7,
+          "filled_airborne": 7
+        },
+        {
+          "key": "param LND_FLIGHT_T_LO",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 19,
+          "filled": 15,
+          "filled_airborne": 15
+        },
+        {
+          "key": "logged messages, level ERROR or worse",
+          "counter": "fault_events",
+          "filled_means": "at least one",
+          "extra": true,
+          "present": 20,
+          "filled": 7,
+          "filled_airborne": 7
+        }
+      ],
+      "counters": [
+        {
+          "name": "aircraft_key",
+          "derivable": 20,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "utc_date",
+          "derivable": 18,
+          "derivable_airborne": 17
+        },
+        {
+          "name": "flight_time",
+          "derivable": 18,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "arm_cycles",
+          "derivable": 18,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "landings",
+          "derivable": 18,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "battery_energy",
+          "derivable": 18,
+          "derivable_airborne": 17
+        },
+        {
+          "name": "esc_data",
+          "derivable": 1,
+          "derivable_airborne": 1
+        },
+        {
+          "name": "fault_events",
+          "derivable": 16,
+          "derivable_airborne": 14
+        },
+        {
+          "name": "lifetime_hours",
+          "derivable": 15,
+          "derivable_airborne": 15
+        }
+      ]
+    },
+    {
+      "source": "px4",
+      "group": "vtol",
+      "logs": 20,
+      "unreadable": 0,
+      "airborne": 18,
+      "median_duration_s": 394.6,
+      "firmware": {
+        "v1.11": 3,
+        "v1.12": 1,
+        "v1.13": 2,
+        "v1.14": 6,
+        "v1.15": 4,
+        "v1.16": 2,
+        "v1.18": 1,
+        "v2.0": 1
+      },
+      "fields": [
+        {
+          "key": "info sys_uuid",
+          "counter": "aircraft_key",
+          "filled_means": "non-empty and not all zeros",
+          "extra": false,
+          "present": 20,
+          "filled": 20,
+          "filled_airborne": 18
+        },
+        {
+          "key": "vehicle_status.arming_state",
+          "counter": "arm_cycles",
+          "filled_means": "ARMED (2) observed",
+          "extra": false,
+          "present": 20,
+          "filled": 19,
+          "filled_airborne": 18
+        },
+        {
+          "key": "vehicle_status.armed_time",
+          "counter": "arm_cycles",
+          "filled_means": "non-zero timestamp",
+          "extra": false,
+          "present": 17,
+          "filled": 15,
+          "filled_airborne": 15
+        },
+        {
+          "key": "vehicle_status.takeoff_time",
+          "counter": "flight_time",
+          "filled_means": "non-zero timestamp",
+          "extra": false,
+          "present": 17,
+          "filled": 15,
+          "filled_airborne": 15
+        },
+        {
+          "key": "vehicle_land_detected.landed",
+          "counter": "landings",
+          "filled_means": "changes state (both values seen)",
+          "extra": false,
+          "present": 19,
+          "filled": 18,
+          "filled_airborne": 18
+        },
+        {
+          "key": "battery_status.discharged_mah",
+          "counter": "battery_energy",
+          "filled_means": "> 0 mAh",
+          "extra": false,
+          "present": 19,
+          "filled": 19,
+          "filled_airborne": 17
+        },
+        {
+          "key": "battery_status.voltage_v",
+          "counter": "battery_energy",
+          "filled_means": "> 0 V",
+          "extra": false,
+          "present": 19,
+          "filled": 19,
+          "filled_airborne": 17
+        },
+        {
+          "key": "battery_status.current_a",
+          "counter": "battery_energy",
+          "filled_means": "> 0 A",
+          "extra": true,
+          "present": 19,
+          "filled": 18,
+          "filled_airborne": 17
+        },
+        {
+          "key": "battery_status.cycle_count",
+          "counter": "battery_energy",
+          "filled_means": "> 0",
+          "extra": false,
+          "present": 19,
+          "filled": 1,
+          "filled_airborne": 0
+        },
+        {
+          "key": "battery_status.state_of_health",
+          "counter": "battery_energy",
+          "filled_means": "> 0 %",
+          "extra": false,
+          "present": 19,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "battery_status.serial_number",
+          "counter": "battery_energy",
+          "filled_means": "non-zero",
+          "extra": true,
+          "present": 18,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "esc_status.esc[].esc_rpm",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports non-zero rpm",
+          "extra": false,
+          "present": 2,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "esc_status.esc[].esc_temperature",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports non-zero temperature",
+          "extra": false,
+          "present": 2,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "esc_status.esc[].esc_errorcount",
+          "counter": "esc_data",
+          "filled_means": "any ESC reports errors (> 0)",
+          "extra": false,
+          "present": 2,
+          "filled": 1,
+          "filled_airborne": 1
+        },
+        {
+          "key": "actuator_outputs.output[]",
+          "counter": "esc_data",
+          "filled_means": "any output non-zero (load proxy)",
+          "extra": false,
+          "present": 20,
+          "filled": 20,
+          "filled_airborne": 18
+        },
+        {
+          "key": "failure_detector_status.fd_motor",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 12,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "failure_detector_status.fd_imbalanced_prop",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 15,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "failure_detector_status.fd_battery",
+          "counter": "fault_events",
+          "filled_means": "flag raised at least once",
+          "extra": false,
+          "present": 15,
+          "filled": 0,
+          "filled_airborne": 0
+        },
+        {
+          "key": "vehicle_gps_position.time_utc_usec",
+          "counter": "utc_date",
+          "filled_means": "non-zero (GPS time known)",
+          "extra": false,
+          "present": 17,
+          "filled": 16,
+          "filled_airborne": 15
+        },
+        {
+          "key": "sensor_gps.time_utc_usec",
+          "counter": "utc_date",
+          "filled_means": "non-zero (GPS time known)",
+          "extra": true,
+          "present": 14,
+          "filled": 13,
+          "filled_airborne": 12
+        },
+        {
+          "key": "param LND_FLIGHT_T_HI",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 19,
+          "filled": 12,
+          "filled_airborne": 11
+        },
+        {
+          "key": "param LND_FLIGHT_T_LO",
+          "counter": "lifetime_hours",
+          "filled_means": "non-zero",
+          "extra": false,
+          "present": 19,
+          "filled": 19,
+          "filled_airborne": 18
+        },
+        {
+          "key": "logged messages, level ERROR or worse",
+          "counter": "fault_events",
+          "filled_means": "at least one",
+          "extra": true,
+          "present": 20,
+          "filled": 6,
+          "filled_airborne": 5
+        }
+      ],
+      "counters": [
+        {
+          "name": "aircraft_key",
+          "derivable": 20,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "utc_date",
+          "derivable": 16,
+          "derivable_airborne": 15
+        },
+        {
+          "name": "flight_time",
+          "derivable": 18,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "arm_cycles",
+          "derivable": 19,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "landings",
+          "derivable": 18,
+          "derivable_airborne": 18
+        },
+        {
+          "name": "battery_energy",
+          "derivable": 19,
+          "derivable_airborne": 17
+        },
+        {
+          "name": "esc_data",
+          "derivable": 1,
+          "derivable_airborne": 1
+        },
+        {
+          "name": "fault_events",
+          "derivable": 15,
+          "derivable_airborne": 14
+        },
+        {
+          "name": "lifetime_hours",
+          "derivable": 19,
+          "derivable_airborne": 18
+        }
+      ]
+    }
+  ]
+}
