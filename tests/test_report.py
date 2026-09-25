@@ -47,4 +47,11 @@ def test_markdown_shows_fractions() -> None:
 def test_firmware_family() -> None:
     assert report._firmware_family("ArduPlane 3.9.2") == "ArduPlane 3.9"
     assert report._firmware_family("v1.14.3") == "v1.14"
+    assert report._firmware_family("v1.14.0 (dev)") == "v1.14"
     assert report._firmware_family("unknown") == "unknown"
+
+
+def test_partial_shares_never_round_to_whole() -> None:
+    assert report._pct(12989, 13041) == "12989/13041 (99.6 %)"
+    assert report._pct(1, 400) == "1/400 (0.2 %)"
+    assert report._pct(0, 5) == "0/5 (0 %)"

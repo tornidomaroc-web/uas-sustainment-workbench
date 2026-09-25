@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import Counter
 from collections.abc import Sequence
@@ -43,11 +44,11 @@ class GroupSummary:
 
 
 def _firmware_family(version: str) -> str:
-    """'v1.14.3' -> 'v1.14'; 'ArduPlane 3.9.2' -> 'ArduPlane 3.9'."""
-    head, _, tail = version.rpartition(" ")
-    parts = tail.split(".")
-    family = ".".join(parts[:2]) if len(parts) >= 2 else tail
-    return f"{head} {family}".strip()
+    """'v1.14.3 (dev)' -> 'v1.14'; 'ArduPlane 3.9.2' -> 'ArduPlane 3.9'."""
+    match = re.search(r"(\d+)\.(\d+)", version)
+    if match is None:
+        return version
+    return f"{version[: match.start()]}{match[1]}.{match[2]}"
 
 
 def summarise(
@@ -94,7 +95,12 @@ def to_json(summaries: Sequence[GroupSummary], meta: dict[str, Any]) -> dict[str
 
 
 def _pct(part: int, whole: int) -> str:
-    return f"{part}/{whole} ({round(100 * part / whole)} %)" if whole else "0/0"
+    """Whole percent, but never round a partial share to 0 % or 100 %."""
+    if not whole:
+        return "0/0"
+    share = 100 * part / whole
+    text = f"{share:.1f}" if 0 < share < 1 or 99 < share < 100 else f"{share:.0f}"
+    return f"{part}/{whole} ({text} %)"
 
 
 def index_markdown(index: dict[str, Any] | None) -> str:
