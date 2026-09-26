@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import random
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 from uas_workbench.flight.record import (
     FaultEvent,
@@ -26,6 +27,7 @@ from uas_workbench.flight.record import (
     Unknown,
     is_known,
 )
+from uas_workbench.ledger.model import Entry
 from uas_workbench.life import Component, InspectionDone, Installation, MaintenanceRecord, WorkOrder
 
 from .config import FleetConfig
@@ -88,17 +90,15 @@ def generate(config: FleetConfig) -> Fleet:
         flights[key] = tuple(_flights(rng, config, key, source, case, attribution))
     # A second stream of the same seed: the maintenance records never alter the flights.
     parts = random.Random(config.seed ^ 0x5F1E)
-    components: list[Component] = []
-    maintenance: dict[str, MaintenanceRecord] = {}
+    entries: list[Entry] = []
     for index in range(1, config.aircraft + 1):
         key = f"SYN-{index:02d}"
         life_case = LIFE_CASES.get(index, "clean")
         if life_case == "no_record":
             continue
         record, fitted = _maintenance(parts, config, key, index, life_case, flights)
-        maintenance[key] = record
-        components.extend(fitted)
-    return Fleet(tuple(aircraft), flights, tuple(components), maintenance)
+        entries.extend(_as_entries(record, fitted, attribution))
+    return Fleet(tuple(aircraft), flights, tuple(entries))
 
 
 def _flights(
@@ -359,3 +359,126 @@ def _maintenance(
         synthetic=True,
     )
     return record, [*packs, prop]
+
+
+def _as_entries(record: MaintenanceRecord, parts: list[Component], by: str) -> list[Entry]:
+    """The ledger entries that project back to exactly this record and these components.
+
+    Every entry is synthetic, entered by the generator, and its statement starts with
+    "[synthetic]". Removals sort before installs at the same instant, so a part that moved
+    between airframes is recorded as taken off one and fitted to the other.
+    """
+    key = record.aircraft_key
+
+    def entry(subject: str, kind_: str, at: datetime, statement: str, **payload: Any) -> Entry:
+        return Entry(
+            id=None,
+            subject=subject,
+            kind=kind_,
+            occurred_utc=at,
+            recorded_utc=at,
+            entered_by=by,
+            statement=statement,
+            payload=payload,
+            supersedes=None,
+            reason=None,
+            synthetic=True,
+        )
+
+    out: list[tuple[datetime, int, Entry]] = []
+    earliest = min(i.done_utc for i in record.inspections) - timedelta(days=1)
+    out.append(
+        (
+            earliest,
+            0,
+            entry(
+                key,
+                "time_in_service.set",
+                earliest,
+                "[synthetic] time in service carried over from the previous logbook",
+                before_s=record.time_in_service_before_s,
+            ),
+        )
+    )
+    for i in record.inspections:
+        out.append(
+            (
+                i.done_utc,
+                2,
+                entry(
+                    key,
+                    "inspection.done",
+                    i.done_utc,
+                    f"[synthetic] {i.name} completed",
+                    name=i.name,
+                    at_hours_s=i.at_hours_s,
+                    carried_over_s=i.carried_over_s,
+                ),
+            )
+        )
+    for n, w in enumerate(record.work_orders, start=1):
+        statement = w.description
+        if not statement.startswith("[synthetic]"):
+            statement = f"[synthetic] {statement}"
+        out.append(
+            (
+                w.opened_utc,
+                2,
+                entry(
+                    key,
+                    "work_order.open",
+                    w.opened_utc,
+                    statement,
+                    work_id=f"WO-{key}-{n}",
+                    state=w.state,
+                ),
+            )
+        )
+    for c in parts:
+        registered = datetime.combine(c.in_service_since, time(0), tzinfo=UTC)
+        out.append(
+            (
+                registered,
+                0,
+                entry(
+                    c.id,
+                    "component.register",
+                    registered,
+                    f"[synthetic] {c.kind} {c.id} entered into service",
+                    kind=c.kind,
+                    in_service_since=c.in_service_since.isoformat(),
+                    hours_s_before=c.hours_s_before,
+                    cycles_before=c.cycles_before,
+                ),
+            )
+        )
+        for inst in c.installations:
+            out.append(
+                (
+                    inst.from_utc,
+                    2,
+                    entry(
+                        c.id,
+                        "component.install",
+                        inst.from_utc,
+                        f"[synthetic] {c.kind} {c.id} fitted to {inst.aircraft_key}",
+                        aircraft_key=inst.aircraft_key,
+                    ),
+                )
+            )
+            if inst.to_utc is not None:
+                out.append(
+                    (
+                        inst.to_utc,
+                        1,
+                        entry(
+                            c.id,
+                            "component.remove",
+                            inst.to_utc,
+                            f"[synthetic] {c.kind} {c.id} removed from {inst.aircraft_key}",
+                            aircraft_key=inst.aircraft_key,
+                        ),
+                    )
+                )
+    out.sort(key=lambda t: (t[0], t[1]))
+    return [e for _, _, e in out]

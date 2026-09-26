@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from uas_workbench.flight.record import FlightRecord, Source
+from uas_workbench.ledger.model import Entry
+from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
 
 
@@ -20,13 +22,20 @@ class Aircraft:
 
 @dataclass(frozen=True)
 class Fleet:
-    """Aircraft, their flight records, and the maintenance records logs never hold.
+    """Aircraft, their flight records, and the maintenance ledger entries logs never hold.
 
-    The board state of an aircraft is not stored anywhere: it is computed from its
-    maintenance record, its components and its flights (uas_workbench.life).
+    Nothing about maintenance is stored as a snapshot: the records the engine reads are
+    projected from the entries, and the board state is computed from those on every read.
     """
 
     aircraft: tuple[Aircraft, ...]
     flights: dict[str, tuple[FlightRecord, ...]]  # aircraft key -> its records
-    components: tuple[Component, ...] = ()
-    maintenance: dict[str, MaintenanceRecord] = field(default_factory=dict)
+    entries: tuple[Entry, ...] = ()
+
+    @property
+    def maintenance(self) -> dict[str, MaintenanceRecord]:
+        return project(self.entries).maintenance
+
+    @property
+    def components(self) -> tuple[Component, ...]:
+        return project(self.entries).components

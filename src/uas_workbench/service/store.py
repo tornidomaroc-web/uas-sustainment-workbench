@@ -1,8 +1,10 @@
-"""SQLite storage for aircraft, their flight records and their maintenance records.
+"""SQLite storage for aircraft, their flight records and the maintenance ledger.
 
 Records are stored as the JSON the codecs produce, with the columns the queries need
 alongside. One file, no server, and the same code runs in tests, in CI and in the container.
-No board state is stored: the API computes it from these records on every request.
+The ledger is append-only: entries are inserted and never updated or deleted. Nothing about
+maintenance is stored as a snapshot; the records the engine reads are projected from the
+entries on read, and no board state is stored either.
 """
 
 from __future__ import annotations
@@ -15,13 +17,10 @@ from collections.abc import Sequence
 from uas_workbench.fleet.model import Aircraft, Fleet
 from uas_workbench.flight.codec import record_from_json, record_to_json
 from uas_workbench.flight.record import FlightRecord, Source, is_known
+from uas_workbench.ledger.codec import entry_from_json, entry_to_json
+from uas_workbench.ledger.model import Entry, Projection
+from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
-from uas_workbench.life.codec import (
-    component_from_json,
-    component_to_json,
-    maintenance_from_json,
-    maintenance_to_json,
-)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS aircraft (
@@ -41,15 +40,14 @@ CREATE TABLE IF NOT EXISTS flights (
     record TEXT NOT NULL,
     UNIQUE (aircraft_key, log_ref)
 );
-CREATE TABLE IF NOT EXISTS components (
-    id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL,
     kind TEXT NOT NULL,
+    occurred_utc TEXT NOT NULL,
+    recorded_utc TEXT NOT NULL,
     synthetic INTEGER NOT NULL,
-    record TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS maintenance (
-    aircraft_key TEXT PRIMARY KEY REFERENCES aircraft(key),
-    synthetic INTEGER NOT NULL,
+    supersedes INTEGER REFERENCES entries(id),
     record TEXT NOT NULL
 );
 """
@@ -67,6 +65,7 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(SCHEMA)
+        self._projection: Projection | None = None
 
     def close(self) -> None:
         self._db.close()
@@ -76,10 +75,8 @@ class Store:
             self.add_aircraft(aircraft)
             for record in fleet.flights.get(aircraft.key, ()):
                 self.add_flight(aircraft.key, record)
-        for component in fleet.components:
-            self.add_component(component)
-        for maintenance in fleet.maintenance.values():
-            self.add_maintenance(maintenance)
+        for entry in fleet.entries:
+            self.append_entry(entry)
 
     def add_aircraft(self, aircraft: Aircraft) -> None:
         with self._lock, self._db:
@@ -129,30 +126,68 @@ class Store:
         except sqlite3.IntegrityError as exc:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
 
-    def add_component(self, component: Component) -> None:
-        with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR REPLACE INTO components (id, kind, synthetic, record) "
-                "VALUES (?, ?, ?, ?)",
-                (
-                    component.id,
-                    component.kind,
-                    int(component.synthetic),
-                    json.dumps(component_to_json(component)),
-                ),
-            )
+    # ---- the ledger ------------------------------------------------------------------
 
-    def add_maintenance(self, record: MaintenanceRecord) -> None:
+    def append_entry(self, entry: Entry) -> Entry:
+        """Insert one entry and return it with its id. Validation is the ledger's job."""
         with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR REPLACE INTO maintenance (aircraft_key, synthetic, record) "
-                "VALUES (?, ?, ?)",
+            cursor = self._db.execute(
+                "INSERT INTO entries (subject, kind, occurred_utc, recorded_utc, synthetic, "
+                "supersedes, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
-                    record.aircraft_key,
-                    int(record.synthetic),
-                    json.dumps(maintenance_to_json(record)),
+                    entry.subject,
+                    entry.kind,
+                    entry.occurred_utc.isoformat(),
+                    entry.recorded_utc.isoformat(),
+                    int(entry.synthetic),
+                    entry.supersedes,
+                    "",
                 ),
             )
+            assert cursor.lastrowid is not None
+            stored = Entry(**{**entry.__dict__, "id": int(cursor.lastrowid)})
+            self._db.execute(
+                "UPDATE entries SET record = ? WHERE id = ?",
+                (json.dumps(entry_to_json(stored), ensure_ascii=False), stored.id),
+            )
+            self._projection = None
+        return stored
+
+    def next_entry_id(self) -> int:
+        row = self._db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM entries").fetchone()
+        return int(row[0])
+
+    def entries(self, subject: str | None = None) -> Sequence[Entry]:
+        """Every entry, superseded ones included, in the order they were entered."""
+        if subject is None:
+            rows = self._db.execute("SELECT record FROM entries ORDER BY id").fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT record FROM entries WHERE subject = ? ORDER BY id", (subject,)
+            ).fetchall()
+        return [entry_from_json(json.loads(r[0])) for r in rows]
+
+    def entry(self, entry_id: int) -> Entry | None:
+        row = self._db.execute("SELECT record FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        return entry_from_json(json.loads(row[0])) if row else None
+
+    def entry_count(self) -> int:
+        row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
+        return int(row[0])
+
+    def projection(self) -> Projection:
+        """The live entries folded into records; recomputed after every append."""
+        if self._projection is None:
+            self._projection = project(self.entries())
+        return self._projection
+
+    def components(self) -> Sequence[Component]:
+        return self.projection().components
+
+    def maintenance(self, aircraft_key: str) -> MaintenanceRecord | None:
+        return self.projection().maintenance.get(aircraft_key)
+
+    # ---- reads -----------------------------------------------------------------------
 
     def _aircraft(self, row: tuple[object, ...]) -> Aircraft:
         key, label, source, synthetic, licence, attribution = row
@@ -188,16 +223,6 @@ class Store:
     def flight_count(self) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM flights").fetchone()
         return int(row[0])
-
-    def components(self) -> Sequence[Component]:
-        rows = self._db.execute("SELECT record FROM components ORDER BY id").fetchall()
-        return [component_from_json(json.loads(r[0])) for r in rows]
-
-    def maintenance(self, aircraft_key: str) -> MaintenanceRecord | None:
-        row = self._db.execute(
-            "SELECT record FROM maintenance WHERE aircraft_key = ?", (aircraft_key,)
-        ).fetchone()
-        return maintenance_from_json(json.loads(row[0])) if row else None
 
 
 def _source(value: str) -> Source:
