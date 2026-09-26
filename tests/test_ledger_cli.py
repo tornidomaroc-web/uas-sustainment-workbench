@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,19 @@ def test_a_refusal_exits_non_zero_with_the_sentence(
             "x",
         )
     assert "public" in capsys.readouterr().err
+
+
+def test_evidence_command_writes_html_and_json(db: str, tmp_path: Path) -> None:
+    out = tmp_path / "SYN-04.html"
+    main(["--db", db, "evidence", "SYN-04", "--out", str(out), "--json",
+          "--as-of", "2026-10-01T00:00:00Z"])  # fmt: skip
+    html = out.read_text(encoding="utf-8")
+    assert html.startswith("<!doctype html>") and "Draft evidence pack for OSO #03: SYN-04" in html
+    data = json.loads((tmp_path / "SYN-04.json").read_text(encoding="utf-8"))
+    assert data["as_of"] == "2026-10-01T00:00:00Z" and data["ledger_hash"]
+    assert data["commit"] != "" and len(data["commit"]) >= 7  # from git here, or "unknown"
+    with pytest.raises(SystemExit):
+        main(["--db", db, "evidence", "NO-SUCH", "--out", str(tmp_path / "x.html")])
 
 
 def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> None:

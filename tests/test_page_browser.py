@@ -176,6 +176,37 @@ def test_maintenance_history_is_shown_read_only_and_labelled(page: Any) -> None:
     assert page.problems == []
 
 
+def test_sample_evidence_pack_is_linked_and_honest_first(page: Any, site_url: str) -> None:
+    link = page.locator("a#sample-evidence")
+    assert link.count() == 1
+    text = page.inner_text("#evidence-section")
+    assert "draft" in text.lower() and "synthetic" in text.lower()
+    assert "does not show compliance" in text
+    href = link.get_attribute("href")
+    assert href == "evidence/SYN-04.html"
+    pack = page.context.new_page()
+    problems: list[str] = []
+    pack.on("pageerror", lambda e: problems.append(str(e)))
+    pack.goto(site_url + href, wait_until="load")
+    body = pack.inner_text("body")
+    first = body[:1200]
+    for phrase in (
+        "Draft evidence pack for OSO #03",
+        "does not show compliance",
+        "claims no robustness level",
+        "does not certify airworthiness or return to service",
+        "the authority decides",
+        "Synthetic data",
+    ):
+        assert phrase in first, phrase
+    assert BROKEN.search(body) is None
+    assert "superseded" in body.lower() or "Maintenance log" in body
+    assert "Not evidenced by this workbench" in body
+    assert pack.locator(".print-header").count() == 1
+    assert problems == []
+    pack.close()
+
+
 def test_recorded_assistant_runs_are_labelled_and_show_their_evidence(page: Any) -> None:
     section = page.locator("#assistant")
     text = section.inner_text()
