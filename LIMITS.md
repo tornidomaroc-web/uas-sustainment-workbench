@@ -118,6 +118,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   records behind each recorded answer are what the current code returns.
 - **Hours and cycles cannot be projected.** Only calendar limits have a date, so "what is
   due before Friday" is answered for calendar items and stated as unknown for the rest.
+- **The ledger checks catch what they can match.** An entry id, a work order id or state,
+  and a name written as an initial and a surname are checked against the fetched entries;
+  a name written any other way is not recognised as a name. A superseded entry named
+  without its successor is caught; a superseded fact restated without naming the entry is
+  not. The entries under each answer exist so a reader can check that.
 - **No airworthiness decision.** The assistant reports the board state and its reasons and
   says that the workbench does not certify airworthiness.
 

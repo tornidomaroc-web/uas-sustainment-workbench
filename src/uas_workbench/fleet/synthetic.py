@@ -97,8 +97,18 @@ def generate(config: FleetConfig) -> Fleet:
         if life_case == "no_record":
             continue
         record, fitted = _maintenance(parts, config, key, index, life_case, flights)
-        entries.extend(_as_entries(record, fitted, attribution))
-    return Fleet(tuple(aircraft), flights, tuple(entries))
+        entries.extend(_as_entries(record, fitted, attribution, corrected=index == 1))
+    # Provisional ids in order of entry; the store maps them to its own ids on seeding. The
+    # one correction points at the earlier time-in-service entry of the same aircraft.
+    numbered: list[Entry] = []
+    for n, e in enumerate(entries, start=1):
+        supersedes = None
+        reason = None
+        if e.kind == "time_in_service.set" and e.statement.endswith(", corrected"):
+            supersedes = next(p.id for p in numbered if p.subject == e.subject and p.kind == e.kind)
+            reason = "[synthetic] the previous logbook total was misread by ten hours"
+        numbered.append(dataclasses.replace(e, id=n, supersedes=supersedes, reason=reason))
+    return Fleet(tuple(aircraft), flights, tuple(numbered))
 
 
 def _flights(
@@ -361,12 +371,16 @@ def _maintenance(
     return record, [*packs, prop]
 
 
-def _as_entries(record: MaintenanceRecord, parts: list[Component], by: str) -> list[Entry]:
+def _as_entries(
+    record: MaintenanceRecord, parts: list[Component], by: str, corrected: bool = False
+) -> list[Entry]:
     """The ledger entries that project back to exactly this record and these components.
 
     Every entry is synthetic, entered by the generator, and its statement starts with
     "[synthetic]". Removals sort before installs at the same instant, so a part that moved
-    between airframes is recorded as taken off one and fitted to the other.
+    between airframes is recorded as taken off one and fitted to the other. With
+    `corrected`, the time in service is entered wrong first and then superseded by the
+    right value, so the demo shows what a correction looks like; the projection is the same.
     """
     key = record.aircraft_key
 
@@ -387,15 +401,32 @@ def _as_entries(record: MaintenanceRecord, parts: list[Component], by: str) -> l
 
     out: list[tuple[datetime, int, Entry]] = []
     earliest = min(i.done_utc for i in record.inspections) - timedelta(days=1)
+    if corrected:
+        out.append(
+            (
+                earliest,
+                0,
+                entry(
+                    key,
+                    "time_in_service.set",
+                    earliest,
+                    "[synthetic] time in service carried over from the previous logbook",
+                    before_s=round(record.time_in_service_before_s - 10.0 * H, 1),
+                ),
+            )
+        )
+        # The correction is appended at the end: the store assigns ids in order of entry,
+        # and generate() rewrites its supersedes pointer once the target's id is known.
     out.append(
         (
             earliest,
-            0,
+            1 if corrected else 0,
             entry(
                 key,
                 "time_in_service.set",
                 earliest,
-                "[synthetic] time in service carried over from the previous logbook",
+                "[synthetic] time in service carried over from the previous logbook"
+                + (", corrected" if corrected else ""),
                 before_s=record.time_in_service_before_s,
             ),
         )

@@ -117,9 +117,20 @@ append; `GET /entries` and `GET /components` read the history with superseded en
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
 set; what that does not protect against is in [LIMITS.md](LIMITS.md).
 
+**The assistant reads the ledger, and only reads it.** A sixth tool, over `GET /entries`,
+gives it who recorded what, when, and what superseded what; superseded entries always come
+back flagged, and the model is told never to present one as current. The grounding check
+grew with it: an entry id, a person's name, a work order state or a work order id that none
+of the fetched entries contain marks the answer unverified, an entry named without its
+successor marks it unverified, and an answer that drew on entries must end with the sentence
+that entries record what the entering person stated and that the workbench does not certify
+airworthiness or return to service. Four more recorded runs show it: who recorded a work
+order, what superseded what and why, which components were fitted to an aircraft, and a
+question the ledger cannot answer, a certificate number, answered as not recorded. The seeded
+fleet carries one synthetic correction so the page shows what superseding looks like.
+
 ## What remains
 
-- The assistant cannot read the ledger yet: its tools are the five read endpoints it had.
 - Records are entered by a person and taken at their word: no users, no roles, no
   signatures, no certificate check, no attachment. The write token is a shared secret.
 - A life limit is never reset by work. A life-limited part at its limit is replaced by
@@ -137,8 +148,7 @@ set; what that does not protect against is in [LIMITS.md](LIMITS.md).
 
 ## What comes next
 
-1. A read-only ledger tool for the assistant, so it can answer "who did what, when".
-2. An export of one aircraft's records and due list shaped as OSO #03 evidence.
+1. An export of one aircraft's records and due list shaped as OSO #03 evidence.
 
 ## Scope and non-goals
 
