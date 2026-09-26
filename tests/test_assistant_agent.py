@@ -129,3 +129,90 @@ def test_grounding_rules_on_hand_built_records() -> None:
     assert ground("PROP-02 has 8.5 h left.", calls).unsupported == ("8.5",)
     assert ground("Aircraft SYN-02 has 12 items.", calls).unsupported == ("12",)
     assert ground("Nothing to report.", ()).verified
+
+
+LEDGER_NOTE = "The workbench does not certify airworthiness or return to service."
+
+
+def ledger_call(*entries: dict[str, Any]) -> Any:
+    from uas_workbench.assistant.agent import Call
+
+    return Call(
+        "ledger_entries",
+        {"aircraft": "SYN-05"},
+        "/entries",
+        {"aircraft": "SYN-05", "include_superseded": "true"},
+        list(entries),
+    )
+
+
+def entry(id_: int, **fields: Any) -> dict[str, Any]:
+    base = {
+        "id": id_,
+        "subject": "SYN-05",
+        "kind": "work_order.open",
+        "occurred_utc": "2026-08-07T09:00:00Z",
+        "recorded_utc": "2026-08-07T09:00:00Z",
+        "entered_by": "synthetic fleet generator, seed 20260925",
+        "statement": "[synthetic] low-battery message in flight 2",
+        "details": {"work_id": "WO-SYN-05-1", "state": "in_work"},
+        "supersedes": None,
+        "reason": None,
+        "synthetic": True,
+        "superseded_by": None,
+        "note": LEDGER_NOTE,
+    }
+    return {**base, **fields}
+
+
+def test_grounding_covers_entry_ids_people_states_and_work_ids() -> None:
+    calls = (ledger_call(entry(12), entry(13, entered_by="R. Tester, maintenance", id=13)),)
+    good = ground(
+        "Entry #12 was recorded on 2026-08-07 by the synthetic fleet generator; work order "
+        f"WO-SYN-05-1 is in work. Entry 13 was entered by R. Tester. {LEDGER_NOTE}",
+        calls,
+    )
+    assert good.verified, good.unsupported
+    bad = ground(
+        "Entry #14 was recorded by J. Nobody and work order WO-77 is awaiting parts. "
+        f"{LEDGER_NOTE}",
+        calls,
+    )
+    assert bad.unsupported == ("#14", "J. Nobody", "WO-77", "awaiting parts")
+    # A recorded entry id below the free-count threshold is still checked as an id.
+    assert ground(f"Entry #3 says so. {LEDGER_NOTE}", calls).unsupported == ("#3",)
+
+
+def test_an_answer_drawing_on_entries_must_carry_the_note() -> None:
+    calls = (ledger_call(entry(12)),)
+    missing = ground("Entry #12 opened work order WO-SYN-05-1.", calls)
+    assert missing.unsupported == (
+        "the sentence that entries record what the person stated is missing",
+    )
+    from uas_workbench.assistant.agent import Call
+
+    no_ledger = (Call("list_aircraft", {}, "/aircraft", {}, [{"key": "SYN-05"}]),)
+    assert ground("SYN-05 is in the fleet.", no_ledger).verified
+
+
+def test_a_superseded_entry_must_not_be_presented_as_current() -> None:
+    calls = (
+        ledger_call(
+            entry(20, kind="time_in_service.set", details={"before_s": 100.0}, superseded_by=21),
+            entry(
+                21,
+                kind="time_in_service.set",
+                details={"before_s": 200.0},
+                supersedes=20,
+                reason="[synthetic] the previous logbook total was misread",
+            ),
+        ),
+    )
+    stale = ground(f"Entry #20 set the time in service before the first log. {LEDGER_NOTE}", calls)
+    assert stale.unsupported == ("entry #20 is superseded by #21, which the answer does not say",)
+    fine = ground(
+        "Entry #20 was superseded by entry #21 because the previous logbook total was "
+        f"misread. {LEDGER_NOTE}",
+        calls,
+    )
+    assert fine.verified, fine.unsupported

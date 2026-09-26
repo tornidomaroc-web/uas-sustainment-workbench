@@ -23,19 +23,42 @@ def routes() -> dict[str, set[str]]:
     return out
 
 
-def test_every_tool_is_a_get_endpoint_of_the_service_and_no_endpoint_writes() -> None:
+def test_every_tool_is_a_get_of_an_existing_route_and_no_tool_can_write() -> None:
     by_path = routes()
     for tool in TOOLS:
         assert tool.path in by_path, tool.name
-        assert by_path[tool.path] == {"GET"}, tool.name
-    assert "/ingest" not in {t.path for t in TOOLS}
+        assert tool.method == "GET" and "GET" in by_path[tool.path], tool.name
+    # Routes that only write are never tool paths; /entries is shared with a POST, and the
+    # tool layer can only ever issue GET: resolve() returns a path and a query, nothing else.
+    write_only = {p for p, methods in by_path.items() if "GET" not in methods}
+    assert "/ingest" in write_only
+    assert {t.path for t in TOOLS}.isdisjoint(write_only)
     assert {t.name for t in TOOLS} >= {
         "list_aircraft",
         "aircraft_due",
         "fleet_due",
         "reconcile_aircraft",
         "list_flights",
+        "ledger_entries",
     }
+
+
+def test_ledger_tool_reads_history_with_superseded_entries_flagged() -> None:
+    path, query = resolve("ledger_entries", {"aircraft": "SYN-04"}, AS_OF)
+    assert (path, query) == ("/entries", {"aircraft": "SYN-04", "include_superseded": "true"})
+    path, query = resolve("ledger_entries", {"component": "BAT-04A"}, AS_OF)
+    assert (path, query) == ("/entries", {"subject": "BAT-04A", "include_superseded": "true"})
+    assert resolve("ledger_entries", {}, AS_OF) == ("/entries", {"include_superseded": "true"})
+    # Whatever the model supplies, superseded entries are always fetched and flagged, so the
+    # grounding check can see what superseded what; and no other argument gets through.
+    _, query = resolve(
+        "ledger_entries", {"aircraft": "SYN-04", "include_superseded": "false"}, AS_OF
+    )
+    assert query["include_superseded"] == "true"
+    _, query = resolve("ledger_entries", {"aircraft": "SYN-04", "method": "POST"}, AS_OF)
+    assert set(query) == {"aircraft", "include_superseded"}
+    with pytest.raises(ValueError):
+        resolve("ledger_entries", {"aircraft": "../metrics"}, AS_OF)
 
 
 def test_resolve_builds_the_path_and_pins_the_computation_date() -> None:
@@ -70,3 +93,7 @@ def test_ollama_tool_schema_names_every_tool_with_its_parameters() -> None:
     due = next(s for s in schema if s["function"]["name"] == "aircraft_due")
     assert due["function"]["parameters"]["required"] == ["key"]
     assert "as_of" not in due["function"]["parameters"]["properties"]
+    ledger = next(s for s in schema if s["function"]["name"] == "ledger_entries")
+    assert set(ledger["function"]["parameters"]["properties"]) == {"aircraft", "component"}
+    assert ledger["function"]["parameters"]["required"] == []
+    assert "superseded" in ledger["function"]["description"]
