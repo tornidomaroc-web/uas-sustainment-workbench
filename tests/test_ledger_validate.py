@@ -297,13 +297,15 @@ def test_corrections_need_a_live_target_of_the_same_subject_and_a_reason(store: 
     assert first.id is not None
     refused(
         store,
-        draft("SYN-01", "time_in_service.set", {"before_s": 200.0}, supersedes=999),
+        draft("SYN-01", "time_in_service.set", {"before_s": 200.0}, supersedes=999, reason="x"),
         404,
         "999",
     )
     refused(
         store,
-        draft("SYN-02", "time_in_service.set", {"before_s": 200.0}, supersedes=first.id),
+        draft(
+            "SYN-02", "time_in_service.set", {"before_s": 200.0}, supersedes=first.id, reason="x"
+        ),
         409,
         "SYN-01",
     )

@@ -51,7 +51,14 @@ class _AircraftUsage:
     notes: tuple[str, ...]
 
 
-def _usage(key: str, records: Sequence[FlightRecord], tolerance_s: float) -> _AircraftUsage:
+def _before(utc: Maybe[datetime], until: datetime | None) -> bool:
+    """A flight counts up to `until`; a flight with no UTC start is counted whenever."""
+    return until is None or not is_known(utc) or utc <= until
+
+
+def _usage(
+    key: str, records: Sequence[FlightRecord], tolerance_s: float, until: datetime | None = None
+) -> _AircraftUsage:
     result = reconcile(records, aircraft_key=key, tolerance_s=tolerance_s)
     by_ref = {r.log_ref: r for r in records}
     flown: list[_Flown] = []
@@ -61,15 +68,32 @@ def _usage(key: str, records: Sequence[FlightRecord], tolerance_s: float) -> _Ai
         if why.startswith("duplicate of "):
             notes.append(f"log {r.log_ref} of aircraft {key} is a {why} and is not counted")
             continue
+        if not _before(r.utc_start, until):
+            continue
         seconds = r.flight_time_s if is_known(r.flight_time_s) else 0.0
         cycle = not is_known(r.flight_time_s) or r.flight_time_s > 0
         flown.append(_Flown(r.log_ref, r.utc_start, seconds, cycle))
     unlogged = tuple(
         (by_ref[f.log_ref].utc_start, f.seconds)
         for f in result.findings
-        if f.kind == "unlogged_flight" and f.log_ref in by_ref
+        if f.kind == "unlogged_flight"
+        and f.log_ref in by_ref
+        and _before(by_ref[f.log_ref].utc_start, until)
     )
     return _AircraftUsage(tuple(flown), unlogged, tuple(notes))
+
+
+def time_in_service(
+    key: str,
+    before_s: float,
+    records: Sequence[FlightRecord],
+    tolerance_s: float = FLUSH_INTERVAL_S,
+    until: datetime | None = None,
+) -> float:
+    """Total time in service (14 CFR 91.417(a)(2)(i)): the hours before the first log, plus
+    the logged flight up to `until`, plus the flight reconcile() found no log covers."""
+    own = _usage(key, records, tolerance_s, until)
+    return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
 
 
 def _installed_on(component: Component, key: str, as_of: datetime) -> bool:
@@ -263,13 +287,14 @@ def due_list(
 
     `components` may be the whole fleet's; the ones installed on this aircraft at `as_of` are
     selected here. `flights_of` is asked for every aircraft a selected component has been on,
-    because its life status travelled with it (14 CFR 43.10).
+    because its life status travelled with it (14 CFR 43.10). Flights after `as_of` do not
+    count; a flight with no UTC start counts whenever.
     """
     installed = [c for c in components if _installed_on(c, aircraft_key, as_of)]
     if maintenance is None and not installed:
         return DueList(aircraft_key, as_of, False, Unknown(NO_RECORD), ())
     keys = {aircraft_key} | {i.aircraft_key for c in installed for i in c.installations}
-    usage = {k: _usage(k, flights_of(k), tolerance_s) for k in keys}
+    usage = {k: _usage(k, flights_of(k), tolerance_s, until=as_of) for k in keys}
     own = usage[aircraft_key]
     notes = list(own.notes)
     if installed:
