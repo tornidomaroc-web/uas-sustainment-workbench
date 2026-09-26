@@ -150,6 +150,23 @@ def test_fleet_due_view_is_the_due_soon_and_overdue_items_worst_first(client: Te
     assert all(isinstance(i["synthetic"], bool) for i in items)
 
 
+def test_evidence_pack_routes(client: TestClient) -> None:
+    pack = client.get("/aircraft/SYN-04/evidence", params={"as_of": "2026-10-01T00:00:00Z"}).json()
+    assert pack["title"] == "Draft evidence pack for OSO #03: SYN-04"
+    assert pack["as_of"] == "2026-10-01T00:00:00Z" and pack["ledger_hash"]
+    assert {i["status"] for i in pack["items"]} <= {"supported", "partly", "not evidenced"}
+    page = client.get("/aircraft/SYN-04/evidence.html", params={"as_of": "2026-10-01T00:00:00Z"})
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert page.text.startswith("<!doctype html>") and "does not show compliance" in page.text
+    assert client.get("/aircraft/no-such/evidence").status_code == 404
+    assert client.get("/aircraft/no-such/evidence.html").status_code == 404
+    real = client.get(f"/aircraft/{ALFA_KEY}/evidence").json()
+    assert real["log"] == [] and real["aircraft"]["synthetic"] is False
+    from uas_workbench.assistant.tools import TOOLS
+
+    assert not any("evidence" in t.path for t in TOOLS)  # the assistant gains no tool
+
+
 def test_unknown_aircraft_is_404(client: TestClient) -> None:
     response = client.get("/aircraft/no-such-aircraft/flights")
     assert response.status_code == 404

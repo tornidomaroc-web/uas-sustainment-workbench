@@ -53,6 +53,15 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     )
     assert alfa["entries"] == []
 
+    # One sample draft evidence pack, for one synthetic aircraft, generated with the site.
+    assert data["sample_evidence"] == {"aircraft_key": "SYN-04", "html": "evidence/SYN-04.html",
+                                       "json": "evidence/SYN-04.json"}  # fmt: skip
+    sample = (out / "evidence" / "SYN-04.html").read_text(encoding="utf-8")
+    assert sample.startswith("<!doctype html>") and "Synthetic data" in sample
+    pack = json.loads((out / "evidence" / "SYN-04.json").read_text(encoding="utf-8"))
+    assert pack["as_of"] == data["as_of"] and pack["generated_utc"] == data["generated_utc"]
+    assert not (out / "evidence" / f"{ALFA_KEY}.html").exists()  # no real aircraft sample
+
     # The recorded assistant runs travel with the page, labelled as recorded, not live.
     runs = json.loads((out / "assistant.json").read_text(encoding="utf-8"))
     assert "recorded" in runs["notice"].lower() and "not live" in runs["notice"].lower()
