@@ -1,0 +1,151 @@
+{
+ "slug": "which-components-were-fitted-to-syn-04-and-when",
+ "question": "Which components were fitted to SYN-04, and when?",
+ "answer": "Components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-04A fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-26T02:54:33+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "",
+   "tool_calls": [
+    {
+     "name": "ledger_entries",
+     "arguments": {
+      "aircraft": "SYN-04"
+     }
+    }
+   ]
+  },
+  {
+   "content": "Components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-04A fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "ledger_entries",
+   "arguments": {
+    "aircraft": "SYN-04"
+   },
+   "path": "/entries",
+   "query": {
+    "aircraft": "SYN-04",
+    "include_superseded": "true"
+   },
+   "result": [
+    {
+     "id": 31,
+     "subject": "SYN-04",
+     "kind": "time_in_service.set",
+     "occurred_utc": "2026-01-19T00:00:00Z",
+     "recorded_utc": "2026-01-19T00:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] time in service carried over from the previous logbook",
+     "details": {
+      "before_s": 286669.18258714676
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 32,
+     "subject": "SYN-04",
+     "kind": "inspection.done",
+     "occurred_utc": "2026-01-20T00:00:00Z",
+     "recorded_utc": "2026-01-20T00:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] annual inspection completed",
+     "details": {
+      "name": "annual inspection",
+      "at_hours_s": 0.0,
+      "carried_over_s": 0.0
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 34,
+     "subject": "SYN-04",
+     "kind": "inspection.done",
+     "occurred_utc": "2026-06-04T00:00:00Z",
+     "recorded_utc": "2026-06-04T00:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] 100-hour inspection completed",
+     "details": {
+      "name": "100-hour inspection",
+      "at_hours_s": 244978.60991624248,
+      "carried_over_s": 0.0
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 36,
+     "subject": "BAT-04B",
+     "kind": "component.install",
+     "occurred_utc": "2026-08-12T09:00:00Z",
+     "recorded_utc": "2026-08-12T09:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] battery pack BAT-04B fitted to SYN-04",
+     "details": {
+      "aircraft_key": "SYN-04"
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 37,
+     "subject": "PROP-04",
+     "kind": "component.install",
+     "occurred_utc": "2026-08-12T09:00:00Z",
+     "recorded_utc": "2026-08-12T09:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] propeller set PROP-04 fitted to SYN-04",
+     "details": {
+      "aircraft_key": "SYN-04"
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 39,
+     "subject": "BAT-04A",
+     "kind": "component.install",
+     "occurred_utc": "2026-08-13T08:00:00Z",
+     "recorded_utc": "2026-08-13T08:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] battery pack BAT-04A fitted to SYN-04",
+     "details": {
+      "aircraft_key": "SYN-04"
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    }
+   ]
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}

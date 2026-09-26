@@ -1,0 +1,44 @@
+{
+ "slug": "who-inspected-syn-06-last-and-what-certificate-number-did-th",
+ "question": "Who inspected SYN-06 last, and what certificate number did they give?",
+ "answer": "The ledger_entries function did not return any entries related to inspections or certificate numbers for SYN-06. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+ "as_of": "2026-10-01T00:00:00+00:00",
+ "recorded_utc": "2026-09-26T02:54:35+00:00",
+ "model_tag": "qwen3:8b",
+ "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+ "synthetic": true,
+ "fleet": "seeded synthetic fleet plus the two real showcase excerpts",
+ "turns": [
+  {
+   "content": "The ledger_entries function can be used to find who inspected SYN-06 last and any certificate number they might have given. Let's fetch the relevant entries.\n",
+   "tool_calls": [
+    {
+     "name": "ledger_entries",
+     "arguments": {
+      "aircraft": "SYN-06"
+     }
+    }
+   ]
+  },
+  {
+   "content": "The ledger_entries function did not return any entries related to inspections or certificate numbers for SYN-06. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+   "tool_calls": []
+  }
+ ],
+ "calls": [
+  {
+   "name": "ledger_entries",
+   "arguments": {
+    "aircraft": "SYN-06"
+   },
+   "path": "/entries",
+   "query": {
+    "aircraft": "SYN-06",
+    "include_superseded": "true"
+   },
+   "result": []
+  }
+ ],
+ "grounding_verified": true,
+ "grounding_unsupported": []
+}
