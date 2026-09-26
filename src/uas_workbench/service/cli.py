@@ -135,7 +135,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         print(json.dumps([c.result for c in answer.calls], indent=1))
 
 
-def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **payload: object) -> None:
+def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details: object) -> None:
     """Build one entry from the parsed arguments, validate and append it, and print it."""
     import sys
     from datetime import UTC, datetime
@@ -154,7 +154,7 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **payload:
         recorded_utc=now,
         entered_by=args.by,
         statement=getattr(args, "statement", "") or "",
-        payload={k: v for k, v in payload.items() if v is not None},
+        details={k: v for k, v in details.items() if v is not None},
         supersedes=getattr(args, "supersedes", None),
         reason=getattr(args, "reason", None),
         synthetic=False,
@@ -166,7 +166,7 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **payload:
     except LedgerError as exc:
         print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
         sys.exit(1)
-    work = f" {stored.payload['work_id']}" if "work_id" in stored.payload else ""
+    work = f" {stored.details['work_id']}" if "work_id" in stored.details else ""
     print(f"entry {stored.id} recorded: {stored.kind} on {stored.subject}{work}. {NOTE}")
 
 
@@ -225,8 +225,8 @@ def cmd_record(args: argparse.Namespace) -> None:
             line = (
                 f"#{e.id} {e.occurred_utc:%Y-%m-%d %H:%M} {e.kind} by {e.entered_by}: {e.statement}"
             )
-            if e.payload.get("work_id"):
-                line += f" [{e.payload['work_id']}]"
+            if e.details.get("work_id"):
+                line += f" [{e.details['work_id']}]"
             if e.supersedes is not None:
                 line += f" (supersedes #{e.supersedes}: {e.reason})"
             if e.id in dead:

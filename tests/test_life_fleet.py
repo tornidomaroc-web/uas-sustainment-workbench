@@ -111,7 +111,7 @@ def test_the_seeded_fleet_is_entries_only_and_names_no_real_aircraft() -> None:
     assert all(e.statement.startswith("[synthetic]") for e in fleet.entries)
     assert all("synthetic" in e.entered_by for e in fleet.entries)
     subjects = {e.subject for e in fleet.entries}
-    named = {str(v) for e in fleet.entries for v in e.payload.values()} | subjects
+    named = {str(v) for e in fleet.entries for v in e.details.values()} | subjects
     assert not named & {ALFA_KEY, PX4_KEY}
     assert all(e.supersedes is None for e in fleet.entries)  # seeded history has no corrections
 

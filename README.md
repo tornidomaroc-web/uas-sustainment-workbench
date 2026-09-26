@@ -143,7 +143,7 @@ set; what that does not protect against is in [LIMITS.md](LIMITS.md).
 ## Scope and non-goals
 
 - Civil fleet sustainment only: usage counters, component life, inspections, readiness.
-- No payload, targeting, engagement or counter-UAS functions.
+- No details, targeting, engagement or counter-UAS functions.
 - Public and synthetic data only. Not endorsed by, or built for, any armed force.
 - No raw flight logs in this repository. The only log files are four short excerpts with
   positions and device ids removed. See [DATA.md](DATA.md).

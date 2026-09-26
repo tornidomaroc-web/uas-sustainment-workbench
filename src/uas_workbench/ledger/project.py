@@ -48,7 +48,7 @@ class _Aircraft:
 
 class _Component:
     def __init__(self, e: Entry) -> None:
-        p = e.payload
+        p = e.details
         self.kind = str(p["kind"])
         self.in_service_since = date.fromisoformat(str(p["in_service_since"]))
         self.hours_s_before = float(p["hours_s_before"])
@@ -63,7 +63,7 @@ def project(entries: Iterable[Entry]) -> Projection:
     aircraft: dict[str, _Aircraft] = {}
     components: dict[str, _Component] = {}
     for e in live:
-        p = e.payload
+        p = e.details
         if e.kind in AIRCRAFT_KINDS:
             a = aircraft.setdefault(e.subject, _Aircraft())
             a.entries += 1

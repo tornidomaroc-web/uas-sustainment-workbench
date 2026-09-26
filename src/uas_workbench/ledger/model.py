@@ -20,16 +20,16 @@ NOTE = (
 )
 
 AIRCRAFT_KINDS: tuple[str, ...] = (
-    "work_order.open",  # payload: state, optional work_id (assigned when absent)
-    "work_order.state",  # payload: work_id, state
-    "work_order.close",  # payload: work_id
-    "inspection.done",  # payload: name, optional at_hours_s (derived when absent), carried_over_s
-    "time_in_service.set",  # payload: before_s, the hours before the first log this tool holds
+    "work_order.open",  # details: state, optional work_id (assigned when absent)
+    "work_order.state",  # details: work_id, state
+    "work_order.close",  # details: work_id
+    "inspection.done",  # details: name, optional at_hours_s (derived when absent), carried_over_s
+    "time_in_service.set",  # details: before_s, the hours before the first log this tool holds
 )
 COMPONENT_KINDS: tuple[str, ...] = (
-    "component.register",  # payload: kind, in_service_since, hours_s_before, cycles_before
-    "component.install",  # payload: aircraft_key; the time is the entry's occurred_utc
-    "component.remove",  # payload: aircraft_key
+    "component.register",  # details: kind, in_service_since, hours_s_before, cycles_before
+    "component.install",  # details: aircraft_key; the time is the entry's occurred_utc
+    "component.remove",  # details: aircraft_key
 )
 RETRACTION = "retraction"  # supersedes an entry and replaces it with nothing
 KINDS: tuple[str, ...] = (*AIRCRAFT_KINDS, *COMPONENT_KINDS, RETRACTION)
@@ -44,7 +44,7 @@ class Entry:
     recorded_utc: datetime  # when it was entered
     entered_by: str  # the person's name and role, as typed; not verified
     statement: str  # the description in the person's words
-    payload: dict[str, Any]
+    details: dict[str, Any]
     supersedes: int | None
     reason: str | None  # why the superseded entry was wrong; required with supersedes
     synthetic: bool
