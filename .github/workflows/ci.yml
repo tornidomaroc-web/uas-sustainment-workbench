@@ -33,8 +33,11 @@ jobs:
       - name: Static demo builds from the code
         run: |
           uasw --db /tmp/fleet.sqlite seed
-          uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
+          UASW_COMMIT="$GITHUB_SHA" uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
           test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
+          test -s /tmp/site/evidence/SYN-04.html && test -s /tmp/site/evidence/SYN-04.json
+          grep -q 'does not show compliance' /tmp/site/evidence/SYN-04.html
+          grep -q "\"commit\": \"$GITHUB_SHA\"" /tmp/site/evidence/SYN-04.json
           grep -q '"status_reasons"' /tmp/site/fleet.json
           grep -q 'cycles past its' /tmp/site/fleet.json
           test -s /tmp/site/assistant.json && grep -q '"grounding_verified": true' /tmp/site/assistant.json
@@ -52,7 +55,7 @@ jobs:
           # Requests from the host reach the container from the Docker bridge, not from
           # loopback, so writes need a token; a random one for this run only.
           TOKEN=$(openssl rand -hex 16)
-          docker run -d --name uasw -p 127.0.0.1:8000:8000 -e UASW_WRITE_TOKEN="$TOKEN" uasw:ci
+          docker run -d --name uasw -p 127.0.0.1:8000:8000 -e UASW_WRITE_TOKEN="$TOKEN" -e UASW_COMMIT="$GITHUB_SHA" uasw:ci
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:8000/health && break
             sleep 2
@@ -62,6 +65,8 @@ jobs:
           curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/due | grep -q '"unserviceable"'
           curl -fsS http://127.0.0.1:8000/fleet/due | grep -q "cycles past its"
           curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_aircraft_by_status
+          curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/evidence | grep -q "\"commit\":\"$GITHUB_SHA\""
+          curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/evidence.html | grep -q 'claims no robustness level'
           # The ledger: a write without the token is refused, one with it is appended and
           # changes the board, and an impossible one is refused with a sentence, never a 500.
           ENTRY='{"subject":"SYN-01","kind":"work_order.open","occurred_utc":"2026-09-20T09:00:00Z","entered_by":"CI probe, maintenance","statement":"[ci] replacement propeller set on order","details":{"state":"awaiting_parts"}}'
