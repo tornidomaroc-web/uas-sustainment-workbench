@@ -220,7 +220,12 @@ def test_ledger_shaped_tokens_without_a_ledger_fetch_are_unverified() -> None:
         "Entry #3 was recorded by J. Nobody on 2026-08-14; work order WO-77 is deferred.", board
     )
     assert not fabricated.verified
-    assert set(fabricated.unsupported) >= {"entry #3", "J. Nobody", "WO-77", "deferred"}
+    assert set(fabricated.unsupported) >= {
+        "entry #3 without a ledger fetch",
+        "J. Nobody",
+        "WO-77",
+        "deferred",
+    }
     # A board sentence that says "awaiting parts", and a citation with a hash, still pass.
     assert ground("SYN-07 is on the ground awaiting parts since 2026-08-14.", board).verified
     due = (Call("fleet_due", {}, "/fleet/due", {}, [{"limit": 300.0, "source": "EASA"}]),)
