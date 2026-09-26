@@ -49,7 +49,8 @@ MAX_STEPS = 6
 NUMBER = re.compile(r"(?<![\w.-])-?\d+(?:\.\d+)?(?![\w.])")
 DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}(?!\d)")  # also inside 2026-08-07T09:00:00Z
 IDENT = re.compile(r"\b[A-Z]{2,6}(?:-[A-Z0-9]+)+\b")  # SYN-04, BAT-04A, WO-SYN-05-1, WO-59
-ENTRY_REF = re.compile(r"(?:\bentry\s*#?\s*|#)(\d+)\b", re.I)
+ENTRY_WORD = re.compile(r"\bentr(?:y|ies)\s*#?\s*(\d+)\b", re.I)  # "entry #12", "entry 12"
+ENTRY_HASH = re.compile(r"#(\d+)\b")  # "#12"; also "OSO #3" in a citation
 PERSON = re.compile(r"\b[A-Z]\. ?[A-Z][a-z]+\b")  # an initial and a surname, as people type
 WORK_STATES = {
     "awaiting_parts": ("awaiting parts", "awaiting_parts"),
@@ -120,13 +121,32 @@ def _entries(calls: tuple[Call, ...]) -> list[dict[str, Any]]:
 
 
 def _ledger_checks(text: str, calls: tuple[Call, ...], raw: str) -> set[str]:
-    """Entry ids, people, work order states, and the two rules every ledger answer obeys."""
+    """Entry ids, people and work order states, whether or not the ledger was fetched.
+
+    A person's name and a work order state must appear in some fetched record, ledger or
+    not: a board sentence that says "awaiting parts" supports the words. An entry named
+    as "entry #N" is ledger vocabulary and needs a ledger fetch that holds that id; a bare
+    "#N" counts as an entry only once the ledger was fetched, so a citation such as
+    "OSO #3" in an answer that never touched the ledger is judged as a number.
+    """
     unsupported: set[str] = set()
     entries = _entries(calls)
+    for person in PERSON.findall(text):
+        if person not in raw:
+            unsupported.add(person)
+    lower = text.lower()
+    lower_raw = raw.lower()
+    for phrases in WORK_STATES.values():
+        if any(p in lower for p in phrases) and not any(p in lower_raw for p in phrases):
+            unsupported.add(phrases[0])
     if not entries:
-        return unsupported  # every rule here is about ledger vocabulary
+        for m in ENTRY_WORD.finditer(text):
+            unsupported.add(f"entry #{m.group(1)} without a ledger fetch")
+        return unsupported
     by_id = {int(e["id"]): e for e in entries}
-    mentioned = {int(m.group(1)) for m in ENTRY_REF.finditer(text)}
+    mentioned = {int(m.group(1)) for m in ENTRY_WORD.finditer(text)} | {
+        int(m.group(1)) for m in ENTRY_HASH.finditer(text)
+    }
     for entry_id in mentioned:
         if entry_id not in by_id:
             unsupported.add(f"#{entry_id}")
@@ -136,13 +156,6 @@ def _ledger_checks(text: str, calls: tuple[Call, ...], raw: str) -> set[str]:
             unsupported.add(
                 f"entry #{entry_id} is superseded by #{successor}, which the answer does not say"
             )
-    for person in PERSON.findall(text):
-        if person not in raw:
-            unsupported.add(person)
-    lower = text.lower()
-    for state, phrases in WORK_STATES.items():
-        if any(p in lower for p in phrases) and state not in raw:
-            unsupported.add(phrases[0])
     if LEDGER_NOTE not in text:
         unsupported.add("the sentence that entries record what the person stated is missing")
     return unsupported
@@ -155,8 +168,11 @@ def ground(text: str, calls: tuple[Call, ...]) -> Grounding:
         if date not in dates:
             unsupported.add(date)
     without_dates = DATE.sub(" ", text)
-    # With ledger entries in play, "entry #12" is checked as an id below, not as a number.
-    without_refs = ENTRY_REF.sub(" ", without_dates) if _entries(calls) else without_dates
+    # "entry #12" is always judged as an entry reference below, never as a number; a bare
+    # "#12" is an entry reference once the ledger was fetched and a number otherwise.
+    without_refs = ENTRY_WORD.sub(" ", without_dates)
+    if _entries(calls):
+        without_refs = ENTRY_HASH.sub(" ", without_refs)
     for m in NUMBER.finditer(without_refs):
         token = m.group(0).lstrip("-")
         if "." not in token and int(token) <= FREE_COUNT:
