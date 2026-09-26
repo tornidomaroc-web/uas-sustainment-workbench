@@ -75,8 +75,20 @@ class Store:
             self.add_aircraft(aircraft)
             for record in fleet.flights.get(aircraft.key, ()):
                 self.add_flight(aircraft.key, record)
+        # A fleet's entries carry provisional ids; their supersedes pointers are mapped to
+        # the ids this store assigns, in order of entry.
+        assigned: dict[int, int] = {}
         for entry in fleet.entries:
-            self.append_entry(entry)
+            target = None
+            if entry.supersedes is not None:
+                if entry.supersedes not in assigned:
+                    raise ValueError(f"entry supersedes {entry.supersedes}, not seeded before it")
+                target = assigned[entry.supersedes]
+            stored = self.append_entry(
+                Entry(**{**entry.__dict__, "id": None, "supersedes": target})
+            )
+            if entry.id is not None:
+                assigned[entry.id] = stored.id or 0
 
     def add_aircraft(self, aircraft: Aircraft) -> None:
         with self._lock, self._db:
