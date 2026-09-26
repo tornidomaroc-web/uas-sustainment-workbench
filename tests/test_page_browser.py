@@ -158,6 +158,24 @@ def test_clicking_an_aircraft_shows_its_due_list_with_sources(page: Any) -> None
     assert page.problems == []
 
 
+def test_maintenance_history_is_shown_read_only_and_labelled(page: Any) -> None:
+    page.locator("#fleet tbody tr[data-key='SYN-04']").click()
+    page.wait_for_selector("#history tbody tr")
+    rows = page.locator("#history tbody tr")
+    assert rows.count() >= 5
+    for text in cells(page, "#history tbody td"):
+        assert text and BROKEN.search(text) is None, text
+    history = page.inner_text("#history-section")
+    assert "synthetic" in history.lower()
+    assert "component.install" in history or "install" in history
+    assert "not on this page" in history or "locally running service" in history
+    page.locator(f"#fleet tbody tr[data-key='{ALFA_KEY}']").click()
+    page.wait_for_selector("#flights tbody tr")
+    assert page.locator("#history tbody tr").count() == 0
+    assert "no maintenance entries" in page.inner_text("#history-section").lower()
+    assert page.problems == []
+
+
 def test_recorded_assistant_runs_are_labelled_and_show_their_evidence(page: Any) -> None:
     section = page.locator("#assistant")
     text = section.inner_text()
