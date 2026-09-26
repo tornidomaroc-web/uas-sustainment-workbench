@@ -137,6 +137,11 @@
     </table></div>
   </section>
 
+  <section id="evidence-section" class="card">
+    <h2 style="margin-top:0">Draft evidence pack for OSO #03: one sample</h2>
+    <p class="sub" id="evidence-sub"></p>
+  </section>
+
   <section id="assistant">
     <h2>Assistant: recorded runs, not live</h2>
     <p class="sub" id="assistant-notice"></p>
@@ -318,6 +323,15 @@
     }
     $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  const se = data.sample_evidence;
+  $('#evidence-sub').innerHTML = se
+    ? `One sample, generated with this page for the synthetic aircraft ${esc(se.aircraft_key)}: ` +
+      `<a id="sample-evidence" href="${esc(se.html)}">open the draft evidence pack</a> (or the <a href="${esc(se.json)}">same pack as JSON</a>). ` +
+      'It gathers what the records hold under OSO #03 of the JARUS SORA methodology, item by item, as supported, partly or not evidenced. ' +
+      'It is a draft for the operator to review: it does not show compliance, claims no robustness level, and does not certify airworthiness or return to service; the authority decides. ' +
+      'The same pack exists for every aircraft through the API and the command line of a locally running service.'
+    : 'No sample pack in this build.';
 
   try {
     const runs = await (await fetch('assistant.json')).json();
