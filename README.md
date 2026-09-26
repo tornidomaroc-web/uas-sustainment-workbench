@@ -95,11 +95,35 @@ the fixed computation date, and every record the answer rests on. A test replays
 recording against the current code on every CI run, so a change to the engine fails CI
 instead of leaving a stale answer on the page. No model runs in CI or on the page.
 
+**A maintenance ledger that is only ever appended.** Everything an operator records goes in
+as an entry: what happened, when it happened, when it was entered, by whom, and in what
+words (14 CFR 43.9(a): a description of the work, its date, the name of the person). Work
+orders open, change state and close, and drive the "in maintenance", "AOG" and "deferred
+defects" states; components are registered, installed and removed, and their counters
+travel with them (14 CFR 43.10); inspections are recorded as done, at the aircraft's time in
+service, which the tool derives from the logs if the person does not state it; the hours
+before the first log are set. Entries are never edited or deleted. A correction is a new
+entry that supersedes an older one with a reason, a retraction supersedes without
+replacing, and undoing a correction revives what it corrected. The records the life engine
+reads are projected from the live entries on every read, so nothing about maintenance is
+stored twice. Impossible input is refused before anything is written, with a status and a
+sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
+closed that is not open, a component installed while it is on another airframe, a
+back-dated installation that overlaps a window, a correction that would orphan later
+entries, a date in the future, negative hours or cycles. Every entry carries the sentence
+that it records what the entering person stated and that the workbench does not certify
+airworthiness or return to service. `POST /entries` and `uasw record` reach the same
+append; `GET /entries` and `GET /components` read the history with superseded entries
+flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
+set; what that does not protect against is in [LIMITS.md](LIMITS.md).
+
 ## What remains
 
-- Maintenance records (time in service, inspections done, components fitted, work orders)
-  can only be seeded today. There is no endpoint or command to enter or edit them yet; an
-  aircraft you `ingest` stays unknown until that exists.
+- The assistant cannot read the ledger yet: its tools are the five read endpoints it had.
+- Records are entered by a person and taken at their word: no users, no roles, no
+  signatures, no certificate check, no attachment. The write token is a shared secret.
+- A life limit is never reset by work. A life-limited part at its limit is replaced by
+  registering and installing a different component; there is no time-since-overhaul.
 - The assistant is a local command, not a live page feature; the page replays recordings.
   The grounding check catches invented numbers, ids and dates, not a wrong sentence built
   from real ones; the records under each answer are there so a reader can check the rest.
@@ -113,7 +137,8 @@ instead of leaving a stale answer on the page. No model runs in CI or on the pag
 
 ## What comes next
 
-1. Entering and editing maintenance records through the API and the CLI.
+1. A read-only ledger tool for the assistant, so it can answer "who did what, when".
+2. An export of one aircraft's records and due list shaped as OSO #03 evidence.
 
 ## Scope and non-goals
 
@@ -129,6 +154,12 @@ instead of leaving a stale answer on the page. No model runs in CI or on the pag
 docker compose up                 # then open http://localhost:8000/docs
 ```
 
+The port is bound to this machine only. Writes from the host reach the container from the
+Docker bridge, not from loopback, so they need a token:
+`export UASW_WRITE_TOKEN=$(openssl rand -hex 16)` before `docker compose up`, then send it as
+`Authorization: Bearer <token>`. Without one, reads work and every write is refused with a
+message saying so.
+
 Without Docker:
 
 ```bash
@@ -138,6 +169,18 @@ uasw serve                                        # seeds on first start; /docs,
 uasw ingest my-aircraft path/to/log.ulg           # add your own logs (never stored raw)
 uasw export-static --out site                     # the static demo, from the same store
 ruff check . && mypy && pytest                    # no network, no downloads needed
+```
+
+Recording maintenance, on the same store, with no service running:
+
+```bash
+uasw record work-order open my-aircraft --state awaiting_parts --by "A. Name, maintenance" \
+    --statement "replacement propeller set on order after a ground strike"
+uasw record component register PACK-7 --kind "battery pack" --since 2026-08-01 --by "..." --statement "..."
+uasw record component install PACK-7 my-aircraft --by "..." --statement "..."
+uasw record inspection my-aircraft "100-hour inspection" --by "..." --statement "..."
+uasw record history my-aircraft --all              # superseded entries too, with the reasons
+uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
 ```
 
 The assistant needs a running service and a local [Ollama](https://ollama.com) with the
