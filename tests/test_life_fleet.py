@@ -103,6 +103,19 @@ def test_the_duplicate_upload_is_not_counted_twice() -> None:
     assert due.time_in_service_s == fleet.maintenance["SYN-03"].time_in_service_before_s + logged
 
 
+def test_the_seeded_fleet_is_entries_only_and_names_no_real_aircraft() -> None:
+    from uas_workbench.fleet.showcase import ALFA_KEY, PX4_KEY
+
+    fleet = generate(CONFIG)
+    assert fleet.entries and all(e.synthetic for e in fleet.entries)
+    assert all(e.statement.startswith("[synthetic]") for e in fleet.entries)
+    assert all("synthetic" in e.entered_by for e in fleet.entries)
+    subjects = {e.subject for e in fleet.entries}
+    named = {str(v) for e in fleet.entries for v in e.payload.values()} | subjects
+    assert not named & {ALFA_KEY, PX4_KEY}
+    assert all(e.supersedes is None for e in fleet.entries)  # seeded history has no corrections
+
+
 def test_every_synthetic_record_is_labelled() -> None:
     fleet = generate(CONFIG)
     assert fleet.components and fleet.maintenance

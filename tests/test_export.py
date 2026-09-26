@@ -44,6 +44,15 @@ def test_static_export_is_the_same_data_as_the_api(tmp_path: Path) -> None:
     assert alfa["status"] == {"unknown": "no maintenance record entered for this aircraft"}
     assert alfa["due"]["items"] == []
 
+    # The maintenance history travels with the page, read only, labelled synthetic.
+    assert "not on this page" in data["notice"] or "locally running service" in data["notice"]
+    assert syn04["entries"] and all(e["synthetic"] is True for e in syn04["entries"])
+    assert all(
+        {"id", "kind", "occurred_utc", "entered_by", "statement", "superseded_by"} <= set(e)
+        for e in syn04["entries"]
+    )
+    assert alfa["entries"] == []
+
     # The recorded assistant runs travel with the page, labelled as recorded, not live.
     runs = json.loads((out / "assistant.json").read_text(encoding="utf-8"))
     assert "recorded" in runs["notice"].lower() and "not live" in runs["notice"].lower()
