@@ -119,6 +119,14 @@
       <tbody></tbody>
     </table></div>
     <p class="sub" id="due-notes"></p>
+    <section id="history-section">
+      <h3>Maintenance entries: what people recorded, never edited</h3>
+      <p class="sub" id="history-sub"></p>
+      <div class="wrap"><table id="history">
+        <thead><tr><th>Entry</th><th>Occurred (UTC)</th><th>Kind</th><th>Entered by</th><th>Statement</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
     <h3>Reconciliation against the autopilot's lifetime counter</h3>
     <div class="card" id="detail-reconcile"></div>
     <h3>Flights</h3>
@@ -263,6 +271,25 @@
     $('#due-notes').textContent = d.items.length || !isUnknown(d.status)
       ? (d.notes.length ? 'Notes: ' + d.notes.join('; ') : '')
       : 'No due list: ' + (isUnknown(d.status) ? d.status.unknown : '') + '.';
+
+    const entries = a.entries || [];
+    const hb = $('#history tbody');
+    hb.innerHTML = '';
+    $('#history').hidden = entries.length === 0;
+    $('#history-sub').textContent = entries.length
+      ? `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, ${entries.every(e => e.synthetic) ? 'all synthetic, generated with the fleet' : 'some real'}. ` +
+        'Entries are recorded through the API and command line of a locally running service, not on this page; a correction supersedes an entry and the history stays.'
+      : 'No maintenance entries for this aircraft. Entries are recorded through the API and command line of a locally running service, not on this page.';
+    for (const e of entries) {
+      const row = document.createElement('tr');
+      const status = e.superseded_by !== null && e.superseded_by !== undefined
+        ? `<span class="unknown">superseded by #${esc(e.superseded_by)}</span>`
+        : (e.supersedes !== null && e.supersedes !== undefined ? `corrects #${esc(e.supersedes)}: ${esc(e.reason)}` : 'live');
+      row.innerHTML = `<td>#${esc(e.id)}<br><span class="tag ${e.synthetic ? '' : 'real'}">${e.synthetic ? 'synthetic' : 'real'}</span></td>
+        <td>${utc(e.occurred_utc)}</td><td>${esc(e.kind)}${e.payload && e.payload.work_id ? '<br><span class="reason">' + esc(e.payload.work_id) + '</span>' : ''}</td>
+        <td>${esc(e.entered_by)}</td><td>${esc(e.statement)}</td><td>${status}</td>`;
+      hb.appendChild(row);
+    }
 
     const r = a.reconcile;
     let html = '';

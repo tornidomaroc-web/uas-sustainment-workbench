@@ -2,7 +2,13 @@ services:
   workbench:
     build: .
     ports:
-      - "8000:8000"
+      # Bound to this machine only, as the command line default is. Reads need nothing.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Writes (POST /entries, POST /ingest) reach the container from the Docker bridge,
+      # not from loopback, so they need this token. Leave it empty and writes are refused
+      # with a message saying so. Example: export UASW_WRITE_TOKEN=$(openssl rand -hex 16)
+      UASW_WRITE_TOKEN: ${UASW_WRITE_TOKEN:-}
     volumes:
       - fleet-data:/data
     # Seeds the synthetic fleet on first start, then serves /docs, /aircraft, /metrics.

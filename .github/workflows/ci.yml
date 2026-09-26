@@ -48,7 +48,10 @@ jobs:
         run: docker build -t uasw:ci .
       - name: Start and probe the service
         run: |
-          docker run -d --name uasw -p 8000:8000 uasw:ci
+          # Requests from the host reach the container from the Docker bridge, not from
+          # loopback, so writes need a token; a random one for this run only.
+          TOKEN=$(openssl rand -hex 16)
+          docker run -d --name uasw -p 127.0.0.1:8000:8000 -e UASW_WRITE_TOKEN="$TOKEN" uasw:ci
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:8000/health && break
             sleep 2
@@ -58,6 +61,14 @@ jobs:
           curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/due | grep -q '"unserviceable"'
           curl -fsS http://127.0.0.1:8000/fleet/due | grep -q "cycles past its"
           curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_aircraft_by_status
+          # The ledger: a write without the token is refused, one with it is appended and
+          # changes the board, and an impossible one is refused with a sentence, never a 500.
+          ENTRY='{"subject":"SYN-01","kind":"work_order.open","occurred_utc":"2026-09-20T09:00:00Z","entered_by":"CI probe, maintenance","statement":"[ci] replacement propeller set on order","payload":{"state":"awaiting_parts"}}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$ENTRY" http://127.0.0.1:8000/entries)" = 401
+          curl -fsS -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$ENTRY" http://127.0.0.1:8000/entries | grep -q '"does not certify airworthiness'
+          curl -fsS http://127.0.0.1:8000/aircraft/SYN-01 | grep -q '"AOG"'
+          BAD='{"subject":"SYN-01","kind":"work_order.close","occurred_utc":"2026-09-21T09:00:00Z","entered_by":"CI probe, maintenance","statement":"[ci] closing nothing","payload":{"work_id":"WO-none"}}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BAD" http://127.0.0.1:8000/entries)" = 409
           docker logs uasw | head -5
       - name: Stop
         if: always()

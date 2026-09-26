@@ -15,10 +15,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from uas_workbench import __version__
 from uas_workbench.fleet import FleetConfig, load_config
@@ -28,7 +38,8 @@ from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.codec import record_to_json
 from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.flight.record import FlightRecord
-from uas_workbench.life import Board, DueList, board, due_list
+from uas_workbench.ledger import NOTE, Entry, LedgerError, append, entry_to_json
+from uas_workbench.life import Board, Component, DueList, board, due_list
 
 from .observability import (
     AIRCRAFT_BY_STATUS,
@@ -45,6 +56,11 @@ logger = logging.getLogger("uasw.http")
 DESCRIPTION = """Flight records per aircraft from PX4 and ArduPilot logs, reconciliation of
 logged flight time against the autopilot's own lifetime counter, and the component life,
 inspection due list and board state computed from them.
+
+Maintenance is an append-only ledger (`/entries`): what a person states, when, and in what
+words; a correction supersedes with a reason and the history stays. Every entry says that
+the workbench does not certify airworthiness or return to service. Writes need the token in
+`UASW_WRITE_TOKEN`, or come from this machine when none is set.
 
 Every value a log cannot support is returned as `{"unknown": "<reason>"}`, never as zero.
 Every record and aircraft carries `synthetic`: the demo fleet is generated from a seed; the
@@ -134,6 +150,53 @@ class DueOut(BaseModel):
     time_in_service_s: float | UnknownOut
     items: list[DueItemOut]
     notes: list[str]
+
+
+class EntryIn(BaseModel):
+    """A maintenance ledger entry as a person states it. Never edited once appended."""
+
+    subject: str = Field(min_length=1, description="an aircraft key or a component id")
+    kind: str = Field(min_length=1)
+    occurred_utc: datetime = Field(description="when the event happened")
+    entered_by: str = Field(min_length=1, description="the person's name and role, as typed")
+    statement: str = Field(default="", description="what was done, in the person's words")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    supersedes: int | None = Field(default=None, description="the entry this one corrects")
+    reason: str | None = Field(default=None, description="why; required with supersedes")
+
+
+class EntryOut(BaseModel):
+    id: int
+    subject: str
+    kind: str
+    occurred_utc: datetime
+    recorded_utc: datetime
+    entered_by: str
+    statement: str
+    payload: dict[str, Any]
+    supersedes: int | None
+    reason: str | None
+    synthetic: bool
+    superseded_by: int | None
+    note: str
+
+
+class InstallationOut(BaseModel):
+    aircraft_key: str
+    from_utc: datetime
+    to_utc: datetime | None
+
+
+class ComponentOut(BaseModel):
+    id: str
+    kind: str
+    in_service_since: str
+    hours_s_before: float
+    cycles_before: int
+    installations: list[InstallationOut]
+    installed_on: str | None
+    synthetic: bool
+    entries: list[EntryOut] = []
 
 
 class CoverageOut(BaseModel):
@@ -264,6 +327,48 @@ def aircraft_view(store: Store, aircraft: Aircraft, config: FleetConfig) -> Airc
     )
 
 
+def entry_view(store: Store, entry: Entry) -> EntryOut:
+    superseded_by = store.projection().superseded_by
+    data = {k: v for k, v in entry_to_json(entry).items() if k != "id"}
+    return EntryOut(
+        id=entry.id or 0,
+        superseded_by=superseded_by.get(entry.id or -1),
+        note=NOTE,
+        **data,
+    )
+
+
+def entries_about(store: Store, aircraft_key: str) -> list[Entry]:
+    """The aircraft's own entries plus the component installs and removals that name it,
+    in the order they occurred: what a maintenance lead reads as the aircraft's history."""
+    own = list(store.entries(aircraft_key))
+    moves = [
+        e
+        for e in store.entries()
+        if e.kind in ("component.install", "component.remove")
+        and e.payload.get("aircraft_key") == aircraft_key
+    ]
+    return sorted(own + moves, key=lambda e: (e.occurred_utc, e.id or 0))
+
+
+def component_view(store: Store, c: Component, with_entries: bool = False) -> ComponentOut:
+    on = [i for i in c.installations if i.to_utc is None]
+    return ComponentOut(
+        id=c.id,
+        kind=c.kind,
+        in_service_since=c.in_service_since.isoformat(),
+        hours_s_before=c.hours_s_before,
+        cycles_before=c.cycles_before,
+        installations=[
+            InstallationOut(aircraft_key=i.aircraft_key, from_utc=i.from_utc, to_utc=i.to_utc)
+            for i in c.installations
+        ],
+        installed_on=on[-1].aircraft_key if on else None,
+        synthetic=c.synthetic,
+        entries=[entry_view(store, e) for e in store.entries(c.id)] if with_entries else [],
+    )
+
+
 def fleet_due(store: Store, config: FleetConfig, as_of: datetime | None = None) -> list[DueItemOut]:
     """Every due-soon and overdue item across the fleet, worst first."""
     items = [
@@ -323,8 +428,16 @@ def _remove(path: Path) -> None:
     logger.warning("temporary upload not removed", extra={"path": str(path)})
 
 
-def create_app(store: Store, config: FleetConfig | None = None) -> FastAPI:
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def create_app(
+    store: Store, config: FleetConfig | None = None, write_token: str | None = None
+) -> FastAPI:
+    """`write_token`: the bearer token writes must carry; None reads UASW_WRITE_TOKEN from the
+    environment; with neither set, writes are accepted from loopback addresses only."""
     cfg = config or load_config()
+    token = write_token if write_token is not None else os.environ.get("UASW_WRITE_TOKEN") or None
     app = FastAPI(
         title="UAS Sustainment Workbench",
         version=__version__,
@@ -332,6 +445,22 @@ def create_app(store: Store, config: FleetConfig | None = None) -> FastAPI:
         license_info={"name": "Apache-2.0"},
     )
     refresh_gauges(store, cfg)
+
+    def writer(request: Request) -> None:
+        """Every write goes through here: POST /entries and POST /ingest."""
+        if token:
+            if request.headers.get("authorization") != f"Bearer {token}":
+                raise HTTPException(
+                    401, "writes need the token set in UASW_WRITE_TOKEN as a bearer token"
+                )
+            return
+        host = request.client.host if request.client else ""
+        if host not in LOOPBACK:
+            raise HTTPException(
+                403,
+                f"writes are accepted from this machine only and this request came from {host}; "
+                "set UASW_WRITE_TOKEN on the service to allow writes with a token",
+            )
 
     @app.middleware("http")
     async def observe(
@@ -404,7 +533,83 @@ def create_app(store: Store, config: FleetConfig | None = None) -> FastAPI:
         """What a maintenance lead asks first: everything due soon or overdue, worst first."""
         return fleet_due(store, cfg, _utc(as_of))
 
-    @app.post("/ingest", tags=["flights"], status_code=201, response_model=FlightOut)
+    @app.post(
+        "/entries",
+        tags=["ledger"],
+        status_code=201,
+        response_model=EntryOut,
+        dependencies=[Depends(writer)],
+    )
+    def append_entry(body: EntryIn) -> EntryOut:
+        """Append one maintenance entry. Entries are never edited; a correction supersedes.
+
+        Refusals: 404 unknown aircraft or component, 403 a public showcase aircraft, 409 a
+        transition the records cannot accept, 422 a shape error. Nothing is written then.
+        """
+        entry = Entry(
+            id=None,
+            subject=body.subject,
+            kind=body.kind,
+            occurred_utc=_utc(body.occurred_utc) or body.occurred_utc,
+            recorded_utc=datetime.now(UTC).replace(microsecond=0),
+            entered_by=body.entered_by,
+            statement=body.statement,
+            payload=body.payload,
+            supersedes=body.supersedes,
+            reason=body.reason,
+            synthetic=False,
+        )
+        try:
+            stored = append(
+                store, entry, policy=cfg.life, now=datetime.now(UTC), tolerance_s=cfg.tolerance_s
+            )
+        except LedgerError as exc:
+            raise HTTPException(exc.status, exc.detail) from exc
+        refresh_gauges(store, cfg)
+        logger.info(
+            "entry",
+            extra={"entry_id": stored.id, "kind": stored.kind, "subject": stored.subject},
+        )
+        return entry_view(store, stored)
+
+    @app.get("/entries", tags=["ledger"], response_model=list[EntryOut])
+    def list_entries(
+        subject: str | None = None,
+        aircraft: str | None = None,
+        include_superseded: bool = False,
+    ) -> list[EntryOut]:
+        """The ledger, in the order entered. `subject` filters by exact subject; `aircraft`
+        gives an aircraft's history, component moves included. Superseded entries are left
+        out unless asked."""
+        dead = store.projection().superseded_by
+        found = entries_about(store, aircraft) if aircraft else store.entries(subject)
+        return [entry_view(store, e) for e in found if include_superseded or e.id not in dead]
+
+    @app.get("/entries/{entry_id}", tags=["ledger"], response_model=EntryOut)
+    def get_entry(entry_id: int) -> EntryOut:
+        entry = store.entry(entry_id)
+        if entry is None:
+            raise HTTPException(404, f"entry {entry_id} does not exist")
+        return entry_view(store, entry)
+
+    @app.get("/components", tags=["ledger"], response_model=list[ComponentOut])
+    def list_components() -> list[ComponentOut]:
+        return [component_view(store, c) for c in store.components()]
+
+    @app.get("/components/{component_id}", tags=["ledger"], response_model=ComponentOut)
+    def get_component(component_id: str) -> ComponentOut:
+        found = [c for c in store.components() if c.id == component_id]
+        if not found:
+            raise HTTPException(404, f"component {component_id!r} is not registered")
+        return component_view(store, found[0], with_entries=True)
+
+    @app.post(
+        "/ingest",
+        tags=["flights"],
+        status_code=201,
+        response_model=FlightOut,
+        dependencies=[Depends(writer)],
+    )
     def ingest(
         aircraft_key: Annotated[str, Form()],
         log: Annotated[UploadFile, File()],
