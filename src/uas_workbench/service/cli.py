@@ -6,6 +6,7 @@
     uasw export-static   # write site/fleet.json, assistant.json and index.html from the store
     uasw ask "QUESTION"  # a local model answers through the service's read-only endpoints
     uasw record ...      # append a maintenance entry: work orders, components, inspections
+    uasw evidence KEY --out pack.html   # the draft evidence pack for OSO #03 of one aircraft
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
 (showcase excerpts, default tests/fixtures).
@@ -133,6 +134,48 @@ def cmd_ask(args: argparse.Namespace) -> None:
         )
     if args.json:
         print(json.dumps([c.result for c in answer.calls], indent=1))
+
+
+def current_commit() -> str | None:
+    """The commit this checkout is at, from git, else the UASW_COMMIT setting, else None."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True, timeout=5
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.environ.get("UASW_COMMIT") or None
+
+
+def cmd_evidence(args: argparse.Namespace) -> None:
+    """Write the draft evidence pack for one aircraft as HTML, and as JSON with --json."""
+    import json
+    import sys
+    from datetime import UTC, datetime
+
+    from uas_workbench.evidence import build_pack, render_html
+
+    store = open_store(args.db)
+    if store.get_aircraft(args.aircraft) is None:
+        print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
+        sys.exit(1)
+    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=UTC)
+    pack = build_pack(store, args.aircraft, load_config(), as_of=as_of, commit=current_commit())
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(render_html(pack), encoding="utf-8")
+    written = [str(args.out)]
+    if args.json:
+        path = args.out.with_suffix(".json")
+        path.write_text(json.dumps(pack, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        written.append(str(path))
+    log.info("evidence", extra={"aircraft_key": args.aircraft, "out": written})
+    print(f"{pack['title']}: written to {', '.join(written)}. {pack['statement'][1]}")
 
 
 def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details: object) -> None:
@@ -332,6 +375,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("subject")
     p.add_argument("--all", action="store_true", help="include superseded entries")
     r.set_defaults(func=cmd_record)
+
+    p = sub.add_parser(
+        "evidence", help="write the draft evidence pack for OSO #03 of one aircraft (HTML)"
+    )
+    p.add_argument("aircraft")
+    p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
+    p.add_argument("--json", action="store_true", help="also write the pack as JSON next to it")
+    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.set_defaults(func=cmd_evidence)
 
     p = sub.add_parser("ask", help="ask the local model a question through the running service")
     p.add_argument("question")

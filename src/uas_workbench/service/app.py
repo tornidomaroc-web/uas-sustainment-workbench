@@ -26,7 +26,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
@@ -532,6 +532,31 @@ def create_app(
     def fleet_due_items(as_of: AsOf = None) -> list[DueItemOut]:
         """What a maintenance lead asks first: everything due soon or overdue, worst first."""
         return fleet_due(store, cfg, _utc(as_of))
+
+    def _pack(key: str, as_of: datetime | None) -> dict[str, Any]:
+        from uas_workbench.evidence import build_pack  # the pack builds on this module's views
+
+        aircraft = _aircraft_or_404(key)
+        return build_pack(
+            store,
+            aircraft.key,
+            cfg,
+            as_of=_utc(as_of) or datetime.now(UTC),
+            commit=os.environ.get("UASW_COMMIT") or None,
+        )
+
+    @app.get("/aircraft/{key}/evidence", tags=["evidence"])
+    def evidence_json(key: str, as_of: AsOf = None) -> dict[str, Any]:
+        """Draft evidence pack for OSO #03 as data: it shows no compliance, claims no
+        robustness level and certifies nothing; every value comes from the records."""
+        return _pack(key, as_of)
+
+    @app.get("/aircraft/{key}/evidence.html", tags=["evidence"], response_class=HTMLResponse)
+    def evidence_html(key: str, as_of: AsOf = None) -> HTMLResponse:
+        """The same pack as one self-contained HTML document, printable to PDF."""
+        from uas_workbench.evidence import render_html
+
+        return HTMLResponse(render_html(_pack(key, as_of)))
 
     @app.post(
         "/entries",
