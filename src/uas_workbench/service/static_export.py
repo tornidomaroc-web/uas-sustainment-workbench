@@ -17,14 +17,24 @@ from uas_workbench.assistant.recording import load_recordings
 from uas_workbench.assistant.recording import to_json as recording_to_json
 from uas_workbench.fleet import FleetConfig, load_config
 
-from .app import aircraft_view, due_view, fleet_due, flight_view, reconcile_view
+from .app import (
+    aircraft_view,
+    due_view,
+    entries_about,
+    entry_view,
+    fleet_due,
+    flight_view,
+    reconcile_view,
+)
 from .store import Store
 
 NOTICE = (
     "Demonstration fleet. Aircraft and flights marked synthetic are generated from a seed and "
-    "describe no real aircraft; their maintenance records are generated too, and their board "
+    "describe no real aircraft; their maintenance entries are generated too, and their board "
     "states are computed from them. The two real aircraft are excerpts of public, licensed "
-    "logs with positions and device ids removed. Civil fleet sustainment only."
+    "logs with positions and device ids removed. Maintenance entries are recorded through the "
+    "API and command line of a locally running service, not on this page. Civil fleet "
+    "sustainment only."
 )
 
 
@@ -44,6 +54,10 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
                 "records": [flight_view(r).model_dump(mode="json") for r in store.flights(a.key)],
                 "reconcile": result.model_dump(mode="json"),
                 "due": due_view(store, a, cfg, now)[2].model_dump(mode="json"),
+                "entries": [
+                    entry_view(store, e).model_dump(mode="json")
+                    for e in entries_about(store, a.key)
+                ],
             }
         )
         findings.extend(f.model_dump(mode="json") for f in result.findings)

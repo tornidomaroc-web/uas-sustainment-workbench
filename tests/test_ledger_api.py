@@ -149,7 +149,8 @@ def test_corrections_and_history_through_the_api(client: TestClient) -> None:
     ).json()
     assert second["supersedes"] == first["id"] and second["reason"] == "typo in the hours"
     live = client.get("/entries", params={"subject": "SYN-03"}).json()
-    assert [e["id"] for e in live if e["kind"] == "time_in_service.set"] == [second["id"]]
+    ids = [e["id"] for e in live]
+    assert second["id"] in ids and first["id"] not in ids
     everything = client.get(
         "/entries", params={"subject": "SYN-03", "include_superseded": "true"}
     ).json()
@@ -182,6 +183,15 @@ def test_components_are_readable_with_their_state_and_history(client: TestClient
     )
     assert r.status_code == 201, r.text
     assert client.get("/components/NEW-9").json()["installed_on"] is None
+    # An aircraft's history includes the component moves that name it, in occurred order.
+    history = client.get("/entries", params={"aircraft": "SYN-04"}).json()
+    kinds = [e["kind"] for e in history]
+    assert "component.install" in kinds and "inspection.done" in kinds
+    assert all(
+        e["subject"] == "SYN-04" or e["payload"].get("aircraft_key") == "SYN-04" for e in history
+    )
+    stamps = [e["occurred_utc"] for e in history]
+    assert stamps == sorted(stamps)
 
 
 def test_the_openapi_marks_writes_and_the_assistant_has_no_write_tool(client: TestClient) -> None:

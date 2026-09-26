@@ -5,6 +5,7 @@
     uasw ingest KEY LOG  # parse one or more logs into flight records for an aircraft
     uasw export-static   # write site/fleet.json, assistant.json and index.html from the store
     uasw ask "QUESTION"  # a local model answers through the service's read-only endpoints
+    uasw record ...      # append a maintenance entry: work orders, components, inspections
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
 (showcase excerpts, default tests/fixtures).
@@ -134,6 +135,115 @@ def cmd_ask(args: argparse.Namespace) -> None:
         print(json.dumps([c.result for c in answer.calls], indent=1))
 
 
+def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **payload: object) -> None:
+    """Build one entry from the parsed arguments, validate and append it, and print it."""
+    import sys
+    from datetime import UTC, datetime
+
+    from uas_workbench.ledger import NOTE, Entry, LedgerError, append
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    at = datetime.fromisoformat(args.at) if args.at else now
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    entry = Entry(
+        id=None,
+        subject=subject,
+        kind=kind_,
+        occurred_utc=at,
+        recorded_utc=now,
+        entered_by=args.by,
+        statement=getattr(args, "statement", "") or "",
+        payload={k: v for k, v in payload.items() if v is not None},
+        supersedes=getattr(args, "supersedes", None),
+        reason=getattr(args, "reason", None),
+        synthetic=False,
+    )
+    config = load_config()
+    store = open_store(args.db)
+    try:
+        stored = append(store, entry, policy=config.life, now=now, tolerance_s=config.tolerance_s)
+    except LedgerError as exc:
+        print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    work = f" {stored.payload['work_id']}" if "work_id" in stored.payload else ""
+    print(f"entry {stored.id} recorded: {stored.kind} on {stored.subject}{work}. {NOTE}")
+
+
+def cmd_record(args: argparse.Namespace) -> None:
+    what = args.what
+    if what == "work-order":
+        wid = getattr(args, "work_id", None)
+        if args.action == "open":
+            _record_entry(args, args.aircraft, "work_order.open", state=args.state, work_id=wid)
+        elif args.action == "state":
+            _record_entry(args, args.aircraft, "work_order.state", work_id=wid, state=args.state)
+        else:
+            _record_entry(args, args.aircraft, "work_order.close", work_id=wid)
+    elif what == "component":
+        if args.action == "register":
+            _record_entry(
+                args,
+                args.component,
+                "component.register",
+                kind=args.kind,
+                in_service_since=args.since,
+                hours_s_before=args.hours_before * 3600.0,
+                cycles_before=args.cycles_before,
+            )
+        else:
+            _record_entry(
+                args, args.component, f"component.{args.action}", aircraft_key=args.aircraft
+            )
+    elif what == "inspection":
+        _record_entry(
+            args,
+            args.aircraft,
+            "inspection.done",
+            name=args.name,
+            at_hours_s=args.at_hours * 3600.0 if args.at_hours is not None else None,
+            carried_over_s=args.carried_over_hours * 3600.0,
+        )
+    elif what == "time-in-service":
+        _record_entry(args, args.aircraft, "time_in_service.set", before_s=args.hours * 3600.0)
+    elif what == "retract":
+        target = open_store(args.db).entry(args.entry_id)
+        if target is None:
+            import sys
+
+            print(f"refused (404): entry {args.entry_id} does not exist", file=sys.stderr)
+            sys.exit(1)
+        args.supersedes = args.entry_id
+        args.statement = ""
+        _record_entry(args, target.subject, "retraction")
+    elif what == "history":
+        store = open_store(args.db)
+        dead = store.projection().superseded_by
+        for e in store.entries(args.subject):
+            if e.id in dead and not args.all:
+                continue
+            line = (
+                f"#{e.id} {e.occurred_utc:%Y-%m-%d %H:%M} {e.kind} by {e.entered_by}: {e.statement}"
+            )
+            if e.payload.get("work_id"):
+                line += f" [{e.payload['work_id']}]"
+            if e.supersedes is not None:
+                line += f" (supersedes #{e.supersedes}: {e.reason})"
+            if e.id in dead:
+                by = store.entry(dead[e.id])
+                line += f" (superseded by #{dead[e.id]}: {by.reason if by else ''})"
+            print(line)
+
+
+def _who(p: argparse.ArgumentParser, statement: bool = True) -> None:
+    p.add_argument("--by", required=True, help="your name and role, recorded as typed")
+    if statement:
+        p.add_argument("--statement", required=True, help="what was done, in your words")
+    p.add_argument("--at", help="when it happened (ISO 8601, UTC); default now")
+    p.add_argument("--supersedes", type=int, help="the entry id this one corrects")
+    p.add_argument("--reason", help="why that entry was wrong; required with --supersedes")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="uasw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -161,6 +271,67 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-static", help="write the static site from the store")
     p.add_argument("--out", type=Path, default=Path("site"))
     p.set_defaults(func=cmd_export_static)
+
+    r = sub.add_parser(
+        "record",
+        help="append a maintenance entry to the ledger (never edited; corrections supersede)",
+    )
+    what = r.add_subparsers(dest="what", required=True)
+
+    wo = what.add_parser("work-order", help="open, change the state of, or close a work order")
+    wo_action = wo.add_subparsers(dest="action", required=True)
+    p = wo_action.add_parser("open")
+    p.add_argument("aircraft")
+    p.add_argument("--state", required=True, choices=["in_work", "awaiting_parts", "deferred"])
+    p.add_argument("--work-id", dest="work_id", help="default WO-<entry id>")
+    _who(p)
+    p = wo_action.add_parser("state")
+    p.add_argument("aircraft")
+    p.add_argument("work_id")
+    p.add_argument("--state", required=True, choices=["in_work", "awaiting_parts", "deferred"])
+    _who(p)
+    p = wo_action.add_parser("close")
+    p.add_argument("aircraft")
+    p.add_argument("work_id")
+    _who(p)
+
+    comp = what.add_parser("component", help="register, install or remove a component")
+    comp_action = comp.add_subparsers(dest="action", required=True)
+    p = comp_action.add_parser("register")
+    p.add_argument("component")
+    p.add_argument("--kind", required=True, help="a kind named in fleet.toml")
+    p.add_argument("--since", required=True, help="in service since (YYYY-MM-DD)")
+    p.add_argument("--hours-before", dest="hours_before", type=float, default=0.0)
+    p.add_argument("--cycles-before", dest="cycles_before", type=int, default=0)
+    _who(p)
+    for action in ("install", "remove"):
+        p = comp_action.add_parser(action)
+        p.add_argument("component")
+        p.add_argument("aircraft")
+        _who(p)
+
+    p = what.add_parser("inspection", help="record a completed inspection")
+    p.add_argument("aircraft")
+    p.add_argument("name", help="an inspection named in fleet.toml")
+    p.add_argument("--at-hours", dest="at_hours", type=float, help="time in service; derived")
+    p.add_argument("--carried-over-hours", dest="carried_over_hours", type=float, default=0.0)
+    _who(p)
+
+    p = what.add_parser("time-in-service", help="hours before the first log this tool holds")
+    p.add_argument("aircraft")
+    p.add_argument("hours", type=float)
+    _who(p)
+
+    p = what.add_parser("retract", help="supersede an entry with nothing, giving the reason")
+    p.add_argument("entry_id", type=int)
+    p.add_argument("--by", required=True)
+    p.add_argument("--reason", required=True)
+    p.add_argument("--at", help=argparse.SUPPRESS)
+
+    p = what.add_parser("history", help="the entries of one aircraft or component")
+    p.add_argument("subject")
+    p.add_argument("--all", action="store_true", help="include superseded entries")
+    r.set_defaults(func=cmd_record)
 
     p = sub.add_parser("ask", help="ask the local model a question through the running service")
     p.add_argument("question")

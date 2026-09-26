@@ -25,7 +25,8 @@ def client() -> TestClient:
     store = Store(":memory:")
     store.add_fleet(generate(CONFIG))
     store.add_fleet(showcase(FIXTURES))
-    return TestClient(create_app(store))
+    # A user on this machine: with no write token set, loopback may write (ingest).
+    return TestClient(create_app(store, write_token=None), client=("127.0.0.1", 50000))
 
 
 def test_health_and_docs(client: TestClient) -> None:
