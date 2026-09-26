@@ -102,6 +102,27 @@ field-level tables. This file is about what that means for a maintenance tool.
   entries depending on it (a registration with installations, an open work order with a
   close) cannot be superseded until those are corrected first.
 
+## Limits of the evidence pack
+
+- **It gathers; it does not find.** Every item of OSO #03 is marked supported, partly or
+  not evidenced by this workbench. None of that is a finding of compliance, and the pack
+  says so in its first lines; the authority decides what the records show.
+- **Most of OSO #03 is out of reach of a records tool.** Instructions, staff
+  authorisation, competence, training, release to service, a procedure manual and
+  third-party validation are not held and cannot be evidenced. The pack can evidence the
+  maintenance log with why each thing was done, the usage behind the schedule, and the
+  life-limited part history, and it lists every other item as not evidenced.
+- **The programme is the operator's defaults, not the designer's instructions.** The
+  intervals come from `fleet.toml` with the public source each cites. An authority would
+  ask for the designer's instructions for continuing airworthiness, which the workbench
+  does not hold.
+- **The pack inherits every limit above.** Time in service is only as complete as the logs
+  plus the counter, entries are what a person typed, and the hash proves that the records
+  did not change, not that they are true.
+- **The sources are paraphrased.** The JARUS texts may be used but not copied without
+  permission, so each item is a paraphrase in this project's words with document, edition
+  and page; a reader checks the wording against the cited page.
+
 ## Limits of the assistant
 
 - **It reads; it never computes.** Its only tools are the service's GET endpoints, and the

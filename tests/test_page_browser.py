@@ -184,7 +184,10 @@ def test_sample_evidence_pack_is_linked_and_honest_first(page: Any, site_url: st
     assert "does not show compliance" in text
     href = link.get_attribute("href")
     assert href == "evidence/SYN-04.html"
-    pack = page.context.new_page()
+    browser = page.context.browser
+    assert browser is not None
+    context = browser.new_context()
+    pack = context.new_page()
     problems: list[str] = []
     pack.on("pageerror", lambda e: problems.append(str(e)))
     pack.goto(site_url + href, wait_until="load")
@@ -204,7 +207,7 @@ def test_sample_evidence_pack_is_linked_and_honest_first(page: Any, site_url: st
     assert "Not evidenced by this workbench" in body
     assert pack.locator(".print-header").count() == 1
     assert problems == []
-    pack.close()
+    context.close()
 
 
 def test_recorded_assistant_runs_are_labelled_and_show_their_evidence(page: Any) -> None:

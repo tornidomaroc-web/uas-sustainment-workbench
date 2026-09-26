@@ -32,7 +32,7 @@ jobs:
       - name: Generate the site from the seeded fleet
         run: |
           uasw --db /tmp/fleet.sqlite seed
-          uasw --db /tmp/fleet.sqlite export-static --out _site
+          UASW_COMMIT="$GITHUB_SHA" uasw --db /tmp/fleet.sqlite export-static --out _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

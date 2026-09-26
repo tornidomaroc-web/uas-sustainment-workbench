@@ -129,8 +129,31 @@ order, what superseded what and why, which components were fitted to an aircraft
 question the ledger cannot answer, a certificate number, answered as not recorded. The seeded
 fleet carries one synthetic correction so the page shows what superseding looks like.
 
+**A draft evidence pack for OSO #03.** `uasw evidence SYN-04 --out pack.html`, or
+`GET /aircraft/{key}/evidence.html` and the same as JSON at `/aircraft/{key}/evidence`,
+gathers what the records hold for one aircraft under OSO #03 of the JARUS SORA methodology,
+"UAS maintained by competent and/or proven entity": the sources relied on, with edition and
+page (JARUS SORA Annex E editions 2.5 and 1.0, and the EASA means of compliance to OSO #3 of
+December 2024, paraphrased and cited, never quoted); every OSO #03 item marked supported,
+partly or not evidenced by this workbench, with the sections that support it; time in
+service and usage from the logs; the programme status; each life-limited part's history;
+and the maintenance log with superseded entries as history next to the entry that superseded
+them. Its first lines say what it is: a draft for the operator's own review, which shows no
+compliance, claims no robustness level, does not certify airworthiness or return to service,
+and leaves the decision to the authority. It carries the generation time, the commit, the
+workbench version and a hash over every entry read, so two packs can be compared. One
+self-contained HTML document, printable to PDF from any browser, with the data label on every
+printed page; no dependency was added. The live demo carries one sample for the synthetic
+aircraft SYN-04. Of OSO #03, the workbench can evidence the maintenance log, the usage behind
+the schedule and the life-limited part history, and nothing about instructions, staff
+authorisation, competence, training, release to service, a procedure manual or third-party
+validation; the pack says so item by item.
+
 ## What remains
 
+- No release to service is recorded, by design: the tool never releases anything, and a
+  person's release is their own act. An operator who needs one on file records it today in
+  the statement that closes a work order.
 - Records are entered by a person and taken at their word: no users, no roles, no
   signatures, no certificate check, no attachment. The write token is a shared secret.
 - A life limit is never reset by work. A life-limited part at its limit is replaced by
@@ -148,7 +171,8 @@ fleet carries one synthetic correction so the page shows what superseding looks 
 
 ## What comes next
 
-1. An export of one aircraft's records and due list shaped as OSO #03 evidence.
+The plan the study set for v0.1 is complete. What follows is decided by use: the first
+real fleet's logs and records will show which of the limits above bite first.
 
 ## Scope and non-goals
 
