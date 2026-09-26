@@ -195,6 +195,38 @@ def test_an_answer_drawing_on_entries_must_carry_the_note() -> None:
     assert ground("SYN-05 is in the fleet.", no_ledger).verified
 
 
+def test_ledger_shaped_tokens_without_a_ledger_fetch_are_unverified() -> None:
+    from uas_workbench.assistant.agent import Call
+
+    board = (
+        Call(
+            "list_aircraft",
+            {},
+            "/aircraft",
+            {},
+            [
+                {
+                    "key": "SYN-07",
+                    "status": "AOG",
+                    "status_reasons": [
+                        "aircraft SYN-07 is on the ground awaiting parts since 2026-08-14: "
+                        "[synthetic] replacement propeller set on order after a ground strike"
+                    ],
+                }
+            ],
+        ),
+    )
+    fabricated = ground(
+        "Entry #3 was recorded by J. Nobody on 2026-08-14; work order WO-77 is deferred.", board
+    )
+    assert not fabricated.verified
+    assert set(fabricated.unsupported) >= {"entry #3", "J. Nobody", "WO-77", "deferred"}
+    # A board sentence that says "awaiting parts", and a citation with a hash, still pass.
+    assert ground("SYN-07 is on the ground awaiting parts since 2026-08-14.", board).verified
+    due = (Call("fleet_due", {}, "/fleet/due", {}, [{"limit": 300.0, "source": "EASA"}]),)
+    assert ground("EASA MoC to OSO #3 sets 300 cycles as an editable default.", due).verified
+
+
 def test_a_superseded_entry_must_not_be_presented_as_current() -> None:
     calls = (
         ledger_call(
