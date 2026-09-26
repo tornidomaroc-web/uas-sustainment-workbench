@@ -36,7 +36,7 @@ def store() -> Store:
 def draft(
     subject: str,
     kind: str,
-    payload: dict[str, Any] | None = None,
+    details: dict[str, Any] | None = None,
     *,
     occurred: datetime = T,
     by: str = "A. Tester, maintenance",
@@ -52,7 +52,7 @@ def draft(
         recorded_utc=NOW,
         entered_by=by,
         statement=statement,
-        payload=payload or {},
+        details=details or {},
         supersedes=supersedes,
         reason=reason,
         synthetic=False,
@@ -74,7 +74,7 @@ def refused(store: Store, e: Entry, status: int, *words: str) -> None:
 
 def test_a_valid_entry_is_appended_with_an_id_and_the_note(store: Store) -> None:
     e = add(store, draft("SYN-01", "work_order.open", {"state": "in_work"}))
-    assert e.id is not None and e.payload["work_id"] == f"WO-{e.id}"
+    assert e.id is not None and e.details["work_id"] == f"WO-{e.id}"
     assert e.synthetic is False and e.recorded_utc == NOW
     assert store.entry(e.id) == e
     assert "does not certify airworthiness" in NOTE and "return to service" in NOTE
@@ -159,7 +159,7 @@ def test_shape_errors_are_422(store: Store) -> None:
 def test_work_order_transitions_are_checked_against_the_projection(store: Store) -> None:
     refused(store, draft("SYN-01", "work_order.close", {"work_id": "WO-9"}), 409, "WO-9", "open")
     opened = add(store, draft("SYN-01", "work_order.open", {"state": "awaiting_parts"}))
-    wid = opened.payload["work_id"]
+    wid = opened.details["work_id"]
     add(
         store,
         draft("SYN-01", "work_order.state", {"work_id": wid, "state": "in_work"}, occurred=T + D),
@@ -276,9 +276,9 @@ def test_an_inspection_cannot_be_done_at_more_time_than_the_aircraft_has(store: 
         "time in service",
     )
     e = add(store, draft("SYN-01", "inspection.done", {"name": "100-hour inspection"}))
-    assert e.payload["derived"] is True and e.payload["at_hours_s"] > 0
-    assert e.payload["carried_over_s"] == 0.0
-    assert store.maintenance("SYN-01").inspections[-1].at_hours_s == e.payload["at_hours_s"]  # type: ignore[union-attr]
+    assert e.details["derived"] is True and e.details["at_hours_s"] > 0
+    assert e.details["carried_over_s"] == 0.0
+    assert store.maintenance("SYN-01").inspections[-1].at_hours_s == e.details["at_hours_s"]  # type: ignore[union-attr]
     # The derived value counts only flight up to the entry's own date.
     early = add(
         store,
@@ -289,7 +289,7 @@ def test_an_inspection_cannot_be_done_at_more_time_than_the_aircraft_has(store: 
             occurred=datetime(2026, 8, 1, tzinfo=UTC),
         ),
     )
-    assert early.payload["at_hours_s"] < e.payload["at_hours_s"]
+    assert early.details["at_hours_s"] < e.details["at_hours_s"]
 
 
 def test_corrections_need_a_live_target_of_the_same_subject_and_a_reason(store: Store) -> None:
@@ -366,7 +366,7 @@ def test_an_entry_with_live_dependents_cannot_be_superseded(store: Store) -> Non
     opened = add(store, draft("SYN-02", "work_order.open", {"state": "in_work"}))
     closed = add(
         store,
-        draft("SYN-02", "work_order.close", {"work_id": opened.payload["work_id"]}, occurred=T + D),
+        draft("SYN-02", "work_order.close", {"work_id": opened.details["work_id"]}, occurred=T + D),
     )
     assert opened.id is not None and closed.id is not None
     refused(

@@ -286,7 +286,7 @@
         ? `<span class="unknown">superseded by #${esc(e.superseded_by)}</span>`
         : (e.supersedes !== null && e.supersedes !== undefined ? `corrects #${esc(e.supersedes)}: ${esc(e.reason)}` : 'live');
       row.innerHTML = `<td>#${esc(e.id)}<br><span class="tag ${e.synthetic ? '' : 'real'}">${e.synthetic ? 'synthetic' : 'real'}</span></td>
-        <td>${utc(e.occurred_utc)}</td><td>${esc(e.kind)}${e.payload && e.payload.work_id ? '<br><span class="reason">' + esc(e.payload.work_id) + '</span>' : ''}</td>
+        <td>${utc(e.occurred_utc)}</td><td>${esc(e.kind)}${e.details && e.details.work_id ? '<br><span class="reason">' + esc(e.details.work_id) + '</span>' : ''}</td>
         <td>${esc(e.entered_by)}</td><td>${esc(e.statement)}</td><td>${status}</td>`;
       hb.appendChild(row);
     }

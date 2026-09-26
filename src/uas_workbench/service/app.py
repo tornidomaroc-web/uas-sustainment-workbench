@@ -160,7 +160,7 @@ class EntryIn(BaseModel):
     occurred_utc: datetime = Field(description="when the event happened")
     entered_by: str = Field(min_length=1, description="the person's name and role, as typed")
     statement: str = Field(default="", description="what was done, in the person's words")
-    payload: dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
     supersedes: int | None = Field(default=None, description="the entry this one corrects")
     reason: str | None = Field(default=None, description="why; required with supersedes")
 
@@ -173,7 +173,7 @@ class EntryOut(BaseModel):
     recorded_utc: datetime
     entered_by: str
     statement: str
-    payload: dict[str, Any]
+    details: dict[str, Any]
     supersedes: int | None
     reason: str | None
     synthetic: bool
@@ -346,7 +346,7 @@ def entries_about(store: Store, aircraft_key: str) -> list[Entry]:
         e
         for e in store.entries()
         if e.kind in ("component.install", "component.remove")
-        and e.payload.get("aircraft_key") == aircraft_key
+        and e.details.get("aircraft_key") == aircraft_key
     ]
     return sorted(own + moves, key=lambda e: (e.occurred_utc, e.id or 0))
 
@@ -554,7 +554,7 @@ def create_app(
             recorded_utc=datetime.now(UTC).replace(microsecond=0),
             entered_by=body.entered_by,
             statement=body.statement,
-            payload=body.payload,
+            details=body.details,
             supersedes=body.supersedes,
             reason=body.reason,
             synthetic=False,

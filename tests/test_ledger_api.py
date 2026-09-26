@@ -34,7 +34,7 @@ def client() -> TestClient:
 
 
 def body(
-    subject: str, kind: str, payload: dict[str, Any] | None = None, **extra: Any
+    subject: str, kind: str, details: dict[str, Any] | None = None, **extra: Any
 ) -> dict[str, Any]:
     return {
         "subject": subject,
@@ -42,7 +42,7 @@ def body(
         "occurred_utc": T,
         "entered_by": "A. Tester, maintenance",
         "statement": "work done as described",
-        "payload": payload or {},
+        "details": details or {},
         **extra,
     }
 
@@ -90,7 +90,7 @@ def test_an_entry_is_appended_and_read_back_with_the_note(client: TestClient) ->
     assert r.status_code == 201, r.text
     e = r.json()
     assert e["id"] >= 1 and e["synthetic"] is False and e["superseded_by"] is None
-    assert e["payload"]["work_id"] == f"WO-{e['id']}"
+    assert e["details"]["work_id"] == f"WO-{e['id']}"
     assert "does not certify airworthiness" in e["note"]
     assert client.get(f"/entries/{e['id']}").json() == e
     listed = client.get("/entries", params={"subject": "SYN-01"}).json()
@@ -120,9 +120,9 @@ def test_refusals_carry_their_status_and_a_sentence(client: TestClient) -> None:
         (body("SYN-01", "no.kind"), 422),
         ({"garbage": True}, 422),
     ]
-    for payload, status in cases:
-        r = client.post("/entries", json=payload, headers=AUTH)
-        assert r.status_code == status, (payload, r.text)
+    for details, status in cases:
+        r = client.post("/entries", json=details, headers=AUTH)
+        assert r.status_code == status, (details, r.text)
         assert r.status_code != 500
         detail = r.json()["detail"]
         assert detail and isinstance(detail, str | list)
@@ -188,7 +188,7 @@ def test_components_are_readable_with_their_state_and_history(client: TestClient
     kinds = [e["kind"] for e in history]
     assert "component.install" in kinds and "inspection.done" in kinds
     assert all(
-        e["subject"] == "SYN-04" or e["payload"].get("aircraft_key") == "SYN-04" for e in history
+        e["subject"] == "SYN-04" or e["details"].get("aircraft_key") == "SYN-04" for e in history
     )
     stamps = [e["occurred_utc"] for e in history]
     assert stamps == sorted(stamps)

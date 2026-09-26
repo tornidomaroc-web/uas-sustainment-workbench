@@ -370,7 +370,7 @@ def _as_entries(record: MaintenanceRecord, parts: list[Component], by: str) -> l
     """
     key = record.aircraft_key
 
-    def entry(subject: str, kind_: str, at: datetime, statement: str, **payload: Any) -> Entry:
+    def entry(subject: str, kind_: str, at: datetime, statement: str, **details: Any) -> Entry:
         return Entry(
             id=None,
             subject=subject,
@@ -379,7 +379,7 @@ def _as_entries(record: MaintenanceRecord, parts: list[Component], by: str) -> l
             recorded_utc=at,
             entered_by=by,
             statement=statement,
-            payload=payload,
+            details=details,
             supersedes=None,
             reason=None,
             synthetic=True,
