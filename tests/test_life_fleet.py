@@ -113,7 +113,14 @@ def test_the_seeded_fleet_is_entries_only_and_names_no_real_aircraft() -> None:
     subjects = {e.subject for e in fleet.entries}
     named = {str(v) for e in fleet.entries for v in e.details.values()} | subjects
     assert not named & {ALFA_KEY, PX4_KEY}
-    assert all(e.supersedes is None for e in fleet.entries)  # seeded history has no corrections
+    # One synthetic correction, so the demo shows what superseding looks like: SYN-01's
+    # time in service was entered wrong and corrected to the value the board uses.
+    corrections = [e for e in fleet.entries if e.supersedes is not None]
+    assert len(corrections) == 1
+    (fix,) = corrections
+    assert fix.subject == "SYN-01" and fix.kind == "time_in_service.set"
+    assert fix.reason is not None and fix.reason.startswith("[synthetic]")
+    assert fleet.maintenance["SYN-01"].time_in_service_before_s == fix.details["before_s"]
 
 
 def test_every_synthetic_record_is_labelled() -> None:

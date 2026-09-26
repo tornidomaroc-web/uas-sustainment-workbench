@@ -199,4 +199,7 @@ def test_the_openapi_marks_writes_and_the_assistant_has_no_write_tool(client: Te
 
     paths = client.get("/openapi.json").json()["paths"]
     assert "post" in paths["/entries"] and "get" in paths["/entries"]
-    assert {t.path for t in TOOLS}.isdisjoint({"/entries", "/ingest", "/components"})
+    assert all(t.method == "GET" for t in TOOLS)
+    assert "/ingest" not in {t.path for t in TOOLS}
+    ledger = [t for t in TOOLS if t.path == "/entries"]
+    assert [t.name for t in ledger] == ["ledger_entries"]  # the one ledger tool, read only

@@ -44,10 +44,39 @@ def caller() -> Iterator[Caller]:
 
 
 def test_there_are_recorded_runs_and_they_cover_the_required_questions() -> None:
-    assert len(RECORDINGS) >= 4
+    assert len(RECORDINGS) >= 9
     questions = " ".join(r.question.lower() for r in RECORDINGS)
     assert "safe to fly" in questions  # the certification refusal
     assert "before" in questions  # the honest limit on projecting hours and cycles
+    assert "who recorded" in questions  # the ledger: who, when
+    assert "superseded" in questions  # the ledger: what superseded what, and why
+    assert "certificate" in questions  # a question the ledger cannot answer
+    assert [r.slug for r in RECORDINGS[:5]] == [
+        "what-is-due-on-syn-04-before-2026-10-03-and-why",
+        "which-aircraft-are-not-serviceable-and-what-stops-each-one",
+        "why-does-syn-03-carry-a-deferred-defect",
+        "what-flight-do-the-logs-miss-on-the-real-alfa-aircraft-alfa-fi",
+        "is-syn-07-safe-to-fly",
+    ]  # the first five runs are kept, not substituted
+
+
+@pytest.mark.parametrize("recording", RECORDINGS, ids=[r.slug for r in RECORDINGS])
+def test_answers_drawing_on_the_ledger_carry_the_note_and_name_no_real_person(
+    recording: Recording,
+) -> None:
+    used_ledger = any(c.name == "ledger_entries" for c in recording.calls)
+    if used_ledger:
+        assert "does not certify airworthiness or return to service" in recording.answer
+        people = {
+            str(e["entered_by"])
+            for c in recording.calls
+            if c.name == "ledger_entries"
+            for e in c.result
+        }
+        assert people and all("synthetic" in p for p in people), people
+    if "certificate" in recording.question.lower():
+        text = recording.answer.lower()
+        assert "no certificate" in text or "not record" in text or "does not" in text
 
 
 @pytest.mark.parametrize("recording", RECORDINGS, ids=[r.slug for r in RECORDINGS])
