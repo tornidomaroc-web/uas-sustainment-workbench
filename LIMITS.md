@@ -74,6 +74,34 @@ field-level tables. This file is about what that means for a maintenance tool.
   interval at all; the two inspections borrow the manned Part 91 shape so the tolerance
   and calendar logic have a public source.
 
+## Limits of the maintenance ledger
+
+- **Entries are what a person typed.** The name and role in `entered_by` are recorded as
+  given and never verified; there is no signature, no certificate number check, no user
+  account and no role. 14 CFR 43.9 asks for a signature and a certificate number, and the
+  tool has neither.
+- **The write protection is a shared secret or a network address.** With
+  `UASW_WRITE_TOKEN` set, anyone holding the token may write from anywhere the service is
+  reachable. Without it, writes are accepted only from loopback addresses. That rule cannot
+  work in the container: a request from the host arrives from the Docker bridge gateway,
+  measured as 172.17.0.1 on this machine, so compose passes the token from the environment
+  and the CI container job generates a random one per run. Neither protects against a
+  process on the same machine, a reverse proxy that hides the client address, a leaked
+  token, or reading, which needs nothing. Nothing is encrypted in transit.
+- **The ledger is append-only in the application, not in the file.** Anyone with the
+  SQLite file can alter it. An audit that must survive that needs a store this tool does
+  not provide.
+- **Validation is against the projection, not the world.** A well-formed false statement
+  (an inspection that never happened, a part that is not really on the aircraft) is
+  accepted. Only impossible transitions are refused.
+- **Derived time in service is only as good as the logs.** When a person records an
+  inspection without stating the hours, the tool fills in the time in service it computes
+  at that date and marks the value derived; it carries every limit in "Limits of the life
+  engine" above.
+- **Corrections are ordered by dependency, not by time.** An entry with later live
+  entries depending on it (a registration with installations, an open work order with a
+  close) cannot be superseded until those are corrected first.
+
 ## Limits of the assistant
 
 - **It reads; it never computes.** Its only tools are the service's GET endpoints, and the

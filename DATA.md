@@ -94,9 +94,12 @@ the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac2
 Its aircraft are named `SYN-01` to `SYN-07`, every record carries `synthetic: true`,
 `licence: CC0` and an attribution naming the generator and seed, and no value in it is
 taken from any real aircraft. Counter behaviour copies what LIMITS.md measured (ArduPilot
-flushes every 30 s and logs a boot count; PX4 saves at disarm). Its maintenance records,
-components and work orders are generated too and marked synthetic; the board states are
-computed from them by the life engine, in the civil vocabulary of `fleet.toml`.
+flushes every 30 s and logs a boot count; PX4 saves at disarm). Its maintenance ledger
+entries (time in service, inspections, work orders, components registered, installed and
+removed) are generated too, entered by "synthetic fleet generator", with every statement
+starting with "[synthetic]"; the records the life engine reads are projected from them and
+the board states are computed from those, in the civil vocabulary of `fleet.toml`. No entry
+names either real showcase aircraft, and a test keeps it so.
 
 ## Not used, and why
 
