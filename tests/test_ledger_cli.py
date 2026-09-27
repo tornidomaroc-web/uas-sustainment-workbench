@@ -99,17 +99,8 @@ def test_component_lifecycle_and_inspection(db: str, capsys: pytest.CaptureFixtu
         "new pack received",
     )
     run(db, "component", "install", "NEW-1", "SYN-01", *BY, *AT, "--statement", "fitted")
-    run(
-        db,
-        "inspection",
-        "SYN-01",
-        "100-hour inspection",
-        *BY,
-        "--at",
-        "2026-09-02T09:00:00Z",
-        "--statement",
-        "100-hour inspection completed",
-    )
+    # The hours before the first log go in first: an inspection recorded with derived
+    # hours holds only against the record as it then stands.
     run(
         db,
         "time-in-service",
@@ -120,6 +111,17 @@ def test_component_lifecycle_and_inspection(db: str, capsys: pytest.CaptureFixtu
         "2026-08-01T00:00:00Z",
         "--statement",
         "hours from the previous logbook",
+    )
+    run(
+        db,
+        "inspection",
+        "SYN-01",
+        "100-hour inspection",
+        *BY,
+        "--at",
+        "2026-09-02T09:00:00Z",
+        "--statement",
+        "100-hour inspection completed",
     )
     store = Store(db)
     (c,) = [c for c in store.components() if c.id == "NEW-1"]
@@ -208,3 +210,39 @@ def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> Non
     run(db, "history", "SYN-02", "--all")
     out = capsys.readouterr().out
     assert "superseded by" in out and "the first was right" in out
+    # A correction without --at takes the date of the entry it corrects; with another date
+    # it is refused.
+    run(
+        db,
+        "time-in-service",
+        "SYN-02",
+        "12",
+        *BY,
+        "--statement",
+        "x",
+        "--supersedes",
+        str(first),
+        "--reason",
+        "misread",
+    )
+    third = int(capsys.readouterr().out.split("entry ")[1].split()[0])
+    store = Store(db)
+    assert store.entry(third).occurred_utc == store.entry(first).occurred_utc  # type: ignore[union-attr]
+    with pytest.raises(SystemExit):
+        run(
+            db,
+            "time-in-service",
+            "SYN-02",
+            "13",
+            *BY,
+            "--at",
+            "2026-09-02T09:00:00Z",
+            "--statement",
+            "x",
+            "--supersedes",
+            str(third),
+            "--reason",
+            "again",
+        )
+    err = capsys.readouterr().err
+    assert "409" in err and "keeps the date" in err and "retract" in err
