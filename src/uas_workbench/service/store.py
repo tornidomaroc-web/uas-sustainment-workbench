@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Sequence
+from datetime import datetime
 
 from uas_workbench.fleet.model import Aircraft, Fleet
 from uas_workbench.flight.codec import record_from_json, record_to_json
@@ -187,17 +188,25 @@ class Store:
         row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
         return int(row[0])
 
-    def projection(self) -> Projection:
-        """The live entries folded into records; recomputed after every append."""
+    def projection(self, as_of: datetime | None = None) -> Projection:
+        """The live entries folded into records, at `as_of` or as of every entry.
+
+        The whole-ledger projection is cached and recomputed after every append; a dated
+        one is folded on request from the same entries.
+        """
+        if as_of is not None:
+            return project(self.entries(), as_of)
         if self._projection is None:
             self._projection = project(self.entries())
         return self._projection
 
-    def components(self) -> Sequence[Component]:
-        return self.projection().components
+    def components(self, as_of: datetime | None = None) -> Sequence[Component]:
+        return self.projection(as_of).components
 
-    def maintenance(self, aircraft_key: str) -> MaintenanceRecord | None:
-        return self.projection().maintenance.get(aircraft_key)
+    def maintenance(
+        self, aircraft_key: str, as_of: datetime | None = None
+    ) -> MaintenanceRecord | None:
+        return self.projection(as_of).maintenance.get(aircraft_key)
 
     # ---- reads -----------------------------------------------------------------------
 

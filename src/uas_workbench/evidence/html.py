@@ -351,7 +351,8 @@ def render_html(pack: dict[str, Any]) -> str:
         )
     )
     out.append(
-        "<p>The hash covers every entry read for this pack, superseded ones included. Two "
+        "<p>The hash covers every entry read for this pack, those that had occurred by its "
+        "computation date, superseded ones included. Two "
         "packs for the same aircraft with the same hash rest on the same records; a different "
         "hash means the ledger changed between them.</p>"
     )

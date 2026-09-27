@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -235,11 +235,23 @@ def flight_view(record: FlightRecord) -> FlightOut:
     return FlightOut.model_validate(record_to_json(record))
 
 
+def flights_until(
+    records: Sequence[FlightRecord], as_of: datetime | None
+) -> Sequence[FlightRecord]:
+    """The flight records that had started by `as_of`; one with no UTC start counts whenever,
+    as the life engine counts it."""
+    if as_of is None:
+        return records
+    return [r for r in records if not is_known(r.utc_start) or r.utc_start <= as_of]
+
+
 def reconcile_view(
-    store: Store, aircraft: Aircraft, config: FleetConfig
+    store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
 ) -> tuple[Reconciliation, ReconcileOut]:
     result = reconcile(
-        store.flights(aircraft.key), aircraft_key=aircraft.key, tolerance_s=config.tolerance_s
+        flights_until(store.flights(aircraft.key), as_of),
+        aircraft_key=aircraft.key,
+        tolerance_s=config.tolerance_s,
     )
     out = ReconcileOut(
         aircraft_key=aircraft.key,
@@ -276,12 +288,16 @@ DUE_ORDER = {"overdue": 0, "overdue_within_tolerance": 1, "due_soon": 2, "ok": 3
 def due_view(
     store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
 ) -> tuple[DueList, Board, DueOut]:
-    """The due list and board state of one aircraft at `as_of` (default: now)."""
+    """The due list and board state of one aircraft at `as_of` (default: now).
+
+    The records are folded from the entries that had occurred by `as_of`, and only the
+    flights that had started by then count; see uas_workbench.ledger.project.
+    """
     at = as_of or datetime.now(UTC)
     due = due_list(
         aircraft.key,
-        maintenance=store.maintenance(aircraft.key),
-        components=store.components(),
+        maintenance=store.maintenance(aircraft.key, at),
+        components=store.components(at),
         flights_of=store.flights,
         policy=config.life,
         as_of=at,
@@ -304,10 +320,13 @@ def due_view(
     return due, state, out
 
 
-def aircraft_view(store: Store, aircraft: Aircraft, config: FleetConfig) -> AircraftOut:
-    records = store.flights(aircraft.key)
-    result, _ = reconcile_view(store, aircraft, config)
-    _, state, due = due_view(store, aircraft, config)
+def aircraft_view(
+    store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
+) -> AircraftOut:
+    """One line of the board at `as_of` (default: now): state, reasons, counts."""
+    records = flights_until(store.flights(aircraft.key), as_of)
+    result, _ = reconcile_view(store, aircraft, config, as_of)
+    _, state, due = due_view(store, aircraft, config, as_of)
     return AircraftOut(
         key=aircraft.key,
         label=aircraft.label,
@@ -503,12 +522,13 @@ def create_app(
         }
 
     @app.get("/aircraft", tags=["fleet"], response_model=list[AircraftOut])
-    def list_aircraft() -> list[AircraftOut]:
-        return [aircraft_view(store, a, cfg) for a in store.aircraft()]
+    def list_aircraft(as_of: AsOf = None) -> list[AircraftOut]:
+        """The board: every aircraft with its state and reasons, now or at `as_of`."""
+        return [aircraft_view(store, a, cfg, _utc(as_of)) for a in store.aircraft()]
 
     @app.get("/aircraft/{key}", tags=["fleet"], response_model=AircraftOut)
-    def get_aircraft(key: str) -> AircraftOut:
-        return aircraft_view(store, _aircraft_or_404(key), cfg)
+    def get_aircraft(key: str, as_of: AsOf = None) -> AircraftOut:
+        return aircraft_view(store, _aircraft_or_404(key), cfg, _utc(as_of))
 
     @app.get("/aircraft/{key}/flights", tags=["flights"], response_model=list[FlightOut])
     def list_flights(key: str) -> list[FlightOut]:

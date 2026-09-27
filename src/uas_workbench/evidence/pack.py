@@ -24,6 +24,7 @@ from uas_workbench.service.app import (
     entries_about,
     entry_view,
     flight_view,
+    flights_until,
     reconcile_view,
 )
 from uas_workbench.service.store import Store
@@ -171,12 +172,14 @@ def build_pack(
     if aircraft is None:
         raise KeyError(aircraft_key)
     now = generated_utc or datetime.now(UTC).replace(microsecond=0)
-    entries = entries_about(store, aircraft_key)
+    # Everything the pack reads is fixed at as_of: the entries that had occurred by then
+    # (liveness decided over the whole ledger), and the flights that had started by then.
+    entries = [e for e in entries_about(store, aircraft_key) if e.occurred_utc <= as_of]
     log = _log(store, entries)
-    records = store.flights(aircraft_key)
-    result, recon = reconcile_view(store, aircraft, config)
+    records = flights_until(store.flights(aircraft_key), as_of)
+    result, recon = reconcile_view(store, aircraft, config, as_of)
     due, _board, due_out = due_view(store, aircraft, config, as_of)
-    maintenance = store.maintenance(aircraft_key)
+    maintenance = store.maintenance(aircraft_key, as_of)
     has_record = maintenance is not None or bool(due.usage)
     unlogged_s = round(sum(f.seconds for f in result.findings if f.kind == "unlogged_flight"), 1)
     logged_s = round(sum(r.flight_time_s for r in records if is_known(r.flight_time_s)), 1)
@@ -189,7 +192,7 @@ def build_pack(
             1,
         )
     components: list[dict[str, Any]] = []
-    for c in store.components():
+    for c in store.components(as_of):
         usage = due.usage.get(c.id)
         if usage is None:
             continue
@@ -210,7 +213,7 @@ def build_pack(
                 ],
                 "usage": {"hours_s": round(usage.hours_s, 1), "cycles": usage.cycles},
                 "synthetic": c.synthetic,
-                "entries": _log(store, list(store.entries(c.id))),
+                "entries": _log(store, [e for e in store.entries(c.id) if e.occurred_utc <= as_of]),
             }
         )
     statuses = _statuses(has_record, bool(components))
@@ -267,8 +270,9 @@ def build_pack(
         "components": components,
         "log": log,
         "ledger_note": (
-            "every entry about this aircraft, in the order it occurred, superseded entries "
-            "included as history with the entry that superseded them"
+            "every entry about this aircraft that had occurred by the pack's as_of, in the "
+            "order it occurred, superseded entries included as history with the entry that "
+            "superseded them"
             if log
             else LEDGER_EMPTY
         ),

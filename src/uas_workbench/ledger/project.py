@@ -3,6 +3,13 @@
 An entry is dead when a live newer entry supersedes it. Deciding from the newest entry
 backwards makes that well defined: the newest entry is always live, and undoing a
 correction (superseding the correction) revives the entry it had corrected.
+
+The records at a time `as_of` are folded from the live entries that had occurred by then.
+Liveness is decided over the whole ledger first, as known now, and the date filter comes
+second: a retraction entered in September still governs a query about March, and a naive
+filter that dropped the retraction would revive what it retracted. This answers "what was
+true at `as_of`, as recorded today", not "what did the board show on that day"; the
+ledger keeps `recorded_utc` for the second question, which nothing here asks yet.
 """
 
 from __future__ import annotations
@@ -58,8 +65,11 @@ class _Component:
         self.registered_at = e.occurred_utc
 
 
-def project(entries: Iterable[Entry]) -> Projection:
+def project(entries: Iterable[Entry], as_of: datetime | None = None) -> Projection:
+    """The records at `as_of` (every entry when None), with liveness over the whole ledger."""
     live, superseded_by = liveness(entries)
+    if as_of is not None:
+        live = [e for e in live if e.occurred_utc <= as_of]
     aircraft: dict[str, _Aircraft] = {}
     components: dict[str, _Component] = {}
     for e in live:
@@ -148,6 +158,7 @@ def project(entries: Iterable[Entry]) -> Projection:
         components=parts,
         work_orders=work_orders,
         registered_at={cid: c.registered_at for cid, c in components.items()},
+        as_of=as_of,
     )
 
 

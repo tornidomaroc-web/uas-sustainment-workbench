@@ -35,11 +35,12 @@ class Tool:
 TOOLS: tuple[Tool, ...] = (
     Tool(
         "list_aircraft",
-        "Every aircraft in the fleet with its computed board state, the reasons for that "
-        "state, and its counts of overdue and due-soon items, flights and findings.",
+        "Every aircraft in the fleet with its board state at the computation date, the "
+        "reasons for that state, and its counts of overdue and due-soon items, flights and "
+        "findings.",
         "/aircraft",
         key_required=False,
-        dated=False,
+        dated=True,
     ),
     Tool(
         "aircraft_due",
