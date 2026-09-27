@@ -100,20 +100,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   engine" above.
 - **Corrections are ordered by dependency, not by time.** An entry with later live
   entries depending on it (a registration with installations, an open work order with a
-  close) cannot be superseded until those are corrected first.
+  close) cannot be superseded until those are corrected first, and a back-dated entry or a
+  retraction that would make an already recorded later entry impossible is refused with
+  that entry's id. Some histories therefore have to be entered in a fixed order: the hours
+  before the first log before an inspection that derives its hours from them, a later
+  install retracted before the remove it relied on. The tool says which entry stands in
+  the way, not the order to take.
+- **A correction keeps the date of the entry it corrects.** A correction with another
+  `occurred_utc` is refused, because between the two dates neither entry would count; to
+  move a date, the entry is retracted and a new one recorded, and the two are then not
+  linked as correction and corrected. Among entries at one instant a correction takes the
+  place of the entry it corrects.
 - **A state at `as_of` is valid time, not record time.** The records at a time are folded
   from the live entries that had occurred by then, with liveness decided over the whole
   ledger first, as known now. So a query about March answers "what was true in March, as
-  the ledger stands today": a retraction entered in September still governs it, and a
-  correction that carries a later `occurred_utc` than the entry it corrects leaves a window
-  in which neither counts. The ledger keeps `recorded_utc`, so "what did the board show on
-  that day" could be answered too; nothing asks it yet. Before 0.2.0 every live entry was
-  folded whatever its date; see CHANGELOG.md.
-- **Writes are still judged against the ledger as of now.** Validation checks a new entry
-  against the whole-ledger projection, not against the state at the entry's own date, so a
-  state change back-dated inside a work order's open window is refused if that order is
-  closed later, and a close dated before a later state change is accepted. Time-aware
-  validation is the next change.
+  the ledger stands today": a retraction entered in September still governs it. The
+  ledger keeps `recorded_utc`, so "what did the board show on that day" could be answered
+  too; nothing asks it yet, and no route or tool takes a record time. Before 0.2.0 every
+  live entry was folded whatever its date; see CHANGELOG.md.
+- **Writes are judged at the entry's own date, and against valid time only.** A new entry
+  is checked against the records as they stood when it happened, then every later entry of
+  the same subject is checked again with it in place. What this does not do: it does not
+  ask when anything was recorded, so it cannot tell a back-dated entry from one entered on
+  the day; and it checks only what the projection can see, so a well-formed false
+  statement is still accepted (above). A history that needs a fixed order of entry is
+  refused one entry at a time, naming the entry in the way, and the refusal can send a
+  person through a retraction and a re-entry to change one value.
 
 ## Limits of the evidence pack
 

@@ -45,8 +45,54 @@ answer stands. A new test replays every recording with the clock frozen at 2028-
 no recorded call depends on the day the tests run; without the change, run 02 would have
 started failing on 2026-12-25.
 
-Not in this release: time-aware validation of writes. A new entry is still judged against
-the ledger as of now, not at its own date; see LIMITS.md.
+### Corrected: a write is judged at the entry's own date, and may not break a later entry
+
+Until now a new entry was judged against the ledger as of now, the same whole-ledger fold
+the reads used before this release. Reproduced before the change: a state change back-dated
+inside a work order's open window was refused with "was closed on" when the order had been
+closed later; a close dated before a later state change was accepted, and that state change
+then sat on a closed order, visible at any `as_of` after it; a remove dated inside an
+installation window that a later remove already closed was accepted, and the later remove
+then took the part off an aircraft it was no longer on and was silently ignored by the
+fold; a retraction of a remove was accepted while a later install on another aircraft
+relied on it, leaving the part on two aircraft at once; hours before the first log set
+lower and back-dated before an inspection that stated more hours were accepted; and a
+correction dated away from the entry it corrected was accepted, leaving a window between
+the two dates in which neither counted.
+
+The rule now: every entry is judged against the records as they stood when it happened,
+the fold of the live entries that precede it, with liveness decided over the whole ledger
+first as in every read; then every already recorded later entry of the same subject is
+judged again with the new one in place, and the write is refused with 409 if one of them
+would no longer hold, naming that entry. Nothing is written on a refusal. A correction
+keeps the `occurred_utc` of the entry it corrects and takes its place among entries at the
+same instant; to move a date, the entry is retracted and a new one recorded. This is valid
+time throughout: when an entry was recorded plays no part in any check, and record time is
+not queryable through any route or tool.
+
+Writes that change answer:
+
+- Accepted now, refused before: a state change dated inside a work order's open window
+  when the order was closed later.
+- Refused now (409, naming the entry that would no longer hold), accepted before: a close
+  dated before a later state change of the same order; a remove dated inside a window that
+  a later remove closes; a retraction of a remove that a later install elsewhere relies on;
+  hours before the first log set lower, dated before an inspection stating more hours than
+  the aircraft would then have had.
+- Refused now for the right reason: a second close dated before the recorded close names
+  the entry that would land on a closed order; an open-ended install into a gap before a
+  later install elsewhere names that later install. Both were refused before, the first as
+  "was closed on" a date after the new entry, the second as installed elsewhere later.
+- Refused now (409), accepted before: a correction whose `occurred_utc` differs from the
+  entry it corrects. `uasw record ... --supersedes N` without `--at` now takes entry N's
+  date; the API needs it stated, and the refusal names it.
+
+Changed: `ledger.validate`, `ledger.project(entries, before=)`, `ledger.project.fold_key`
+(a correction sorts at its target's place; the seeded fleet folds the same), the CLI
+default date of a correction. Not changed: the ledger and its file format, every response
+shape, the nine recorded runs, the published evidence sample's hash. One existing test
+recorded an inspection with derived hours and then set the hours before the first log
+lower, dated earlier; that order is now refused, and the test enters the hours first.
 
 ## 0.1.0
 
