@@ -101,6 +101,19 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **Corrections are ordered by dependency, not by time.** An entry with later live
   entries depending on it (a registration with installations, an open work order with a
   close) cannot be superseded until those are corrected first.
+- **A state at `as_of` is valid time, not record time.** The records at a time are folded
+  from the live entries that had occurred by then, with liveness decided over the whole
+  ledger first, as known now. So a query about March answers "what was true in March, as
+  the ledger stands today": a retraction entered in September still governs it, and a
+  correction that carries a later `occurred_utc` than the entry it corrects leaves a window
+  in which neither counts. The ledger keeps `recorded_utc`, so "what did the board show on
+  that day" could be answered too; nothing asks it yet. Before 0.2.0 every live entry was
+  folded whatever its date; see CHANGELOG.md.
+- **Writes are still judged against the ledger as of now.** Validation checks a new entry
+  against the whole-ledger projection, not against the state at the entry's own date, so a
+  state change back-dated inside a work order's open window is refused if that order is
+  closed later, and a close dated before a later state change is accepted. Time-aware
+  validation is the next change.
 
 ## Limits of the evidence pack
 
@@ -137,6 +150,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   of its weights, the recording date and the computation date. Re-recording with another
   model or another date gives different sentences; the test suite only guarantees that the
   records behind each recorded answer are what the current code returns.
+- **One recorded run predates a tool change and is kept as recorded.** Before 0.2.0 the
+  `list_aircraft` tool called `/aircraft` without a date, so the board it returned was the
+  one computed on the recording day, 2026-09-25, not at the run's computation date. The
+  run "Which aircraft are not serviceable, and what stops each one?" was recorded that
+  way. Its file is kept byte for byte and its hash is pinned in the replay test; on replay
+  the tool now sends the run's computation date, and the recorded records must equal the
+  dated ones, which they do: the answer was consistent with its computation date all
+  along. Had the tool stayed undated, that replay would have started failing on
+  2026-12-25, when one aircraft's annual inspection becomes due soon on the day of the
+  test rather than at the pinned date.
 - **Hours and cycles cannot be projected.** Only calendar limits have a date, so "what is
   due before Friday" is answered for calendar items and stated as unknown for the rest.
 - **The ledger checks catch what they can match.** A name written as an initial and a
