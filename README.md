@@ -114,7 +114,7 @@ stored twice. Impossible input is refused before anything is written, with a sta
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
 closed that is not open, a component installed while it is on another airframe, a
 back-dated installation that overlaps a window, a correction that would orphan later
-entries, a date in the future, negative hours or cycles. Every entry is judged at its own
+entries, a date more than five minutes in the future, negative hours or cycles. Every entry is judged at its own
 date, against the records as they stood when it happened, so a state change back-dated
 inside a work order's open window is accepted although the order was closed later; and a
 write that would make an already recorded later entry impossible, such as a close dated
