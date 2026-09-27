@@ -4,7 +4,8 @@ A refusal is the only explanation a person gets for why nothing was written, so 
 are part of the contract, not decoration. Tests elsewhere match a word or an id; a sentence
 can be broken around that word and still pass them, as 0.2.0 development showed (an install
 dated before registration read "... it was registered on <date> registered"). The first test
-holds the sentences 0.1.0 already had, unchanged; the second holds those 0.2.0 added.
+holds the sentences 0.1.0 already had, unchanged; the second holds those 0.2.0 added; the
+third holds the one 409 outside the ledger, a log uploaded twice.
 """
 
 from __future__ import annotations
@@ -14,11 +15,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
 from uas_workbench.ledger import Entry, LedgerError, append
+from uas_workbench.service.app import create_app
 from uas_workbench.service.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -201,3 +204,22 @@ def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
         "at 2026-09-01 09:00 UTC, "
     ), text
     assert text.endswith(f" h; retract or correct entry {done} first"), text
+
+
+def test_the_one_409_outside_the_ledger_reads_whole(store: Store) -> None:
+    """A log uploaded twice for the same aircraft; unchanged since 0.1.0."""
+    log = FIXTURES / "px4" / "flight_review_board_validation_2026-06-12_excerpt.ulg"
+    api = TestClient(create_app(store, write_token=None), client=("127.0.0.1", 50000))
+
+    def upload() -> Any:
+        with log.open("rb") as f:
+            return api.post(
+                "/ingest",
+                data={"aircraft_key": "uploaded-01"},
+                files={"log": (log.name, f, "application/octet-stream")},
+            )
+
+    assert upload().status_code == 201
+    again = upload()
+    assert again.status_code == 409
+    assert again.json()["detail"] == f"uploaded-01/{log.stem} is already stored"

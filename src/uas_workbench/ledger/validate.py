@@ -291,10 +291,15 @@ def _transitions(
     elif entry.kind in ("component.install", "component.remove"):
         found = [c for c in then.components if c.id == entry.subject]
         if not found:
+            # The 0.1.0 sentence, word for word; tests/test_ledger_refusals.py holds it.
             registered = whole.registered_at.get(entry.subject) if whole is not None else None
-            when = f"it was registered on {_stamp(registered)}" if registered else "it was not"
+            why = (
+                f"it was registered on {_stamp(registered)}"
+                if registered
+                else "it was not registered by then"
+            )
             raise LedgerError(
-                409, f"{entry.subject} cannot be on an aircraft at {_stamp(at)}: {when} registered"
+                409, f"{entry.subject} cannot be on an aircraft at {_stamp(at)}: {why}"
             )
         (c,) = found
         key = str(details["aircraft_key"])
@@ -303,12 +308,10 @@ def _transitions(
             if on:
                 since = _stamp(on[0].from_utc)
                 raise LedgerError(409, f"{c.id} is installed on {on[0].aircraft_key} since {since}")
-        elif not on:
-            raise LedgerError(409, f"{c.id} is not installed on any aircraft at {_stamp(at)}")
-        elif on[0].aircraft_key != key:
-            raise LedgerError(
-                409, f"{c.id} is installed on {on[0].aircraft_key} at {_stamp(at)}, not on {key}"
-            )
+        elif not on or on[0].aircraft_key != key:
+            # The 0.1.0 sentence, word for word; tests/test_ledger_refusals.py holds it.
+            where = f"installed on {on[0].aircraft_key}" if on else "not installed on any aircraft"
+            raise LedgerError(409, f"{c.id} is {where} at {_stamp(at)}, not installed on {key}")
     elif entry.kind == "inspection.done":
         record = then.maintenance.get(entry.subject)
         before = record.time_in_service_before_s if record else 0.0
