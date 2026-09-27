@@ -114,9 +114,15 @@ stored twice. Impossible input is refused before anything is written, with a sta
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
 closed that is not open, a component installed while it is on another airframe, a
 back-dated installation that overlaps a window, a correction that would orphan later
-entries, a date in the future, negative hours or cycles. Every entry carries the sentence
-that it records what the entering person stated and that the workbench does not certify
-airworthiness or return to service. `POST /entries` and `uasw record` reach the same
+entries, a date in the future, negative hours or cycles. Every entry is judged at its own
+date, against the records as they stood when it happened, so a state change back-dated
+inside a work order's open window is accepted although the order was closed later; and a
+write that would make an already recorded later entry impossible, such as a close dated
+before a later state change or a retraction that would leave a part on two aircraft at
+once, is refused and names that entry. A correction keeps the date of the entry it
+corrects; to move a date, the entry is retracted and a new one written. Every entry
+carries the sentence that it records what the entering person stated and that the
+workbench does not certify airworthiness or return to service. `POST /entries` and `uasw record` reach the same
 append; `GET /entries` and `GET /components` read the history with superseded entries
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
 set; what that does not protect against is in [LIMITS.md](LIMITS.md).
@@ -218,6 +224,8 @@ uasw record component register PACK-7 --kind "battery pack" --since 2026-08-01 -
 uasw record component install PACK-7 my-aircraft --by "..." --statement "..."
 uasw record inspection my-aircraft "100-hour inspection" --by "..." --statement "..."
 uasw record history my-aircraft --all              # superseded entries too, with the reasons
+uasw record time-in-service my-aircraft 42.5 --supersedes 9 --by "..." --reason "misread" \
+    --statement "..."                             # a correction; it keeps entry 9's date
 uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
 ```
 
