@@ -71,6 +71,7 @@ class Projection:
     components: tuple[Component, ...] = ()
     work_orders: dict[str, tuple[WorkOrderState, ...]] = field(default_factory=dict)
     registered_at: dict[str, datetime] = field(default_factory=dict)
+    as_of: datetime | None = None  # the time the records describe; None means every entry
 
 
 class LedgerError(Exception):
