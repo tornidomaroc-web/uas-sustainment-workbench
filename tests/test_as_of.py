@@ -22,10 +22,11 @@ from uas_workbench.assistant.recording import load_recordings, replay
 from uas_workbench.assistant.tools import stamp
 from uas_workbench.evidence import build_pack
 from uas_workbench.fleet import load_config
+from uas_workbench.fleet.model import Fleet
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
 from uas_workbench.flight import Unknown
-from uas_workbench.ledger import Entry, append, project
+from uas_workbench.ledger import Entry, LedgerError, append, project
 from uas_workbench.life import NO_RECORD, board, due_list
 from uas_workbench.service.app import create_app
 from uas_workbench.service.store import Store
@@ -287,3 +288,322 @@ def test_the_evidence_pack_is_fixed_at_its_as_of() -> None:
     assert early["usage"]["flights"] == []  # every flight of SYN-05 is in August 2026
     assert all(e["occurred_utc"] <= "2026-07-01" for e in early["log"])
     assert early["counts"]["entries"] == len(early["log"]) > 0
+
+
+# 8. Writes are judged at the entry's own date. A new entry is checked against the state at
+#    its occurred_utc (liveness over the whole ledger first, as in every read), then every
+#    already recorded later entry of the same subject is checked again with the new one in
+#    place; if one of them would no longer hold, the write is refused with that entry's id
+#    and nothing is written. A correction keeps the date of the entry it corrects; to move a
+#    date, the entry is retracted and a new one written. Before this, a new entry was judged
+#    against the ledger as of now: a state change back-dated inside a work order's open
+#    window was refused if the order was closed later, and a close dated before a later
+#    state change, a remove dated inside a window a later remove closes, a retraction that
+#    puts a part on two aircraft at once, and a correction dated away from its target were
+#    all accepted.
+NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+T = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+BY = "A. Tester, maintenance"
+PACK = {
+    "kind": "battery pack",
+    "in_service_since": "2026-08-01",
+    "hours_s_before": 0.0,
+    "cycles_before": 0,
+}
+
+
+def seeded() -> Store:
+    s = Store(":memory:")
+    s.add_fleet(generate(CONFIG))
+    s.add_fleet(showcase(FIXTURES))
+    return s
+
+
+def write(
+    store: Store,
+    subject: str,
+    kind: str,
+    details: dict[str, Any] | None = None,
+    *,
+    at: datetime = T,
+    supersedes: int | None = None,
+    reason: str | None = None,
+) -> Entry:
+    e = Entry(
+        id=None,
+        subject=subject,
+        kind=kind,
+        occurred_utc=at,
+        recorded_utc=NOW,
+        entered_by=BY,
+        statement="" if kind == "retraction" else "as described",
+        details=details or {},
+        supersedes=supersedes,
+        reason=reason,
+        synthetic=False,
+    )
+    return append(store, e, policy=CONFIG.life, now=NOW, tolerance_s=CONFIG.tolerance_s)
+
+
+def refused(store: Store, status: int, *words: str, **kw: Any) -> str:
+    before = store.entry_count()
+    with pytest.raises(LedgerError) as exc:
+        write(store, **kw)
+    assert exc.value.status == status, exc.value.detail
+    for w in words:
+        assert w in exc.value.detail, exc.value.detail
+    assert store.entry_count() == before
+    return exc.value.detail
+
+
+def orders_at(store: Store, key: str, at: datetime) -> list[tuple[str, str, datetime | None]]:
+    return [(w.work_id, w.state, w.closed_utc) for w in store.projection(at).work_orders[key]]
+
+
+def windows(store: Store, cid: str) -> list[tuple[str, datetime, datetime | None]]:
+    (c,) = [c for c in store.components() if c.id == cid]
+    return [(i.aircraft_key, i.from_utc, i.to_utc) for i in c.installations]
+
+
+def test_a_state_change_back_dated_inside_the_open_window_is_accepted() -> None:
+    s = seeded()
+    write(s, "SYN-01", "work_order.open", {"work_id": "WO-A", "state": "in_work"})
+    write(s, "SYN-01", "work_order.close", {"work_id": "WO-A"}, at=T + 4 * D)
+    write(
+        s,
+        "SYN-01",
+        "work_order.state",
+        {"work_id": "WO-A", "state": "awaiting_parts"},
+        at=T + 2 * D,
+    )
+    assert orders_at(s, "SYN-01", T + D) == [("WO-A", "in_work", None)]
+    assert orders_at(s, "SYN-01", T + 3 * D) == [("WO-A", "awaiting_parts", None)]
+    assert orders_at(s, "SYN-01", T + 5 * D) == [("WO-A", "awaiting_parts", T + 4 * D)]
+    # Outside the window the refusals stand, and each names the boundary it crossed.
+    refused(
+        s,
+        409,
+        "WO-A",
+        "closed",
+        subject="SYN-01",
+        kind="work_order.state",
+        details={"work_id": "WO-A", "state": "deferred"},
+        at=T + 5 * D,
+    )
+    refused(
+        s,
+        409,
+        "WO-A",
+        "opened",
+        subject="SYN-01",
+        kind="work_order.state",
+        details={"work_id": "WO-A", "state": "deferred"},
+        at=T - D,
+    )
+
+
+def test_a_write_that_would_make_a_later_entry_impossible_is_refused_naming_it() -> None:
+    s = seeded()
+    # A close dated before a later state change would leave that change on a closed order.
+    write(s, "SYN-01", "work_order.open", {"work_id": "WO-B", "state": "in_work"})
+    later = write(
+        s,
+        "SYN-01",
+        "work_order.state",
+        {"work_id": "WO-B", "state": "awaiting_parts"},
+        at=T + 3 * D,
+    )
+    refused(
+        s,
+        409,
+        f"entry {later.id}",
+        subject="SYN-01",
+        kind="work_order.close",
+        details={"work_id": "WO-B"},
+        at=T + D,
+    )
+    assert orders_at(s, "SYN-01", T + 4 * D) == [("WO-B", "awaiting_parts", None)]
+    # A second close dated before the recorded close would make that close a close of a
+    # closed order; the refusal names the recorded close, not a date that lies after the new one.
+    closed = write(s, "SYN-01", "work_order.close", {"work_id": "WO-B"}, at=T + 4 * D)
+    detail = refused(
+        s,
+        409,
+        f"entry {closed.id}",
+        subject="SYN-01",
+        kind="work_order.close",
+        details={"work_id": "WO-B"},
+        at=T + 2 * D,
+    )
+    assert "was closed on" not in detail
+    # A remove dated inside a window that a later remove already closes would leave the later
+    # remove taking a part off an aircraft it is not on.
+    write(s, "NEW-E", "component.register", PACK, at=T - D)
+    write(s, "NEW-E", "component.install", {"aircraft_key": "SYN-01"})
+    removed = write(s, "NEW-E", "component.remove", {"aircraft_key": "SYN-01"}, at=T + 5 * D)
+    refused(
+        s,
+        409,
+        f"entry {removed.id}",
+        subject="NEW-E",
+        kind="component.remove",
+        details={"aircraft_key": "SYN-01"},
+        at=T + 2 * D,
+    )
+    assert windows(s, "NEW-E") == [("SYN-01", T, T + 5 * D)]
+    # An open-ended install into a gap before a later install elsewhere.
+    moved = write(s, "NEW-E", "component.install", {"aircraft_key": "SYN-02"}, at=T + 10 * D)
+    refused(
+        s,
+        409,
+        f"entry {moved.id}",
+        "SYN-03",
+        subject="NEW-E",
+        kind="component.install",
+        details={"aircraft_key": "SYN-03"},
+        at=T + 6 * D,
+    )
+    # Hours before the first log set lower, back-dated before an inspection that states more
+    # hours than the aircraft would then have had.
+    done = write(
+        s, "SYN-02", "inspection.done", {"name": "100-hour inspection", "at_hours_s": 50 * H}
+    )
+    refused(
+        s,
+        409,
+        f"entry {done.id}",
+        subject="SYN-02",
+        kind="time_in_service.set",
+        details={"before_s": 0.0},
+        at=T - D,
+    )
+
+
+def test_a_retraction_that_would_make_a_later_entry_impossible_is_refused() -> None:
+    s = seeded()
+    write(s, "NEW-G", "component.register", PACK, at=T - D)
+    write(s, "NEW-G", "component.install", {"aircraft_key": "SYN-01"})
+    removed = write(s, "NEW-G", "component.remove", {"aircraft_key": "SYN-01"}, at=T + 5 * D)
+    moved = write(s, "NEW-G", "component.install", {"aircraft_key": "SYN-02"}, at=T + 10 * D)
+    assert removed.id is not None and moved.id is not None
+    # Retracting the remove would put the part on SYN-01 and SYN-02 at once.
+    refused(
+        s,
+        409,
+        f"entry {moved.id}",
+        subject="NEW-G",
+        kind="retraction",
+        at=NOW - D,
+        supersedes=removed.id,
+        reason="never removed",
+    )
+    assert windows(s, "NEW-G") == [("SYN-01", T, T + 5 * D), ("SYN-02", T + 10 * D, None)]
+    # In dependency order it goes through: the later install first, then the remove.
+    write(s, "NEW-G", "retraction", at=NOW - D, supersedes=moved.id, reason="wrong part")
+    write(s, "NEW-G", "retraction", at=NOW - D, supersedes=removed.id, reason="never removed")
+    assert windows(s, "NEW-G") == [("SYN-01", T, None)]
+
+
+def test_a_correction_keeps_the_date_of_the_entry_it_corrects() -> None:
+    s = seeded()
+    first = write(s, "SYN-01", "time_in_service.set", {"before_s": 100 * H})
+    assert first.id is not None
+    detail = refused(
+        s,
+        409,
+        str(first.id),
+        "2026-09-01 09:00 UTC",
+        "retract",
+        subject="SYN-01",
+        kind="time_in_service.set",
+        details={"before_s": 200 * H},
+        at=T + 5 * D,
+        supersedes=first.id,
+        reason="typo",
+    )
+    assert "2026-09-06" in detail
+    assert s.projection(T + 2 * D).maintenance["SYN-01"].time_in_service_before_s == 100 * H
+    fixed = write(
+        s,
+        "SYN-01",
+        "time_in_service.set",
+        {"before_s": 200 * H},
+        supersedes=first.id,
+        reason="typo",
+    )
+    assert fixed.occurred_utc == first.occurred_utc
+    assert s.projection(T + 2 * D).maintenance["SYN-01"].time_in_service_before_s == 200 * H
+    assert s.projection(T + 6 * D).maintenance["SYN-01"].time_in_service_before_s == 200 * H
+    # A correction takes the place of the entry it corrects among entries at the same instant.
+    first_2 = write(s, "SYN-02", "time_in_service.set", {"before_s": 100 * H})
+    write(s, "SYN-02", "time_in_service.set", {"before_s": 150 * H})
+    assert first_2.id is not None
+    write(
+        s,
+        "SYN-02",
+        "time_in_service.set",
+        {"before_s": 120 * H},
+        supersedes=first_2.id,
+        reason="misread",
+    )
+    assert s.maintenance("SYN-02").time_in_service_before_s == 150 * H  # type: ignore[union-attr]
+    # To move a date: retract, then record anew. The retraction's own date is not the target's.
+    assert fixed.id is not None
+    write(s, "SYN-01", "retraction", at=NOW - D, supersedes=fixed.id, reason="wrong day")
+    write(s, "SYN-01", "time_in_service.set", {"before_s": 200 * H}, at=T + 5 * D)
+    assert s.projection(T + 6 * D).maintenance["SYN-01"].time_in_service_before_s == 200 * H
+
+
+def test_the_seeded_ledger_holds_entry_by_entry_under_the_time_aware_rules() -> None:
+    """Every seeded entry is accepted when appended in order, so the re-check of later
+    entries cannot refuse a write over a seeded entry that never held."""
+    fleet = generate(CONFIG)
+    s = Store(":memory:")
+    s.add_fleet(Fleet(fleet.aircraft, fleet.flights, ()))
+    s.add_fleet(showcase(FIXTURES))
+    assigned: dict[int, int] = {}
+    for e in fleet.entries:
+        target = assigned[e.supersedes] if e.supersedes is not None else None
+        stored = append(
+            s,
+            Entry(**{**e.__dict__, "id": None, "supersedes": target}),
+            policy=CONFIG.life,
+            now=NOW,
+            tolerance_s=CONFIG.tolerance_s,
+        )
+        assert e.id is not None and stored.id is not None
+        assigned[e.id] = stored.id
+    assert s.projection().maintenance == seeded().projection().maintenance
+    assert s.projection().components == seeded().projection().components
+
+
+def test_the_api_accepts_and_refuses_by_the_entry_date() -> None:
+    s = seeded()
+    api = TestClient(create_app(s, write_token=None), client=("127.0.0.1", 50000))
+
+    def post(kind: str, details: dict[str, Any], at: str) -> Any:
+        body = {
+            "subject": "SYN-01",
+            "kind": kind,
+            "occurred_utc": at,
+            "entered_by": BY,
+            "statement": "as described",
+            "details": details,
+        }
+        return api.post("/entries", json=body)
+
+    assert (
+        post(
+            "work_order.open", {"work_id": "WO-H", "state": "in_work"}, "2026-09-01T09:00:00Z"
+        ).status_code
+        == 201
+    )
+    assert post("work_order.close", {"work_id": "WO-H"}, "2026-09-05T09:00:00Z").status_code == 201
+    inside = post(
+        "work_order.state", {"work_id": "WO-H", "state": "deferred"}, "2026-09-03T09:00:00Z"
+    )
+    assert inside.status_code == 201, inside.text
+    early = post("work_order.close", {"work_id": "WO-H"}, "2026-09-02T09:00:00Z")
+    assert early.status_code == 409 and f"entry {inside.json()['id']}" in early.json()["detail"]
+    at = api.get("/aircraft/SYN-01", params={"as_of": "2026-09-04T00:00:00Z"}).json()
+    assert at["status"] == "serviceable with deferred defects"
