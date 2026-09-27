@@ -8,6 +8,8 @@ answer on the public page. The answer itself must pass the grounding check.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -16,7 +18,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from uas_workbench.assistant.agent import Call
 from uas_workbench.assistant.recording import Recording, load_recordings, replay
+from uas_workbench.assistant.tools import stamp
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
@@ -26,6 +30,40 @@ from uas_workbench.service.store import Store
 FIXTURES = Path(__file__).parent / "fixtures"
 RECORDINGS = load_recordings()
 Caller = Callable[[str, dict[str, str]], Any]
+
+# Migration, 0.2.0. Before 0.2.0 the list_aircraft tool called /aircraft with no date, so the
+# board it returned was computed on the day of the recording, not at the run's as_of. Since
+# 0.2.0 the tool sends as_of, like every other dated tool. The recording below was made
+# before that change and is kept byte for byte, as evidence is; its file hash is pinned here.
+# On replay the tool now sends as_of, and the recorded result must still equal the dated one:
+# the answer was consistent with its as_of all along. The record of this change is in
+# src/uas_workbench/assistant/recordings/README.md and in CHANGELOG.md.
+MIGRATED_IN_0_2_0: dict[str, str] = {
+    "which-aircraft-are-not-serviceable-and-what-stops-each-one": (
+        "60bade96fd72e2cdcd99a41760f45e24c4c2301baf568e13ada1a63545728e8c"
+    )
+}
+RECORDINGS_DIR = Path(__file__).parent.parent / "src" / "uas_workbench" / "assistant" / "recordings"
+
+
+def expected_query(recording: Recording, then: Call) -> dict[str, str]:
+    """The query a recorded call is expected to send on today's code."""
+    query = dict(then.query)
+    if recording.slug in MIGRATED_IN_0_2_0 and then.name == "list_aircraft":
+        query["as_of"] = stamp(recording.as_of)
+    return query
+
+
+def test_migrated_recordings_are_kept_byte_for_byte() -> None:
+    by_slug = {r.slug: r for r in RECORDINGS}
+    for slug, digest in MIGRATED_IN_0_2_0.items():
+        assert slug in by_slug, slug
+        path = next(
+            p
+            for p in RECORDINGS_DIR.glob("*.json")
+            if json.loads(p.read_text("utf-8"))["slug"] == slug
+        )
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, path.name
 
 
 @pytest.fixture(scope="module")
@@ -100,7 +138,7 @@ def test_recording_replays_identically_on_current_code(
     answer = replay(recording, caller)
     assert [c.name for c in answer.calls] == [c.name for c in recording.calls]
     for now, then in zip(answer.calls, recording.calls, strict=True):
-        assert (now.path, now.query) == (then.path, then.query)
+        assert (now.path, now.query) == (then.path, expected_query(recording, then))
         assert now.result == then.result, f"{then.name} returns something else today"
     assert answer.text == recording.answer
     assert answer.grounding.verified, answer.grounding.unsupported
