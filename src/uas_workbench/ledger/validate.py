@@ -1,9 +1,14 @@
 """Refuse impossible entries before anything is written, with a status and a sentence.
 
-The checks run against the projection of what is already recorded, so a back-dated entry
-is judged by the windows and work orders it would land among, whatever order it arrives
-in. Shape errors are 422, unknown subjects 404, the public showcase aircraft 403, and
-transitions the projection cannot accept 409.
+Every entry is judged against the records as they stood when it happened: the fold of the
+live entries that precede it, with liveness decided over the whole ledger first, as in
+every read. So a back-dated entry lands among the windows and work orders of its own
+date, whatever order it arrives in. Then every already recorded later entry of the same
+subject is judged again with the new one in place, and the write is refused if one of them
+would no longer hold: the ledger never holds an entry its own records cannot accept. A
+correction keeps the date of the entry it corrects and takes its place; to move a date,
+the entry is retracted and a new one written. Shape errors are 422, unknown subjects 404,
+the public showcase aircraft 403, and transitions the records cannot accept 409.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from uas_workbench.life.engine import time_in_service
 from uas_workbench.life.policy import LifePolicy
 
 from .model import AIRCRAFT_KINDS, COMPONENT_KINDS, KINDS, RETRACTION, Entry, LedgerError
-from .project import project
+from .project import fold_key, liveness, project
 
 if TYPE_CHECKING:
     from uas_workbench.service.store import Store
@@ -163,6 +168,21 @@ def _subjects(store: Store, entry: Entry, projection: Any, details: dict[str, An
                 )
 
 
+def _policy(entry: Entry, details: dict[str, Any], policy: LifePolicy) -> None:
+    if entry.kind == "component.register" and details["kind"] not in policy.component_kinds:
+        raise LedgerError(
+            422,
+            f"component kind {details['kind']!r} is not in fleet.toml; the kinds are "
+            f"{', '.join(policy.component_kinds)}",
+        )
+    if entry.kind == "inspection.done" and details["name"] not in policy.inspections:
+        raise LedgerError(
+            422,
+            f"inspection {details['name']!r} is not in fleet.toml; the inspections are "
+            f"{', '.join(policy.inspections)}",
+        )
+
+
 def _dependents(target: Entry, live: tuple[Entry, ...]) -> list[int]:
     same = [e for e in live if e.subject == target.subject and e.id != target.id]
     if target.kind == "component.register":
@@ -188,9 +208,10 @@ def _dependents(target: Entry, live: tuple[Entry, ...]) -> list[int]:
     return []
 
 
-def _correction(store: Store, entry: Entry, projection: Any) -> None:
+def _correction(store: Store, entry: Entry, projection: Any) -> Entry | None:
+    """The live entry this one supersedes, or None when it supersedes nothing."""
     if entry.supersedes is None:
-        return
+        return None
     target = store.entry(entry.supersedes)
     if target is None:
         raise LedgerError(404, f"entry {entry.supersedes} does not exist")
@@ -204,6 +225,13 @@ def _correction(store: Store, entry: Entry, projection: Any) -> None:
             f"entry {entry.supersedes} is already superseded by entry "
             f"{projection.superseded_by[target.id]}",
         )
+    if entry.kind != RETRACTION and entry.occurred_utc != target.occurred_utc:
+        raise LedgerError(
+            409,
+            f"a correction keeps the date of the entry it corrects: entry {target.id} happened "
+            f"on {_stamp(target.occurred_utc)} and this one says {_stamp(entry.occurred_utc)}; "
+            f"to move the date, retract entry {target.id} and record a new entry",
+        )
     dependents = _dependents(target, projection.live)
     if dependents:
         raise LedgerError(
@@ -211,78 +239,78 @@ def _correction(store: Store, entry: Entry, projection: Any) -> None:
             f"entry {entry.supersedes} cannot be superseded while entries "
             f"{', '.join(str(d) for d in dependents)} depend on it; correct those first",
         )
+    return target
 
 
 def _transitions(
     store: Store,
     entry: Entry,
     details: dict[str, Any],
-    projection: Any,
-    policy: LifePolicy,
+    then: Any,
+    whole: Any,
     tolerance_s: float,
 ) -> dict[str, Any]:
+    """Judge `entry` against `then`, the records as they stood when it happened.
+
+    `whole` is the projection of every other entry, used to name a later boundary in a
+    refusal and to keep work order ids unique over the whole history; None when an already
+    recorded entry is judged again, whose id is unique already.
+    """
     at = entry.occurred_utc
     if entry.kind == "work_order.open":
         wid = details.get("work_id")
-        if wid and any(w.work_id == wid for w in projection.work_orders.get(entry.subject, ())):
+        if (
+            wid
+            and whole is not None
+            and any(w.work_id == wid for w in whole.work_orders.get(entry.subject, ()))
+        ):
             raise LedgerError(409, f"work order {wid} already exists on {entry.subject}")
         if not wid:
             details["work_id"] = f"WO-{store.next_entry_id()}"
     elif entry.kind in ("work_order.state", "work_order.close"):
         wid = str(details["work_id"])
-        orders = [w for w in projection.work_orders.get(entry.subject, ()) if w.work_id == wid]
+        orders = [w for w in then.work_orders.get(entry.subject, ()) if w.work_id == wid]
         if not orders:
+            later = (
+                [w for w in whole.work_orders.get(entry.subject, ()) if w.work_id == wid]
+                if whole is not None
+                else []
+            )
+            if later:
+                raise LedgerError(
+                    409,
+                    f"work order {wid} was opened on {_stamp(later[0].opened_utc)}, "
+                    f"after {_stamp(at)}",
+                )
             raise LedgerError(409, f"no work order {wid} is open on {entry.subject}")
         w = orders[0]
-        if w.opened_utc > at:
-            raise LedgerError(
-                409, f"work order {wid} was opened on {_stamp(w.opened_utc)}, after {_stamp(at)}"
-            )
         if w.closed_utc is not None:
             raise LedgerError(
                 409, f"work order {wid} on {entry.subject} was closed on {_stamp(w.closed_utc)}"
             )
-    elif entry.kind == "component.register":
-        if details["kind"] not in policy.component_kinds:
-            raise LedgerError(
-                422,
-                f"component kind {details['kind']!r} is not in fleet.toml; the kinds are "
-                f"{', '.join(policy.component_kinds)}",
-            )
     elif entry.kind in ("component.install", "component.remove"):
-        (c,) = [c for c in projection.components if c.id == entry.subject]
-        key = str(details["aircraft_key"])
-        if at < projection.registered_at[c.id]:
+        found = [c for c in then.components if c.id == entry.subject]
+        if not found:
+            registered = whole.registered_at.get(entry.subject) if whole is not None else None
+            when = f"it was registered on {_stamp(registered)}" if registered else "it was not"
             raise LedgerError(
-                409,
-                f"{c.id} cannot be on an aircraft at {_stamp(at)}: it was registered on "
-                f"{_stamp(projection.registered_at[c.id])}",
+                409, f"{entry.subject} cannot be on an aircraft at {_stamp(at)}: {when} registered"
             )
-        on = [
-            i for i in c.installations if i.from_utc <= at and (i.to_utc is None or at < i.to_utc)
-        ]
+        (c,) = found
+        key = str(details["aircraft_key"])
+        on = [i for i in c.installations if i.to_utc is None]
         if entry.kind == "component.install":
             if on:
                 since = _stamp(on[0].from_utc)
                 raise LedgerError(409, f"{c.id} is installed on {on[0].aircraft_key} since {since}")
-            nxt = [i for i in c.installations if i.from_utc > at]
-            if nxt:
-                raise LedgerError(
-                    409,
-                    f"{c.id} was installed on {nxt[0].aircraft_key} on {_stamp(nxt[0].from_utc)}; "
-                    "remove it there first or correct that entry",
-                )
-        elif not on or on[0].aircraft_key != key:
-            where = f"installed on {on[0].aircraft_key}" if on else "not installed on any aircraft"
-            raise LedgerError(409, f"{c.id} is {where} at {_stamp(at)}, not installed on {key}")
-    elif entry.kind == "inspection.done":
-        if details["name"] not in policy.inspections:
+        elif not on:
+            raise LedgerError(409, f"{c.id} is not installed on any aircraft at {_stamp(at)}")
+        elif on[0].aircraft_key != key:
             raise LedgerError(
-                422,
-                f"inspection {details['name']!r} is not in fleet.toml; the inspections are "
-                f"{', '.join(policy.inspections)}",
+                409, f"{c.id} is installed on {on[0].aircraft_key} at {_stamp(at)}, not on {key}"
             )
-        record = projection.maintenance.get(entry.subject)
+    elif entry.kind == "inspection.done":
+        record = then.maintenance.get(entry.subject)
         before = record.time_in_service_before_s if record else 0.0
         tis = time_in_service(
             entry.subject, before, store.flights(entry.subject), tolerance_s, until=at
@@ -299,6 +327,28 @@ def _transitions(
     return details
 
 
+def _later_entries_still_hold(
+    store: Store, timeline: list[Entry], candidate: Entry, cut: Entry, tolerance_s: float
+) -> None:
+    """Judge again every live entry of the subject that follows `cut` in the fold, with the
+    candidate in place; the first that no longer holds refuses the write and is named."""
+    live, _ = liveness(timeline)
+    key = fold_key(timeline)
+    for e in live:
+        if e is candidate or e.subject != candidate.subject or e.kind == RETRACTION:
+            continue
+        if key(e) <= key(cut):
+            continue
+        try:
+            _transitions(store, e, dict(e.details), project(timeline, before=e), None, tolerance_s)
+        except LedgerError as exc:
+            raise LedgerError(
+                409,
+                f"this would make entry {e.id} impossible ({e.kind} on {e.subject}, "
+                f"{_stamp(e.occurred_utc)}): {exc.detail}; retract or correct entry {e.id} first",
+            ) from exc
+
+
 def validate(
     store: Store,
     entry: Entry,
@@ -309,14 +359,22 @@ def validate(
 ) -> Entry:
     """The entry as it will be stored, or LedgerError."""
     details = _shape(entry, now)
-    projection = store.projection()
-    _subjects(store, entry, projection, details)
-    _correction(store, entry, projection)
-    if entry.supersedes is not None:
-        # Judge the transition as if the superseded entry were already gone.
-        rest = [e for e in store.entries() if e.id != entry.supersedes]
-        projection = project(rest)
-    details = _transitions(store, entry, details, projection, policy, tolerance_s)
+    current = store.projection()
+    _subjects(store, entry, current, details)
+    target = _correction(store, entry, current)
+    _policy(entry, details, policy)
+    existing = list(store.entries())
+    # The candidate takes the id the store will give it, so it sorts after every entry at
+    # its instant, and a correction takes the place of the entry it corrects.
+    candidate = dataclasses.replace(entry, id=store.next_entry_id(), details=details)
+    timeline = [*existing, candidate]
+    others = project([e for e in existing if target is None or e.id != target.id])
+    details = _transitions(
+        store, candidate, details, project(timeline, before=candidate), others, tolerance_s
+    )
+    candidate = dataclasses.replace(candidate, details=details)
+    timeline[-1] = candidate
+    _later_entries_still_hold(store, timeline, candidate, target or candidate, tolerance_s)
     statement = entry.statement.strip() or (entry.reason or "").strip()
     return dataclasses.replace(entry, details=details, statement=statement)
 

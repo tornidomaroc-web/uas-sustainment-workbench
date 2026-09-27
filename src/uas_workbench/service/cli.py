@@ -186,9 +186,16 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details:
     from uas_workbench.ledger import NOTE, Entry, LedgerError, append
 
     now = datetime.now(UTC).replace(microsecond=0)
+    store = open_store(args.db)
     at = datetime.fromisoformat(args.at) if args.at else now
     if at.tzinfo is None:
         at = at.replace(tzinfo=UTC)
+    supersedes = getattr(args, "supersedes", None)
+    if supersedes is not None and not args.at and kind_ != "retraction":
+        # A correction keeps the date of the entry it corrects; without --at, that date.
+        target = store.entry(supersedes)
+        if target is not None:
+            at = target.occurred_utc
     entry = Entry(
         id=None,
         subject=subject,
@@ -198,12 +205,11 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details:
         entered_by=args.by,
         statement=getattr(args, "statement", "") or "",
         details={k: v for k, v in details.items() if v is not None},
-        supersedes=getattr(args, "supersedes", None),
+        supersedes=supersedes,
         reason=getattr(args, "reason", None),
         synthetic=False,
     )
     config = load_config()
-    store = open_store(args.db)
     try:
         stored = append(store, entry, policy=config.life, now=now, tolerance_s=config.tolerance_s)
     except LedgerError as exc:

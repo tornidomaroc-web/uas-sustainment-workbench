@@ -10,11 +10,16 @@ second: a retraction entered in September still governs a query about March, and
 filter that dropped the retraction would revive what it retracted. This answers "what was
 true at `as_of`, as recorded today", not "what did the board show on that day"; the
 ledger keeps `recorded_utc` for the second question, which nothing here asks yet.
+
+Live entries fold in the order they occurred; at one instant, in the order they were
+entered, except that a correction takes the place of the entry it corrects. The records
+as they stood when one entry happened are the fold of the live entries before it in that
+order (`before`); write validation judges every entry against those.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from typing import cast
 
@@ -30,8 +35,27 @@ from uas_workbench.life.model import (
 from .model import AIRCRAFT_KINDS, Entry, Projection, WorkOrderState
 
 
+def fold_key(entries: Iterable[Entry]) -> Callable[[Entry], tuple[datetime, int]]:
+    """The order entries fold in: when they occurred, then the order they were entered, a
+    correction taking the place of the entry it corrects (through a chain of corrections)."""
+    by_id = {e.id: e for e in entries if e.id is not None}
+
+    def key(e: Entry) -> tuple[datetime, int]:
+        seen: set[int] = set()
+        root = e
+        while root.supersedes is not None and root.supersedes in by_id:
+            if root.supersedes in seen:
+                break
+            seen.add(root.supersedes)
+            root = by_id[root.supersedes]
+        return (e.occurred_utc, root.id or 0)
+
+    return key
+
+
 def liveness(entries: Iterable[Entry]) -> tuple[list[Entry], dict[int, int]]:
-    """Live entries in the order they occurred, and dead entry id -> superseding entry id."""
+    """Live entries in fold order, and dead entry id -> superseding entry id."""
+    entries = list(entries)
     superseded_by: dict[int, int] = {}
     live: list[Entry] = []
     for e in sorted(entries, key=lambda e: e.id or 0, reverse=True):
@@ -40,7 +64,7 @@ def liveness(entries: Iterable[Entry]) -> tuple[list[Entry], dict[int, int]]:
         live.append(e)
         if e.supersedes is not None and e.id is not None:
             superseded_by[e.supersedes] = e.id
-    live.sort(key=lambda e: (e.occurred_utc, e.id or 0))
+    live.sort(key=fold_key(entries))
     return live, superseded_by
 
 
@@ -65,11 +89,21 @@ class _Component:
         self.registered_at = e.occurred_utc
 
 
-def project(entries: Iterable[Entry], as_of: datetime | None = None) -> Projection:
-    """The records at `as_of` (every entry when None), with liveness over the whole ledger."""
+def project(
+    entries: Iterable[Entry], as_of: datetime | None = None, *, before: Entry | None = None
+) -> Projection:
+    """The records at `as_of` (every entry when None), with liveness over the whole ledger.
+
+    With `before`, an entry of `entries`, only the live entries that fold before it count:
+    the records as they stood when that entry happened."""
+    entries = list(entries)
     live, superseded_by = liveness(entries)
     if as_of is not None:
         live = [e for e in live if e.occurred_utc <= as_of]
+    if before is not None:
+        order = fold_key(entries)
+        cut = order(before)
+        live = [e for e in live if order(e) < cut]
     aircraft: dict[str, _Aircraft] = {}
     components: dict[str, _Component] = {}
     for e in live:

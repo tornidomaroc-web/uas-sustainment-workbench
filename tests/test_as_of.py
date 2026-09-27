@@ -159,7 +159,8 @@ def test_a_later_retraction_or_correction_governs_earlier_times() -> None:
         entry(4, "time_in_service.set", T0, {"before_s": 40 * H}, supersedes=1),
     ]
     assert project(corrected, as_of=T0 + D).maintenance["A"].time_in_service_before_s == 40 * H
-    assert project(corrected, as_of=T0 + D).live == tuple(corrected[1:])
+    # The correction takes the place of the entry it corrects among entries at one instant.
+    assert project(corrected, as_of=T0 + D).live == (corrected[3], corrected[1], corrected[2])
 
 
 @pytest.fixture(scope="module")
@@ -423,19 +424,20 @@ def test_a_write_that_would_make_a_later_entry_impossible_is_refused_naming_it()
         at=T + D,
     )
     assert orders_at(s, "SYN-01", T + 4 * D) == [("WO-B", "awaiting_parts", None)]
-    # A second close dated before the recorded close would make that close a close of a
-    # closed order; the refusal names the recorded close, not a date that lies after the new one.
-    closed = write(s, "SYN-01", "work_order.close", {"work_id": "WO-B"}, at=T + 4 * D)
+    # A second close dated before the recorded close would make the state change and then
+    # that close land on a closed order; the refusal names the first entry that no longer
+    # holds, not the later close as a boundary the new one lies before.
+    write(s, "SYN-01", "work_order.close", {"work_id": "WO-B"}, at=T + 4 * D)
     detail = refused(
         s,
         409,
-        f"entry {closed.id}",
+        f"entry {later.id}",
         subject="SYN-01",
         kind="work_order.close",
         details={"work_id": "WO-B"},
         at=T + 2 * D,
     )
-    assert "was closed on" not in detail
+    assert "was closed on 2026-09-05" not in detail
     # A remove dated inside a window that a later remove already closes would leave the later
     # remove taking a part off an aircraft it is not on.
     write(s, "NEW-E", "component.register", PACK, at=T - D)
