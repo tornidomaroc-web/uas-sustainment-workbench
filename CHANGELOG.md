@@ -21,7 +21,10 @@ before this change:
 - The assistant's `list_aircraft` tool called `/aircraft` without a date, so an answer at a
   pinned computation date drew the board from the day of the question.
 
-Queries at now were never affected: an entry cannot be dated in the future, so the whole
+Queries at now were not affected, with one narrow exception. An entry may be dated up to
+five minutes ahead of the server clock, the allowance for clock skew; anything later is
+refused. 0.1.0 counted such an entry at once. 0.2.0 counts it when its time arrives, so for
+those few minutes a query at now no longer shows it. Apart from that window the whole
 ledger and the ledger as of now are the same set.
 
 The rule now: liveness (what a correction or retraction has killed) is decided over the whole
@@ -86,6 +89,13 @@ Writes that change answer:
 - Refused now (409), accepted before: a correction whose `occurred_utc` differs from the
   entry it corrects. `uasw record ... --supersedes N` without `--at` now takes entry N's
   date; the API needs it stated, and the refusal names it.
+
+Every refusal not listed above keeps its 0.1.0 sentence word for word, and
+`tests/test_ledger_refusals.py` asserts each 409 of the write path in full. During 0.2.0
+development two of them were damaged and are restored before release: an install dated
+before the component's registration read "it was registered on <date> registered", and a
+remove of a part not fitted, or fitted elsewhere, lost the aircraft it was asked about. No
+release carried either.
 
 Changed: `ledger.validate`, `ledger.project(entries, before=)`, `ledger.project.fold_key`
 (a correction sorts at its target's place; the seeded fleet folds the same), the CLI

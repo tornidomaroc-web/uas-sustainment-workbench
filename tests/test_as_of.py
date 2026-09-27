@@ -4,7 +4,9 @@ Liveness (which entries a correction or retraction has killed) is decided over t
 ledger first, as known now; then only live entries with occurred_utc at or before as_of
 count. v0.1.0 folded every live entry whatever its date, so a work order opened in August
 made an aircraft "in maintenance" in January, and an inspection done in July was measured
-against in January. "Now" queries were never wrong: no entry can be dated in the future.
+against in January. "Now" queries were right, except that an entry may be dated up to five
+minutes ahead of the clock (skew allowance), which 0.1.0 counted at once and 0.2.0 counts
+when its time arrives.
 """
 
 from __future__ import annotations
