@@ -7,8 +7,11 @@ date, whatever order it arrives in. Then every already recorded later entry of t
 subject is judged again with the new one in place, and the write is refused if one of them
 would no longer hold: the ledger never holds an entry its own records cannot accept. A
 correction keeps the date of the entry it corrects and takes its place; to move a date,
-the entry is retracted and a new one written. Shape errors are 422, unknown subjects 404,
-the public showcase aircraft 403, and transitions the records cannot accept 409.
+the entry is retracted and a new one written. A component past any of its life limits on
+the day it is fitted goes on no aircraft: a life-limited part at its limit is replaced, and
+the usage it has reached travels with it (14 CFR 43.10). Shape errors are 422, unknown
+subjects 404, the public showcase aircraft 403, and transitions the records cannot accept
+409.
 """
 
 from __future__ import annotations
@@ -21,8 +24,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from uas_workbench.flight.record import Unknown, is_known
-from uas_workbench.life.engine import time_in_service
-from uas_workbench.life.policy import LifePolicy
+from uas_workbench.life.engine import component_usage, end_of_month_after, time_in_service
+from uas_workbench.life.model import Component
+from uas_workbench.life.policy import LifePolicy, LifeRule
 
 from .model import AIRCRAFT_KINDS, COMPONENT_KINDS, KINDS, RETRACTION, Entry, LedgerError
 from .project import fold_key, liveness, project
@@ -32,6 +36,8 @@ if TYPE_CHECKING:
 
 CLOCK_SKEW = timedelta(minutes=5)
 SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+H = 3600.0
+NOT_FITTED_AGAIN = "a life-limited part past its limit is replaced, not fitted again"
 WorkStateIn = Literal["deferred", "in_work", "awaiting_parts"]
 
 
@@ -243,6 +249,31 @@ def _correction(store: Store, entry: Entry, projection: Any) -> Entry | None:
     return target
 
 
+def _limits_past(
+    store: Store, c: Component, rule: LifeRule, at: datetime, tolerance_s: float
+) -> list[str]:
+    """Each life limit of `c` that is past at `at`, in the words of the refusal; empty when
+    none is. The boundary is the board's: a limit is past when less than nothing of it
+    remains, so a part exactly at its limit is not past it (due soon, not overdue)."""
+    usage = component_usage(c, store.flights, tolerance_s, until=at)
+    past: list[str] = []
+    for basis, limit in rule.limits():
+        if basis == "hours":
+            used_h = round(usage.hours_s / H, 3)
+            if used_h > limit:
+                past.append(f"it has flown {used_h:.1f} h, past its {limit:.0f} h life limit")
+        elif basis == "cycles":
+            if usage.cycles > limit:
+                past.append(
+                    f"it has flown {usage.cycles} cycles, past its {limit:.0f}-cycle life limit"
+                )
+        else:
+            due = end_of_month_after(c.in_service_since, int(limit))
+            if at.date() > due:
+                past.append(f"its {limit:.0f}-calendar-month life limit ended on {due}")
+    return past
+
+
 def _transitions(
     store: Store,
     entry: Entry,
@@ -250,6 +281,7 @@ def _transitions(
     then: Any,
     whole: Any,
     tolerance_s: float,
+    policy: LifePolicy,
 ) -> dict[str, Any]:
     """Judge `entry` against `then`, the records as they stood when it happened.
 
@@ -309,6 +341,16 @@ def _transitions(
             if on:
                 since = _stamp(on[0].from_utc)
                 raise LedgerError(409, f"{c.id} is installed on {on[0].aircraft_key} since {since}")
+            # A part past a life limit on the day it is fitted goes on no aircraft; the usage
+            # is what the records held by that day, on every airframe it had been fitted to.
+            rule = policy.component_kinds.get(c.kind)
+            past = _limits_past(store, c, rule, at, tolerance_s) if rule else []
+            if past:
+                raise LedgerError(
+                    409,
+                    f"{c.id} cannot be fitted to {key} at {_stamp(at)}: {' and '.join(past)}; "
+                    f"{NOT_FITTED_AGAIN}",
+                )
         elif not on or on[0].aircraft_key != key:
             # The 0.1.0 sentence, word for word; tests/test_ledger_refusals.py holds it.
             where = f"installed on {on[0].aircraft_key}" if on else "not installed on any aircraft"
@@ -336,7 +378,12 @@ def _transitions(
 
 
 def _later_entries_still_hold(
-    store: Store, timeline: list[Entry], candidate: Entry, cut: Entry, tolerance_s: float
+    store: Store,
+    timeline: list[Entry],
+    candidate: Entry,
+    cut: Entry,
+    tolerance_s: float,
+    policy: LifePolicy,
 ) -> None:
     """Judge again every live entry of the subject that follows `cut` in the fold, with the
     candidate in place; the first that no longer holds refuses the write and is named."""
@@ -348,7 +395,9 @@ def _later_entries_still_hold(
         if key(e) <= key(cut):
             continue
         try:
-            _transitions(store, e, dict(e.details), project(timeline, before=e), None, tolerance_s)
+            _transitions(
+                store, e, dict(e.details), project(timeline, before=e), None, tolerance_s, policy
+            )
         except LedgerError as exc:
             raise LedgerError(
                 409,
@@ -378,11 +427,11 @@ def validate(
     timeline = [*existing, candidate]
     others = project([e for e in existing if target is None or e.id != target.id])
     details = _transitions(
-        store, candidate, details, project(timeline, before=candidate), others, tolerance_s
+        store, candidate, details, project(timeline, before=candidate), others, tolerance_s, policy
     )
     candidate = dataclasses.replace(candidate, details=details)
     timeline[-1] = candidate
-    _later_entries_still_hold(store, timeline, candidate, target or candidate, tolerance_s)
+    _later_entries_still_hold(store, timeline, candidate, target or candidate, tolerance_s, policy)
     statement = entry.statement.strip() or (entry.reason or "").strip()
     return dataclasses.replace(entry, details=details, statement=statement)
 

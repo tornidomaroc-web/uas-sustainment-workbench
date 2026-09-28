@@ -109,7 +109,8 @@ def test_a_part_that_crosses_its_limit_while_fitted_stays_fitted_and_grounds_the
         s, entry("BAT-N", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS)
     )
     assert fitted.id is not None
-    assert status(s, "SYN-01", BEFORE_FLIGHTS).status == "serviceable"
+    # After SYN-01's first flight the pack is at its limit, due soon, and the aircraft flies.
+    assert status(s, "SYN-01", datetime(2026, 8, 5, 9, tzinfo=UTC)).status == "serviceable"
     grounded = status(s, "SYN-01", AFTER_FLIGHTS)
     assert grounded.status == "unserviceable"
     assert "battery pack BAT-N on aircraft SYN-01 is 4 cycles past its 300-cycle life limit" in (
@@ -158,9 +159,15 @@ def test_a_part_exactly_at_its_limit_may_still_be_fitted() -> None:
     accepted and the first flight puts the part past its limit on the board."""
     s = seeded()
     write(s, entry("BAT-E", "component.register", battery(300), at=BEFORE_FLIGHTS - 30 * D))
-    write(s, entry("BAT-E", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS))
-    assert status(s, "SYN-01", BEFORE_FLIGHTS).status == "serviceable"
-    assert status(s, "SYN-01", datetime(2026, 8, 5, 8, tzinfo=UTC)).status == "unserviceable"
+    fitted = write(
+        s, entry("BAT-E", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS)
+    )
+    assert fitted.id is not None
+    first_flight = status(s, "SYN-01", datetime(2026, 8, 5, 8, tzinfo=UTC))
+    assert first_flight.status == "unserviceable"
+    assert first_flight.reasons == (
+        "battery pack BAT-E on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
+    )
 
 
 def test_a_write_that_would_leave_a_later_install_over_its_limit_is_refused_naming_it() -> None:
@@ -212,7 +219,15 @@ def test_every_basis_is_checked_and_the_sentence_names_each_limit_past() -> None
         "PROP-H cannot be fitted to SYN-01 at 2026-09-01 09:00 UTC: it has flown 300.3 h, past "
         f"its 300 h life limit; {TAIL}"
     )
-    write(s, entry("BAT-C", "component.register", battery(0, "2024-06-30"), at=BEFORE_FLIGHTS))
+    write(
+        s,
+        entry(
+            "BAT-C",
+            "component.register",
+            battery(0, "2024-06-30"),
+            at=datetime(2026, 6, 1, tzinfo=UTC),
+        ),
+    )
     assert refused(
         s, entry("BAT-C", "component.install", {"aircraft_key": "SYN-01"}, at=AFTER_FLIGHTS)
     ) == (
