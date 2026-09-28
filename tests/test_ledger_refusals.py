@@ -5,7 +5,8 @@ are part of the contract, not decoration. Tests elsewhere match a word or an id;
 can be broken around that word and still pass them, as 0.2.0 development showed (an install
 dated before registration read "... it was registered on <date> registered"). The first test
 holds the sentences 0.1.0 already had, unchanged; the second holds those 0.2.0 added; the
-third holds the one 409 outside the ledger, a log uploaded twice.
+third the one 0.3.0 adds; the fourth holds the one 409 outside the ledger, a log uploaded
+twice.
 """
 
 from __future__ import annotations
@@ -204,6 +205,42 @@ def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
         "at 2026-09-01 09:00 UTC, "
     ), text
     assert text.endswith(f" h; retract or correct entry {done} first"), text
+
+
+def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:
+    """A part past a life limit cannot be fitted; registering it and removing it can be."""
+    tail = "a life-limited part past its limit is replaced, not fitted again"
+    spent = {
+        "kind": "battery pack",
+        "in_service_since": "2024-06-30",
+        "hours_s_before": 0.0,
+        "cycles_before": 301,
+    }
+    add(store, entry("OLD-1", "component.register", spent, at=T - 10 * D))  # registering is fine
+    assert sentence(store, entry("OLD-1", "component.install", {"aircraft_key": "SYN-01"})) == (
+        "OLD-1 cannot be fitted to SYN-01 at 2026-09-01 09:00 UTC: it has flown 301 cycles, past "
+        "its 300-cycle life limit and its 24-calendar-month life limit ended on 2026-06-30; "
+        f"{tail}"
+    )
+    worn = {**PACK, "hours_s_before": 300.5 * 3600.0}
+    add(store, entry("OLD-2", "component.register", worn, at=T - 10 * D))
+    assert sentence(store, entry("OLD-2", "component.install", {"aircraft_key": "SYN-02"})) == (
+        "OLD-2 cannot be fitted to SYN-02 at 2026-09-01 09:00 UTC: it has flown 300.5 h, past its "
+        f"300 h life limit; {tail}"
+    )
+    # A part that crossed its limit while fitted comes off freely, as BAT-04A did in the seeded
+    # fleet: over its cycles on SYN-01 from 2026-08-06, taken off on 2026-08-13.
+    crossed = {**PACK, "kind": "battery pack", "cycles_before": 299}
+    add(store, entry("OLD-3", "component.register", crossed, at=T - 40 * D))
+    add(store, entry("OLD-3", "component.install", {"aircraft_key": "SYN-01"}, at=T - 31 * D))
+    off = add(store, entry("OLD-3", "component.remove", {"aircraft_key": "SYN-01"}))
+    assert store.entry(off) is not None
+    assert sentence(
+        store, entry("OLD-3", "component.install", {"aircraft_key": "SYN-01"}, at=T + D)
+    ) == (
+        "OLD-3 cannot be fitted to SYN-01 at 2026-09-02 09:00 UTC: it has flown 304 cycles, past "
+        f"its 300-cycle life limit; {tail}"
+    )
 
 
 def test_the_one_409_outside_the_ledger_reads_whole(store: Store) -> None:
