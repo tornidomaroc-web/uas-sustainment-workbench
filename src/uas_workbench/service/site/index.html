@@ -58,6 +58,7 @@
   #due li, #detail-status li { margin: 4px 0; }
   li.overdue, .due-overdue { color: var(--bad); }
   li.overdue-within-tolerance, .due-overdue-within-tolerance { color: var(--amber); }
+  li.unknown, .due-unknown { color: var(--muted); font-style: italic; }
   li.due-soon, .due-due-soon { color: var(--amber); }
   .due-ok { color: var(--ok); }
   #due li::after { font-size: .78rem; color: var(--muted); margin-left: 6px; }
@@ -228,7 +229,7 @@
     const why = reasons.length
       ? `<span class="reason">${esc(reasons[0])}${reasons.length > 1 ? ` (and ${reasons.length - 1} more)` : ''}</span>`
       : '';
-    const due = isUnknown(a.status) ? 'no record'
+    const due = isUnknown(a.status) ? (reasons.length ? 'not known' : 'no record')
       : (a.overdue || a.due_soon)
         ? [a.overdue ? `${a.overdue} overdue` : '', a.due_soon ? `${a.due_soon} due soon` : ''].filter(Boolean).join(', ')
         : 'nothing due';

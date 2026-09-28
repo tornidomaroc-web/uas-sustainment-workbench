@@ -67,6 +67,9 @@ name = "100-hour inspection"
 # 100 hours. https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409
 hours = 100
 tolerance_hours = 10
+# 91.409(b) asks for "an annual or 100-hour inspection" within the preceding 100 hours, so a
+# completed annual inspection starts this interval too.
+satisfied_by = ["annual inspection"]
 source = "14 CFR 91.409(b), https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-E/section-91.409"
 
 [[life.inspections]]

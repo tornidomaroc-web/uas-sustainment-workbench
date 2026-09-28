@@ -13,7 +13,7 @@ import dataclasses
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 
-from uas_workbench.flight import FlightRecord, LifetimeCounter, Maybe, Unknown
+from uas_workbench.flight import FlightRecord, LifetimeCounter, Maybe, Unknown, is_known
 from uas_workbench.life import (
     Component,
     DueItem,
@@ -40,7 +40,11 @@ POLICY = LifePolicy(
     },
     inspections={
         "100-hour inspection": LifeRule(
-            "100-hour inspection", hours=100, tolerance_hours=10, source="91.409(b)"
+            "100-hour inspection",
+            hours=100,
+            tolerance_hours=10,
+            source="91.409(b)",
+            satisfied_by=("annual inspection",),
         ),
         "annual inspection": LifeRule("annual inspection", calendar_months=12, source="91.409(a)"),
     },
@@ -172,6 +176,7 @@ def test_due_soon_is_a_fraction_of_the_interval() -> None:
 def test_inspection_tolerance_allows_ten_hours_then_grounds() -> None:
     within = compute("A", record("A", time_in_service_before_s=104.2 * H))
     insp = item(within, "the 100-hour inspection", "hours")
+    assert is_known(insp.remaining)
     assert (round(insp.remaining, 1), insp.tolerance, insp.state) == (
         -4.2,
         10.0,
@@ -269,7 +274,10 @@ def test_duplicate_logs_are_skipped_and_unlogged_flight_is_credited() -> None:
 def test_an_inspection_never_recorded_counts_from_zero() -> None:
     due = compute("A", record("A", time_in_service_before_s=50.0 * H, inspections=()))
     assert item(due, "the 100-hour inspection", "hours").used == 50.0
-    assert "no completed 100-hour inspection is recorded for aircraft A" in due.notes[0]
+    assert (
+        "no completed 100-hour inspection or annual inspection is recorded for aircraft A"
+        in due.notes[0]
+    )
 
 
 def test_board_precedence_and_reasons_in_civil_vocabulary() -> None:

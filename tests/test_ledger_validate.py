@@ -279,14 +279,15 @@ def test_an_inspection_cannot_be_done_at_more_time_than_the_aircraft_has(store: 
     assert e.details["derived"] is True and e.details["at_hours_s"] > 0
     assert e.details["carried_over_s"] == 0.0
     assert store.maintenance("SYN-01").inspections[-1].at_hours_s == e.details["at_hours_s"]  # type: ignore[union-attr]
-    # The derived value counts only flight up to the entry's own date.
+    # The derived value counts only flight up to the entry's own date: here between SYN-01's
+    # second and third flights. Before its first log it cannot be derived at all (0.3.0).
     early = add(
         store,
         draft(
             "SYN-01",
             "inspection.done",
             {"name": "annual inspection"},
-            occurred=datetime(2026, 8, 1, tzinfo=UTC),
+            occurred=datetime(2026, 8, 6, 9, tzinfo=UTC),
         ),
     )
     assert early.details["at_hours_s"] < e.details["at_hours_s"]

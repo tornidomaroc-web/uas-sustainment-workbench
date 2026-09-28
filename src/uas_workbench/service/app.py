@@ -117,7 +117,7 @@ class AircraftOut(BaseModel):
     licence: str
     attribution: str
     status: str | UnknownOut  # computed board state, civil vocabulary
-    status_reasons: list[str]  # full sentences; empty only when serviceable or unknown
+    status_reasons: list[str]  # full sentences; empty when serviceable or with no record
     overdue: int  # due items past their limit, tolerance included
     due_soon: int
     flights: int
@@ -131,11 +131,11 @@ class DueItemOut(BaseModel):
     component_id: str | None
     basis: str
     unit: str
-    used: float
+    used: float | UnknownOut  # not known when state is "unknown"
     limit: float
-    remaining: float
+    remaining: float | UnknownOut
     tolerance: float
-    state: str
+    state: str  # ok, due_soon, overdue_within_tolerance, overdue, unknown
     source: str
     message: str
     synthetic: bool
@@ -282,7 +282,13 @@ def reconcile_view(
     return result, out
 
 
-DUE_ORDER = {"overdue": 0, "overdue_within_tolerance": 1, "due_soon": 2, "ok": 3}
+DUE_ORDER = {"overdue": 0, "unknown": 1, "overdue_within_tolerance": 2, "due_soon": 3, "ok": 4}
+
+
+def _rank(state: str, remaining: Any, limit: float) -> tuple[int, float]:
+    """Worst first: by state, then by the share of the limit left; not known sorts first."""
+    share = remaining / (limit or 1) if isinstance(remaining, int | float) else 0.0
+    return DUE_ORDER[state], share
 
 
 def due_view(
@@ -304,7 +310,7 @@ def due_view(
         tolerance_s=config.tolerance_s,
     )
     state = board(due)
-    items = sorted(due.items, key=lambda i: (DUE_ORDER[i.state], i.remaining / (i.limit or 1)))
+    items = sorted(due.items, key=lambda i: _rank(i.state, i.remaining, i.limit))
     out = DueOut(
         aircraft_key=aircraft.key,
         synthetic=aircraft.synthetic,
@@ -313,7 +319,15 @@ def due_view(
         status_reasons=list(state.reasons),
         time_in_service_s=_maybe(due.time_in_service_s),
         items=[
-            DueItemOut(**{**dataclasses.asdict(i), "synthetic": aircraft.synthetic}) for i in items
+            DueItemOut(
+                **{
+                    **dataclasses.asdict(i),
+                    "used": _maybe(i.used),
+                    "remaining": _maybe(i.remaining),
+                    "synthetic": aircraft.synthetic,
+                }
+            )
+            for i in items
         ],
         notes=list(due.notes),
     )
@@ -396,7 +410,7 @@ def fleet_due(store: Store, config: FleetConfig, as_of: datetime | None = None) 
         for i in due_view(store, a, config, as_of)[2].items
         if i.state != "ok"
     ]
-    return sorted(items, key=lambda i: (DUE_ORDER[i.state], i.remaining / (i.limit or 1)))
+    return sorted(items, key=lambda i: _rank(i.state, i.remaining, i.limit))
 
 
 def refresh_gauges(store: Store, config: FleetConfig) -> None:

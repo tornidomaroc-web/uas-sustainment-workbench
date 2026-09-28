@@ -125,7 +125,7 @@ def test_due_view_per_aircraft_lists_every_item_with_its_source(client: TestClie
     for i in due["items"]:
         assert {"subject", "basis", "unit", "used", "limit", "remaining", "tolerance",
                 "state", "source", "message", "component_id"} <= set(i)  # fmt: skip
-        assert i["state"] in ("ok", "due_soon", "overdue_within_tolerance", "overdue")
+        assert i["state"] in ("ok", "due_soon", "overdue_within_tolerance", "overdue", "unknown")
         assert "http" in i["source"] and i["message"]
     cycles = next(i for i in due["items"] if i["basis"] == "cycles" and i["state"] == "overdue")
     assert cycles["message"] in due["status_reasons"]

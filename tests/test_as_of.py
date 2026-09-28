@@ -174,17 +174,21 @@ def client() -> TestClient:
 
 
 # 4. The seeded fleet through the API: SYN-05's work order was opened on 2026-08-07 and
-#    SYN-07's on 2026-08-14; before those dates neither aircraft is in work.
+#    SYN-07's on 2026-08-14; between each first log (2026-08-04, 2026-08-08) and that date
+#    neither aircraft is in work, and before the first log neither state is known (0.3.0).
 @pytest.mark.parametrize(
     ("key", "before", "after", "status"),
     [
-        ("SYN-05", "2026-08-01T00:00:00Z", "2026-08-08T00:00:00Z", "in maintenance"),
-        ("SYN-07", "2026-08-01T00:00:00Z", "2026-08-15T00:00:00Z", "AOG"),
+        ("SYN-05", "2026-08-05T00:00:00Z", "2026-08-08T00:00:00Z", "in maintenance"),
+        ("SYN-07", "2026-08-10T00:00:00Z", "2026-08-15T00:00:00Z", "AOG"),
     ],
 )
 def test_due_routes_answer_for_the_time_asked(
     client: TestClient, key: str, before: str, after: str, status: str
 ) -> None:
+    unknown = client.get(f"/aircraft/{key}/due", params={"as_of": "2026-08-01T00:00:00Z"}).json()
+    assert set(unknown["status"]) == {"unknown"}, unknown["status"]
+    assert "before its first log" in unknown["status"]["unknown"]
     early = client.get(f"/aircraft/{key}/due", params={"as_of": before}).json()
     assert early["status"] == "serviceable", early["status_reasons"]
     assert early["status_reasons"] == []
@@ -201,9 +205,16 @@ def test_the_board_honours_as_of(client: TestClient) -> None:
         a["key"]: a
         for a in client.get("/aircraft", params={"as_of": "2026-08-01T00:00:00Z"}).json()
     }
-    assert early["SYN-05"]["status"] == "serviceable"
-    assert early["SYN-07"]["status"] == "serviceable"
-    assert early["SYN-04"]["status"] == "serviceable"  # its packs are fitted on 2026-08-12
+    for key in ("SYN-04", "SYN-05", "SYN-07"):  # before their first logs: not known (0.3.0)
+        assert set(early[key]["status"]) == {"unknown"}, key
+        assert "before its first log" in early[key]["status"]["unknown"], key
+        assert early[key]["status_reasons"] and early[key]["overdue"] == 0, key
+    flown = {
+        a["key"]: a
+        for a in client.get("/aircraft", params={"as_of": "2026-08-05T12:00:00Z"}).json()
+    }
+    assert flown["SYN-01"]["status"] == "serviceable"  # first log 2026-08-05 08:00
+    assert flown["SYN-05"]["status"] == "serviceable"  # first log 2026-08-04, work order 08-07
     late = client.get("/aircraft/SYN-05", params={"as_of": "2026-08-08T00:00:00Z"}).json()
     assert late["status"] == "in maintenance"
     now = {a["key"]: a for a in client.get("/aircraft").json()}
@@ -287,7 +298,10 @@ def test_the_evidence_pack_is_fixed_at_its_as_of() -> None:
         generated_utc=later,
     )
     assert "WO-SYN-05-1" not in json.dumps(early)
-    assert early["programme"]["status"] == "serviceable"
+    # Before SYN-05's first log its time in service, and so its state, is not known (0.3.0).
+    assert set(early["programme"]["status"]) == {"unknown"}
+    assert "before its first log" in early["programme"]["status"]["unknown"]
+    assert set(early["usage"]["time_in_service_s"]) == {"unknown"}
     assert early["usage"]["flights"] == []  # every flight of SYN-05 is in August 2026
     assert all(e["occurred_utc"] <= "2026-07-01" for e in early["log"])
     assert early["counts"]["entries"] == len(early["log"]) > 0
