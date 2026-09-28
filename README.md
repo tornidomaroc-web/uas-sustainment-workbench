@@ -86,8 +86,12 @@ Every aircraft, flight, finding, component and work order carries `synthetic: tr
 aircraft; its maintenance records are generated with it, fixed so that every civil board
 state appears once, and its board states are computed from those records, never stored. It
 exists so `reconcile()` has consecutive logs to compare and the life engine has records to
-work from. The two real aircraft have no maintenance record, so their state is unknown, with
-that reason.
+work from, and every record it writes is one the ledger's own write rules accept, in order.
+Its batteries tell one story: a pack that crosses its cycle limit on SYN-01 in August 2026
+comes off into storage and cannot be fitted again, a pack lent by SYN-01 to SYN-04 carries
+its cycles with it, and SYN-04 is grounded from September 2026 by a pack whose calendar life
+ended while it was fitted. The two real aircraft have no maintenance record, so their state
+is unknown, with that reason.
 
 **An assistant that phrases, and never computes.** `uasw ask "what is due on SYN-04 before
 2026-10-03, and why?"` sends the question to a small open model served locally by Ollama and
@@ -116,7 +120,9 @@ replacing, and undoing a correction revives what it corrected. The records the l
 reads are projected from the live entries on every read, so nothing about maintenance is
 stored twice. Impossible input is refused before anything is written, with a status and a
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
-closed that is not open, a component installed while it is on another airframe, a
+closed that is not open, a component installed while it is on another airframe, a part
+fitted while past any of its life limits (a life-limited part past its limit is replaced,
+not fitted again; one that crosses its limit while fitted stays, and the board says so), a
 back-dated installation that overlaps a window, a correction that would orphan later
 entries, a date more than five minutes in the future, negative hours or cycles. Every entry is judged at its own
 date, against the records as they stood when it happened, so a state change back-dated
@@ -171,7 +177,8 @@ validation; the pack says so item by item.
 - Records are entered by a person and taken at their word: no users, no roles, no
   signatures, no certificate check, no attachment. The write token is a shared secret.
 - A life limit is never reset by work. A life-limited part at its limit is replaced by
-  registering and installing a different component; there is no time-since-overhaul.
+  registering and installing a different component, and the ledger refuses to fit one that
+  is past a limit; there is no time-since-overhaul.
 - The assistant is a local command, not a live page feature; the page replays recordings.
   The grounding check catches invented numbers, ids and dates, not a wrong sentence built
   from real ones; the records under each answer are there so a reader can check the rest.
