@@ -44,7 +44,11 @@ def test_agent_calls_the_tools_the_model_asks_for_and_stops_at_the_answer(
     backend = ReplayBackend(
         [
             Turn("", (ToolCall("aircraft_due", {"key": "SYN-04"}),)),
-            Turn("SYN-04 is unserviceable: BAT-04A is 6 cycles past its 300-cycle life limit.", ()),
+            Turn(
+                "SYN-04 is unserviceable: BAT-04B passed its 24-calendar-month life limit on "
+                "2026-08-31.",
+                (),
+            ),
         ]
     )
     answer = ask("Why is SYN-04 unserviceable?", backend=backend, caller=caller, as_of=AS_OF)
@@ -101,8 +105,8 @@ def test_grounding_rejects_numbers_ids_and_dates_absent_from_the_records(
         [
             Turn("", (ToolCall("aircraft_due", {"key": "SYN-04"}),)),
             Turn(
-                "SYN-04 has 2 packs. BAT-04A is 6 cycles past 300; BAT-04B passed its limit on "
-                "2026-03-31. Also BAT-99Z is 42 cycles over and the annual is due 2027-02-28.",
+                "SYN-04 has 2 packs. BAT-01B has 270 cycles left of 300; BAT-04B passed its limit "
+                "on 2026-08-31. Also BAT-99Z is 42 cycles over and the annual is due 2027-02-28.",
                 (),
             ),
         ]

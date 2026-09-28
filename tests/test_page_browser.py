@@ -130,7 +130,7 @@ def test_due_soon_and_overdue_items_are_readable_at_the_top(page: Any) -> None:
     assert page.locator("#due li.overdue").count() >= 1
     assert page.locator("#due li.due-soon").count() >= 1
     assert "h left of its" in " ".join(texts)
-    assert "cycles past its" in " ".join(texts)
+    assert "passed its 24-calendar-month life limit" in " ".join(texts)
     due = page.locator("#due").bounding_box()
     fleet = page.locator("#fleet").bounding_box()
     assert due is not None and fleet is not None and due["y"] < fleet["y"]
@@ -147,7 +147,8 @@ def test_clicking_an_aircraft_shows_its_due_list_with_sources(page: Any) -> None
     assert "battery pack" in detail and "overdue" in detail
     assert "http" in detail  # the source column
     reasons = page.locator("#detail-status li")
-    assert reasons.count() >= 2
+    assert reasons.count() >= 1  # SYN-04: the pack whose calendar life ended while fitted
+    assert "passed its 24-calendar-month life limit" in page.inner_text("#detail-status")
     assert page.problems == []
     # A real aircraft: no record, so the list says why instead of showing nothing.
     page.locator(f"#fleet tbody tr[data-key='{ALFA_KEY}']").click()

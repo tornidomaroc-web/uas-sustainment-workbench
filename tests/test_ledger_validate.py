@@ -264,8 +264,16 @@ def test_a_component_is_on_one_airframe_at_a_time(store: Store) -> None:
         ("SYN-01", False),
         ("SYN-02", True),
     ]
-    # The part that moved from SYN-01 in the seeded fleet is on SYN-04 now.
-    refused(store, draft("BAT-04A", "component.install", {"aircraft_key": "SYN-01"}), 409, "SYN-04")
+    # The pack SYN-01 lent to SYN-04 in the seeded fleet is on SYN-04 now; the pack that came
+    # off SYN-01 into storage is past its cycle limit and goes on no aircraft (0.3.0).
+    refused(store, draft("BAT-01B", "component.install", {"aircraft_key": "SYN-01"}), 409, "SYN-04")
+    refused(
+        store,
+        draft("BAT-04A", "component.install", {"aircraft_key": "SYN-01"}),
+        409,
+        "303 cycles",
+        "not fitted again",
+    )
 
 
 def test_an_inspection_cannot_be_done_at_more_time_than_the_aircraft_has(store: Store) -> None:

@@ -39,7 +39,7 @@ jobs:
           grep -q 'does not show compliance' /tmp/site/evidence/SYN-04.html
           grep -q "\"commit\": \"$GITHUB_SHA\"" /tmp/site/evidence/SYN-04.json
           grep -q '"status_reasons"' /tmp/site/fleet.json
-          grep -q 'cycles past its' /tmp/site/fleet.json
+          grep -q 'passed its 24-calendar-month life limit' /tmp/site/fleet.json
           test -s /tmp/site/assistant.json && grep -q '"grounding_verified": true' /tmp/site/assistant.json
 
   container:
@@ -63,7 +63,7 @@ jobs:
           curl -fsS http://127.0.0.1:8000/aircraft | grep -q '"alfa-fixed-wing"'
           curl -fsS http://127.0.0.1:8000/aircraft/alfa-fixed-wing/reconcile | grep -q "355 s of flight"
           curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/due | grep -q '"unserviceable"'
-          curl -fsS http://127.0.0.1:8000/fleet/due | grep -q "cycles past its"
+          curl -fsS http://127.0.0.1:8000/fleet/due | grep -q "passed its 24-calendar-month life limit"
           curl -fsS http://127.0.0.1:8000/metrics | grep -q uasw_aircraft_by_status
           curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/evidence | grep -q "\"commit\":\"$GITHUB_SHA\""
           curl -fsS http://127.0.0.1:8000/aircraft/SYN-04/evidence.html | grep -q 'claims no robustness level'

@@ -161,11 +161,12 @@ def test_corrections_and_history_through_the_api(client: TestClient) -> None:
 
 def test_components_are_readable_with_their_state_and_history(client: TestClient) -> None:
     items = client.get("/components").json()
-    assert any(c["id"] == "BAT-04A" and c["installed_on"] == "SYN-04" for c in items)
-    one = client.get("/components/BAT-04A").json()
+    assert any(c["id"] == "BAT-01B" and c["installed_on"] == "SYN-04" for c in items)
+    assert any(c["id"] == "BAT-04A" and c["installed_on"] is None for c in items)  # in storage
+    one = client.get("/components/BAT-01B").json()
     assert one["kind"] == "battery pack" and one["synthetic"] is True
     assert [i["aircraft_key"] for i in one["installations"]] == ["SYN-01", "SYN-04"]
-    assert one["entries"] and all(e["subject"] == "BAT-04A" for e in one["entries"])
+    assert one["entries"] and all(e["subject"] == "BAT-01B" for e in one["entries"])
     assert client.get("/components/NO-PART").status_code == 404
     r = client.post(
         "/entries",
