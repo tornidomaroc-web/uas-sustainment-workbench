@@ -60,6 +60,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   logs, plus the flight `reconcile()` found no log covers; on ArduPilot that credit is
   short by up to one 30 s flush, and on PX4 a power loss while armed leaves flight the
   counter never saw. Hours before the first log are an operator record.
+- **Before an aircraft's first log, its time in service is not known.** The hours before
+  the first log are one total, reached by that log; the records hold no date to place them
+  on. So at an `as_of` before the first dated log the time in service, the 100-hour
+  inspection item and the board read not known, with the sentence that says why, unless an
+  open work order or a life limit already past grounds the aircraft. An aircraft in that
+  state is not serviceable and not unserviceable: the tool cannot tell, and says so. The
+  synthetic fleet enters its hours weeks before its first logs, so its board before August
+  2026 is mostly not known; a fleet whose hours are entered on the day of its first log has
+  no such window. Records from before the first log (an inspection with its hours stated)
+  are kept as stated and not checked against a time the tool cannot compute.
+- **An annual inspection counts toward the 100-hour rule** (14 CFR 91.409(b), "an annual or
+  100-hour inspection"); the later of the two starts the interval. That is the only
+  satisfaction rule; nothing in `fleet.toml` lets a lesser inspection satisfy a greater.
 - **A cycle is one flight record.** No public log carries a battery cycle count that is
   filled in, and a log is not a flight (above), so one record with flight time counts as
   one cycle: one take-off and one landing. A flight with several landings is still one.

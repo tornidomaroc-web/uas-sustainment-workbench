@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Corrected: time in service before an aircraft's first log is not known
+
+The hours before the first log are entered as one total: the time in service the aircraft
+had reached by the first log this tool holds. Until now the engine used that total at any
+earlier date too, so a query about a date before the first log printed a time in service
+no record supports. Reproduced before the change on the seeded fleet: SYN-03, whose 110.0 h
+before its first log of 2026-08-11 were entered on 2026-06-04, read 110.0 h on 2026-07-01,
+and its 100-hour inspection read "10.0 h overdue, within the 10 h tolerance", a state that
+reads as leave to fly, on a date the tool knows nothing about. Every synthetic aircraft read
+"serviceable" at dates before its first log for the same reason.
+
+The rule now: before an aircraft's first dated log, when hours before it were entered, the
+time in service is not known. The inspection items that depend on it are in a state of their
+own, `unknown`, with `used` and `remaining` not known and a sentence that says why. The board
+is not known with that reason, unless an open work order or a life limit already past
+grounds the aircraft: AOG, in maintenance and unserviceable win, and the sentence stays
+among the reasons. Serviceable and serviceable with deferred defects are never asserted on
+a time in service the records cannot give. With no hours entered the time is known to be
+zero; with no dated log at all the total stands; a query at now is never before the first
+log. The evidence pack, the board list, the due routes and the fleet due list carry the
+state; `/fleet/due` sorts `unknown` after `overdue` and before the tolerance states.
+
+Writes: an inspection whose hours the tool would derive at such a date is refused with 422
+("at_hours_s cannot be derived: ...; state at_hours_s"), because the derived value would be
+the invented one; stated hours are accepted, and are not checked against a time in service
+that is not known.
+
+### Corrected: an annual inspection counts toward the 100-hour rule
+
+14 CFR 91.409(b) asks for "an annual or 100-hour inspection" within the preceding 100 hours
+of time in service. The engine counted only the 100-hour inspection. Now the later of the two
+starts the 100-hour interval. `fleet.toml` says so with `satisfied_by = ["annual inspection"]`
+on the 100-hour rule, and the note for an aircraft with neither recorded names both. In the
+seeded fleet every annual is older than the 100-hour inspection that follows it, so no
+seeded state changes.
+
+What changes, measured at the scene plan's early times: on 2026-08-03 six synthetic
+aircraft that read "serviceable" or "serviceable with deferred defects" read not known,
+each before its first log; on 2026-08-06 10:00 four do, SYN-01 and SYN-05 having flown by
+then. Not changed: every state at 2026-10-01, the published evidence sample and its hash
+(`157e5edb…8634`), the nine recorded assistant runs and their frozen-clock replay, and the
+live demo, all dated after every first log; the ledger, its file format and the seed.
+
+Changed: `life.engine.time_in_service` returns a value or an Unknown; `DueItem.used` and
+`DueItem.remaining` may be Unknown; `DueState` gains `unknown`; `LifeRule.satisfied_by`;
+`DueItemOut.used` and `.remaining` may be `{"unknown": ...}`; the version string stays 0.2.0
+until 0.3.0 is released.
+
 ## 0.2.0
 
 ### Corrected: a state at `as_of` is built from the entries that had occurred by then
