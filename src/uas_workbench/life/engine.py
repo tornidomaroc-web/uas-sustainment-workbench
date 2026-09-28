@@ -154,6 +154,20 @@ def _component_usage(component: Component, usage: dict[str, _AircraftUsage]) -> 
     return Usage(hours_s, cycles)
 
 
+def component_usage(
+    component: Component,
+    flights_of: Callable[[str], Sequence[FlightRecord]],
+    tolerance_s: float = FLUSH_INTERVAL_S,
+    until: datetime | None = None,
+) -> Usage:
+    """The hours and cycles a component has reached by `until`: its usage before this tool's
+    first record, plus every flight of every airframe it was fitted to while it was fitted
+    (14 CFR 43.10), counted as due_list() counts them."""
+    keys = {i.aircraft_key for i in component.installations}
+    usage = {k: _usage(k, flights_of(k), tolerance_s, until) for k in keys}
+    return _component_usage(component, usage)
+
+
 def end_of_month_after(start: date, months: int) -> date:
     """`months` calendar months after `start`, to the end of that month (14 CFR 91.409(a))."""
     index = start.month - 1 + months
@@ -196,10 +210,10 @@ def _component_items(
             used, remaining = float(usage.cycles), limit - usage.cycles
             unit, tolerance = "cycles", 0.0
             message = (
-                f"{subject} on aircraft {key} has {remaining:.0f} cycles left of its "
+                f"{subject} on aircraft {key} has {_plural(remaining, 'cycle')} left of its "
                 f"{limit:.0f}-cycle life limit"
                 if remaining >= 0
-                else f"{subject} on aircraft {key} is {-remaining:.0f} cycles past its "
+                else f"{subject} on aircraft {key} is {_plural(-remaining, 'cycle')} past its "
                 f"{limit:.0f}-cycle life limit"
             )
             scale = limit
