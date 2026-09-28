@@ -9,7 +9,9 @@ logs a boot count, PX4 saves it at disarm and has no boot count.
 The maintenance records (time in service, inspections done, components fitted, open work)
 are generated too, from a second stream of the same seed, and fixed so that every civil
 board state appears once when the life engine computes it. No board state is written
-anywhere: the engine derives it from these records and the flights.
+anywhere: the engine derives it from these records and the flights. Every record the seed
+writes is one the ledger's write rules accept in order (tests/test_as_of.py holds that), so
+the seed never tells a story the tool would refuse to record.
 """
 
 from __future__ import annotations
@@ -52,11 +54,17 @@ CASES: dict[int, str] = {
 LIFE_CASES: dict[int, str] = {
     2: "propeller_due_soon",  # the propeller set is within 10 % of its hours limit
     3: "inspection_in_tolerance",  # the 100-hour inspection overflown by less than 10 h
-    4: "battery_expired",  # one pack past its cycles (moved from SYN-01), one past its date
+    4: "battery_expired",  # grounded by a pack whose calendar life ends while it is fitted
     5: "work_open",  # a work order opened after the fault events: in maintenance
     6: "no_record",  # nothing entered: status unknown, with that reason
     7: "awaiting_parts",  # AOG
 }
+# The battery story between two airframes. BAT-04A began on the lender two cycles short of
+# its limit, crossed it on the lender's third flight, and came off an hour before the
+# borrower's first flight into storage: a part past a life limit cannot be fitted
+# (ledger.validate), so it is never fitted again. The lender's pack B took its place on the
+# borrower that hour, under its limit, its cycles travelling with it (14 CFR 43.10).
+LENDER, BORROWER = 1, 4
 KINDS = ("fixed-wing", "VTOL", "fixed-wing", "quadrotor", "fixed-wing", "VTOL")
 UNLOGGED_S = 420.0
 H = 3600.0
@@ -64,6 +72,10 @@ H = 3600.0
 
 def _source(index: int) -> Source:
     return "px4" if index % 2 else "ardupilot"
+
+
+def _key(index: int) -> str:
+    return f"SYN-{index:02d}"
 
 
 def generate(config: FleetConfig) -> Fleet:
@@ -74,7 +86,7 @@ def generate(config: FleetConfig) -> Fleet:
     aircraft: list[Aircraft] = []
     flights: dict[str, tuple[FlightRecord, ...]] = {}
     for index in range(1, config.aircraft + 1):
-        key = f"SYN-{index:02d}"
+        key = _key(index)
         source = _source(index)
         case = CASES.get(index, "clean")
         aircraft.append(
@@ -92,7 +104,7 @@ def generate(config: FleetConfig) -> Fleet:
     parts = random.Random(config.seed ^ 0x5F1E)
     entries: list[Entry] = []
     for index in range(1, config.aircraft + 1):
-        key = f"SYN-{index:02d}"
+        key = _key(index)
         life_case = LIFE_CASES.get(index, "clean")
         if life_case == "no_record":
             continue
@@ -256,6 +268,29 @@ def _logged_s(records: tuple[FlightRecord, ...]) -> float:
     return total
 
 
+def _handover(flights: dict[str, tuple[FlightRecord, ...]]) -> datetime:
+    """When the lender's pack B goes to the borrower and BAT-04A goes into storage: an hour
+    before the borrower's first flight."""
+    return _first_start(flights[_key(BORROWER)]) - timedelta(hours=1)
+
+
+def _months_before(d: date, months: int) -> date:
+    """The 15th of the month `months` calendar months before `d`'s month, so that a calendar
+    life of `months` runs to the end of `d`'s month (life.engine.end_of_month_after)."""
+    index = d.year * 12 + d.month - 1 - months
+    return date(index // 12, index % 12 + 1, 15)
+
+
+def _steady_rate_hours(
+    at: datetime, first: datetime, before_s: float, hundred_done: datetime, hundred_at_s: float
+) -> float:
+    """Time in service at `at`, a date before the first log, on the seed's one assumption
+    about hours it cannot date: the aircraft flew at a steady rate from its 100-hour
+    inspection to its first log, and at that rate before it, down to zero."""
+    rate = (before_s - hundred_at_s) / (first - hundred_done).total_seconds()
+    return max(0.0, before_s - rate * (first - at).total_seconds())
+
+
 def _pack(
     rng: random.Random, key: str, id_: str, cycles_before: int, in_service: date, fitted: datetime
 ) -> Component:
@@ -286,7 +321,9 @@ def _maintenance(
     unlogged_s = UNLOGGED_S if CASES.get(index) == "unlogged_flight" else 0.0
     rules = config.life
 
-    # Time in service before the first log, and the inspections done before it.
+    # Time in service before the first log, and the inspections done before it. The hours
+    # stated at the annual follow the steady rate the 100-hour inspection and the first log
+    # imply, so the record before the first log tells one story (_steady_rate_hours).
     before_s = rng.uniform(20, 80) * H
     hundred_at_s = max(0.0, before_s - rng.uniform(5, 40) * H)
     if case == "inspection_in_tolerance":
@@ -294,11 +331,15 @@ def _maintenance(
         before_s = 110.0 * H
         overflown_h = rng.uniform(2.0, tolerance_h - 3.0)
         hundred_at_s = before_s + logged_s - (100.0 + overflown_h) * H
+    hundred_done = day0 - timedelta(days=rng.randint(10, 60))
+    annual_done = day0 - timedelta(days=rng.randint(30, 200))
     inspections = (
+        InspectionDone("100-hour inspection", hundred_done, hundred_at_s),
         InspectionDone(
-            "100-hour inspection", day0 - timedelta(days=rng.randint(10, 60)), hundred_at_s
+            "annual inspection",
+            annual_done,
+            _steady_rate_hours(annual_done, first, before_s, hundred_done, hundred_at_s),
         ),
-        InspectionDone("annual inspection", day0 - timedelta(days=rng.randint(30, 200)), 0.0),
     )
 
     # Two battery packs and one propeller set, fitted the day before the first log.
@@ -307,6 +348,16 @@ def _maintenance(
               (day0 - timedelta(days=rng.randint(100, 400))).date(), fitted)
         for s in ("A", "B")
     ]  # fmt: skip
+    if index == LENDER:
+        # Pack B is lent to the borrower at the handover; its cycles so far go with it.
+        handover = _handover(flights)
+        packs[1] = dataclasses.replace(
+            packs[1],
+            installations=(
+                Installation(key, fitted, handover),
+                Installation(_key(BORROWER), handover, None),
+            ),
+        )
     prop_before_s = rng.uniform(50, 200) * H
     if case == "propeller_due_soon":
         limit_h = rules.component_kinds["propeller set"].hours or 300.0
@@ -322,22 +373,24 @@ def _maintenance(
         synthetic=True,
     )
     if case == "battery_expired":
-        cycles_limit = rules.component_kinds["battery pack"].cycles or 300
-        # Pack A came off SYN-01 an hour before this aircraft flew; its cycles came with it
-        # (14 CFR 43.10) and cross the limit on this airframe.
-        moved_at = first - timedelta(hours=1)
+        battery = rules.component_kinds["battery pack"]
+        lender = _key(LENDER)
+        handover = _handover(flights)
+        # Pack A began on the lender two cycles short of its limit, crossed it there (14 CFR
+        # 43.10: the status travels with the part) and came off at the handover into storage.
+        # It is never fitted again: a part past a life limit cannot be (ledger.validate).
         packs[0] = dataclasses.replace(
             packs[0],
-            cycles_before=cycles_limit - 2,
+            cycles_before=(battery.cycles or 300) - 2,
             installations=(
-                Installation(
-                    "SYN-01", _first_start(flights["SYN-01"]) - timedelta(days=1), moved_at
-                ),
-                Installation(key, moved_at, None),
+                Installation(lender, _first_start(flights[lender]) - timedelta(days=1), handover),
             ),
         )
-        # Pack B is past its calendar life: in service since spring 2024, limit 24 months.
-        packs[1] = dataclasses.replace(packs[1], in_service_since=date(2024, 3, 15))
+        # Pack B's calendar life ends while it is fitted: in service since the 15th of the
+        # month its limit before this aircraft's first log, so the life runs to the end of
+        # the month of that log and the aircraft is grounded from the first of the next.
+        since = _months_before(first.date(), battery.calendar_months or 24)
+        packs[1] = dataclasses.replace(packs[1], in_service_since=since)
 
     work: tuple[WorkOrder, ...] = ()
     if case == "work_open":
@@ -483,7 +536,7 @@ def _as_entries(
                 ),
             )
         )
-        for inst in c.installations:
+        for n, inst in enumerate(c.installations):
             out.append(
                 (
                     inst.from_utc,
@@ -498,6 +551,8 @@ def _as_entries(
                 )
             )
             if inst.to_utc is not None:
+                # A removal that no later installation follows is a removal into storage.
+                where = " and placed in storage" if n == len(c.installations) - 1 else ""
                 out.append(
                     (
                         inst.to_utc,
@@ -506,7 +561,7 @@ def _as_entries(
                             c.id,
                             "component.remove",
                             inst.to_utc,
-                            f"[synthetic] {c.kind} {c.id} removed from {inst.aircraft_key}",
+                            f"[synthetic] {c.kind} {c.id} removed from {inst.aircraft_key}{where}",
                             aircraft_key=inst.aircraft_key,
                         ),
                     )

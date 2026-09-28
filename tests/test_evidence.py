@@ -119,9 +119,14 @@ def test_usage_programme_components_and_log_come_from_the_records(store: Store) 
     assert any(i["state"] == "overdue" for i in programme["items"])
     assert "editable defaults" in programme["source_note"]
     comps = {c["id"]: c for c in p["components"]}
-    assert "BAT-04A" in comps and comps["BAT-04A"]["usage"]["cycles"] > 300
-    assert [i["aircraft_key"] for i in comps["BAT-04A"]["installations"]] == ["SYN-01", "SYN-04"]
-    assert all(e["subject"] == "BAT-04A" for e in comps["BAT-04A"]["entries"])
+    assert set(comps) == {"BAT-01B", "BAT-04B", "PROP-04"}  # BAT-04A is in storage, not fitted
+    assert comps["BAT-01B"]["usage"]["cycles"] < 300  # lent by SYN-01, under its limit
+    assert [i["aircraft_key"] for i in comps["BAT-01B"]["installations"]] == ["SYN-01", "SYN-04"]
+    assert all(e["subject"] == "BAT-01B" for e in comps["BAT-01B"]["entries"])
+    assert any(
+        i["state"] == "overdue" and i["component_id"] == "BAT-04B" and i["basis"] == "calendar"
+        for i in programme["items"]
+    )
     log = p["log"]
     assert log and all(e["current"] in (True, False) for e in log)
     stamps = [e["occurred_utc"] for e in log]

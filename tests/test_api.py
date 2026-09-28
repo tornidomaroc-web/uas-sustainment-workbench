@@ -108,11 +108,12 @@ def test_board_states_are_computed_with_their_reasons(client: TestClient) -> Non
     for a in by_key.values():
         assert isinstance(a["status_reasons"], list)
         assert isinstance(a["overdue"], int) and isinstance(a["due_soon"], int)
-    assert by_key["SYN-04"]["overdue"] >= 2
+    assert by_key["SYN-04"]["overdue"] >= 1
     assert by_key["SYN-02"]["due_soon"] >= 1
     reasons = by_key["SYN-04"]["status_reasons"]
-    assert any("cycles past its" in r and "battery pack" in r for r in reasons)
-    assert any("calendar-month life limit on 2026-" in r for r in reasons)
+    assert any(
+        "battery pack" in r and "calendar-month life limit on 2026-08-31" in r for r in reasons
+    )
 
 
 def test_due_view_per_aircraft_lists_every_item_with_its_source(client: TestClient) -> None:
@@ -127,8 +128,8 @@ def test_due_view_per_aircraft_lists_every_item_with_its_source(client: TestClie
                 "state", "source", "message", "component_id"} <= set(i)  # fmt: skip
         assert i["state"] in ("ok", "due_soon", "overdue_within_tolerance", "overdue", "unknown")
         assert "http" in i["source"] and i["message"]
-    cycles = next(i for i in due["items"] if i["basis"] == "cycles" and i["state"] == "overdue")
-    assert cycles["message"] in due["status_reasons"]
+    past = next(i for i in due["items"] if i["basis"] == "calendar" and i["state"] == "overdue")
+    assert past["message"] in due["status_reasons"]
 
     fixed = client.get("/aircraft/SYN-04/due", params={"as_of": "2026-10-01T00:00:00Z"}).json()
     assert fixed["as_of"].startswith("2026-10-01")
