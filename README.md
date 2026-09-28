@@ -51,7 +51,11 @@ not covered by any log". Measured limits are in [LIMITS.md](LIMITS.md).
 **Component life and the readiness board.** A limit may be set in flight hours, in cycles
 and in calendar months, and whichever comes first applies (EASA MoC to OSO #3). An inspection
 with a tolerance may be overflown by that much, and the overflown hours count toward the next
-interval (14 CFR 91.409(b)); calendar months run to the end of the month (91.409(a)). A
+interval (14 CFR 91.409(b)); an annual inspection starts the 100-hour interval too ("an annual
+or 100-hour inspection"); calendar months run to the end of the month (91.409(a)). Before an
+aircraft's first log, when hours before it were entered as a total, its time in service is
+not known, and so are the inspection items and the board that depend on it: the tool says
+so rather than a state that reads as leave to fly. A
 component carries its own usage and the airframes it was fitted to, so its life status moves
 with it between airframes (14 CFR 43.10). Usage is the logged flight time plus the flight
 `reconcile()` found no log covers, minus duplicate uploads. From the due list the board state
