@@ -38,16 +38,73 @@ on the 100-hour rule, and the note for an aircraft with neither recorded names b
 seeded fleet every annual is older than the 100-hour inspection that follows it, so no
 seeded state changes.
 
-What changes, measured at the scene plan's early times: on 2026-08-03 six synthetic
-aircraft that read "serviceable" or "serviceable with deferred defects" read not known,
-each before its first log; on 2026-08-06 10:00 four do, SYN-01 and SYN-05 having flown by
-then. Not changed: every state at 2026-10-01, the published evidence sample and its hash
-(`157e5edb…8634`), the nine recorded assistant runs and their frozen-clock replay, and the
-live demo, all dated after every first log; the ledger, its file format and the seed.
+### Refused: fitting a part that is past a life limit
+
+A component past any of its life limits on the day it is fitted, in hours, cycles or
+calendar months as `fleet.toml` sets them for its kind, cannot be installed. The write is
+refused with 409 and one sentence that names each limit past: "BAT-04A cannot be fitted to
+SYN-04 at 2026-08-13 08:00 UTC: it has flown 303 cycles, past its 300-cycle life limit; a
+life-limited part past its limit is replaced, not fitted again". The usage is what the
+records held by the install's date, on every airframe the part had been fitted to, counted
+as the due list counts it (14 CFR 43.10). Reproduced before the change: the seeded fleet
+itself refitted BAT-04A to SYN-04 at 303 cycles and fitted BAT-04B five months after its
+calendar life had ended, and the ledger accepted both, as it would have from any operator.
+
+The rule is judged at the entry's own date like every other rule of the write path. So a
+back-dated install is accepted when the part was under its limits on that date, although it
+may be past one today: the normal life of a part is to cross its limit while fitted, and
+there the board reports it, the install stands, and taking the part off is allowed, as is
+registering a part past its limit. The re-check of later entries carries the rule: a write
+that would leave an already recorded later install over its limit is refused naming that
+install. The boundary is the board's: a part exactly at its limit is due soon, not overdue,
+and may be fitted; its first flight puts it past the limit on the board. One sentence is
+amended: a pack one cycle past its limit reads "1 cycle past", not "1 cycles past".
+
+### Changed: how the synthetic fleet is generated
+
+The seed told a story the ledger now refuses to record, so the story changes; every seeded
+entry must be one the write rules accept in order, and a test holds that. BAT-04A still
+begins on SYN-01 two cycles short of its limit and crosses it on SYN-01's third flight, on
+2026-08-06 between 11:07 and 11:08 UTC; it comes off SYN-01 on 2026-08-13 at 08:00 UTC into
+storage, stays registered, and is never fitted again. SYN-01 lends BAT-01B to SYN-04 at that
+hour; its cycles from SYN-01 count on SYN-04 and stay under the limit, so the seed still
+shows life status travelling between airframes. BAT-04B is in service since 2024-08-15, so
+its 24-calendar-month life ends on 2026-08-31 while it is fitted, and SYN-04 is grounded from
+2026-09-01 00:00 UTC by that pack alone. No pack crosses its cycle limit on SYN-04.
+
+The hours stated at the annual inspection were 0.0 on every aircraft, next to a later
+100-hour inspection stating tens of hours. Now the record before the first log describes one
+steady rate of flying, from the 100-hour inspection to the total reached by the first log
+and back from there, down to zero: four aircraft state hours at their annual, and SYN-03 and
+SYN-05 still state 0.0, where that rate runs out before the annual's date. The hours before
+the first log stay dated the day before the earliest inspection, months before the first
+log: an inspection that states hours is accepted only once those hours are on record at an
+earlier date, so the seed has no later date open to it, and the not-known window of the
+previous section is as small as an honest record of this fleet allows (LIMITS.md). The
+random draws are unchanged, so every other seeded number is the same as in 0.2.0.
+
+What changes, measured at the scene plan's times: on 2026-08-03 six synthetic aircraft that
+read "serviceable" or "serviceable with deferred defects" read not known, each before its
+first log; on 2026-08-06 10:00 four do, SYN-01 and SYN-05 having flown by then; SYN-04 reads
+not known on 2026-08-13 00:00 (it read unserviceable, by a pack whose life had ended before
+it was fitted), serviceable on 2026-08-14 and 2026-08-20 (it read unserviceable), and from
+2026-09-01 unserviceable by BAT-04B alone. Every other state at every listed time, and every
+state at 2026-10-01, is the same. The published evidence sample for SYN-04 changes with its
+records: its ledger hash was `157e5edb68a7c46496967bc798c5330cb87510a97d778fa2f0e7140998f78634`
+and is `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`.
+
+Five of the nine recorded assistant runs no longer replay: the two about SYN-04's due items
+and the fleet's states (its reasons changed), the three that list ledger entries of SYN-01,
+SYN-04 and SYN-05 (SYN-01's two new entries shift every later id by one, and the annual
+hours changed). No recording is edited; they are re-recorded in the next change of 0.3.0,
+and until then those five replays fail. The four others replay unchanged.
 
 Changed: `life.engine.time_in_service` returns a value or an Unknown; `DueItem.used` and
 `DueItem.remaining` may be Unknown; `DueState` gains `unknown`; `LifeRule.satisfied_by`;
-`DueItemOut.used` and `.remaining` may be `{"unknown": ...}`; the version string stays 0.2.0
+`DueItemOut.used` and `.remaining` may be `{"unknown": ...}`; `life.engine.component_usage`;
+`ledger.validate` judges every install against the part's life limits; the seed's entries
+(60, from 59) and their ids from SYN-01's group on. Not changed: the ledger and its file
+format, every response shape, the flights, the seed value; the version string stays 0.2.0
 until 0.3.0 is released.
 
 ## 0.2.0

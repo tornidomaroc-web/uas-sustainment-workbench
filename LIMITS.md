@@ -66,10 +66,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   inspection item and the board read not known, with the sentence that says why, unless an
   open work order or a life limit already past grounds the aircraft. An aircraft in that
   state is not serviceable and not unserviceable: the tool cannot tell, and says so. The
-  synthetic fleet enters its hours weeks before its first logs, so its board before August
-  2026 is mostly not known; a fleet whose hours are entered on the day of its first log has
-  no such window. Records from before the first log (an inspection with its hours stated)
-  are kept as stated and not checked against a time the tool cannot compute.
+  window runs from the entry of the hours before the first log to that log, and it cannot
+  be made smaller than the records it holds: an inspection done before the first log states
+  the hours it was done at, and the write rules accept it only once the hours before the
+  first log are on record at an earlier date (an inspection stating more hours than the
+  aircraft then had is refused), so the hours entry is dated no later than the earliest such
+  inspection. The synthetic fleet enters its hours the day before its earliest inspection,
+  months before its first logs, so its board before August 2026 is mostly not known; only an
+  aircraft whose first records are its first log has no window. Records from before the first
+  log (an inspection with its hours stated) are kept as stated and not checked against a time
+  the tool cannot compute; the seed states them on one steady rate of flying, its own
+  assumption, marked as such in `fleet/synthetic.py`.
 - **An annual inspection counts toward the 100-hour rule** (14 CFR 91.409(b), "an annual or
   100-hour inspection"); the later of the two starts the interval. That is the only
   satisfaction rule; nothing in `fleet.toml` lets a lesser inspection satisfy a greater.
@@ -124,6 +131,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   move a date, the entry is retracted and a new one recorded, and the two are then not
   linked as correction and corrected. Among entries at one instant a correction takes the
   place of the entry it corrects.
+- **A part past a life limit cannot be fitted; a part that crosses one while fitted stays.**
+  An install is refused when the part is past any of its limits on the install's own date,
+  with the usage the records held by then on every airframe it had been fitted to. What this
+  does not do: it does not undo an install when a log ingested later puts that date's usage
+  over the limit; the board reports the part as past its limit, and the install stands. It
+  does not refuse a part exactly at its limit, which is due soon, not overdue. A flight with
+  no UTC start counts for no component, so it never puts a part past a limit, here or on the
+  board. And it judges the projection, not the world: a part whose true usage is higher than
+  its records say is fitted on its records.
 - **A state at `as_of` is valid time, not record time.** The records at a time are folded
   from the live entries that had occurred by then, with liveness decided over the whole
   ledger first, as known now. So a query about March answers "what was true in March, as
