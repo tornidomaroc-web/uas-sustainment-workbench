@@ -18,6 +18,9 @@ class LifeRule:
     calendar_months: int | None = None
     tolerance_hours: float = 0.0  # 14 CFR 91.409(b) style overflight allowance, hours only
     source: str = ""
+    # Other inspections whose completion also starts this one's interval: 14 CFR 91.409(b)
+    # accepts "an annual or 100-hour inspection" within the preceding 100 hours.
+    satisfied_by: tuple[str, ...] = ()
 
     def limits(self) -> tuple[tuple[Basis, float], ...]:
         out: list[tuple[Basis, float]] = []
@@ -45,6 +48,7 @@ def _rule(raw: dict[str, Any], name_key: str) -> LifeRule:
         calendar_months=int(raw["calendar_months"]) if "calendar_months" in raw else None,
         tolerance_hours=float(raw.get("tolerance_hours", 0.0)),
         source=str(raw["source"]),
+        satisfied_by=tuple(str(n) for n in raw.get("satisfied_by", ())),
     )
     if not rule.limits():
         raise ValueError(f"life rule {rule.name!r} sets no hours, cycles or calendar limit")
@@ -59,6 +63,14 @@ def policy_from_toml(raw: dict[str, Any]) -> LifePolicy:
     """`raw` is the [life] table of fleet.toml."""
     kinds = [_rule(r, "kind") for r in raw.get("component_kinds", [])]
     inspections = [_rule(r, "name") for r in raw.get("inspections", [])]
+    names = {r.name for r in inspections}
+    for r in inspections:
+        for other in r.satisfied_by:
+            if other not in names or other == r.name:
+                raise ValueError(
+                    f"inspection {r.name!r} is satisfied_by {other!r}, which is not another "
+                    "inspection in fleet.toml"
+                )
     return LifePolicy(
         due_soon_fraction=float(raw["due_soon_fraction"]),
         component_kinds={r.name: r for r in kinds},

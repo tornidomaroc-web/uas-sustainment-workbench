@@ -15,7 +15,7 @@ from typing import Any
 from uas_workbench import __version__
 from uas_workbench.fleet import FleetConfig
 from uas_workbench.fleet.model import Aircraft
-from uas_workbench.flight.record import is_known
+from uas_workbench.flight.record import Unknown, is_known
 from uas_workbench.ledger import NOTE, Entry
 from uas_workbench.life import NO_RECORD
 from uas_workbench.life.engine import time_in_service
@@ -187,10 +187,12 @@ def build_pack(
     before_s: Any = {"unknown": NO_RECORD}
     if maintenance is not None:
         before_s = maintenance.time_in_service_before_s
-        tis = round(
-            time_in_service(aircraft_key, before_s, records, config.tolerance_s, until=as_of),
-            1,
+        # Every flight is passed and `until` selects: the first log, which decides whether the
+        # time before it is known, may lie after as_of.
+        total = time_in_service(
+            aircraft_key, before_s, store.flights(aircraft_key), config.tolerance_s, until=as_of
         )
+        tis = {"unknown": total.reason} if isinstance(total, Unknown) else round(total, 1)
     components: list[dict[str, Any]] = []
     for c in store.components(as_of):
         usage = due.usage.get(c.id)

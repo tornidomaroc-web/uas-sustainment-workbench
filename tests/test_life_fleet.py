@@ -88,7 +88,7 @@ def test_unlogged_flight_from_reconcile_wears_the_parts() -> None:
     credited = due.time_in_service_s - before - logged
     assert 420.0 - CONFIG.tolerance_s < credited <= 420.0
     prop = next(i for i in due.items if i.basis == "hours" and i.component_id)
-    assert prop.state == "due_soon"
+    assert prop.state == "due_soon" and is_known(prop.remaining)
     assert 0 < prop.remaining <= CONFIG.life.due_soon_fraction * prop.limit
 
 

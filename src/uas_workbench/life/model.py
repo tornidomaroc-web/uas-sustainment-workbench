@@ -16,7 +16,8 @@ from typing import Literal
 from uas_workbench.flight.record import Maybe
 
 Basis = Literal["hours", "cycles", "calendar"]
-DueState = Literal["ok", "due_soon", "overdue_within_tolerance", "overdue"]
+# "unknown": the item depends on a time in service the records cannot give at that date.
+DueState = Literal["ok", "due_soon", "overdue_within_tolerance", "overdue", "unknown"]
 WorkState = Literal["deferred", "in_work", "awaiting_parts"]
 Unit = Literal["h", "cycles", "days"]
 
@@ -92,9 +93,9 @@ class DueItem:
     component_id: str | None
     basis: Basis
     unit: Unit
-    used: float
+    used: Maybe[float]  # not known when the state is "unknown"
     limit: float
-    remaining: float
+    remaining: Maybe[float]
     tolerance: float  # hours the limit may be exceeded by; 0 for a life limit
     state: DueState
     source: str  # the public civil source cited in fleet.toml

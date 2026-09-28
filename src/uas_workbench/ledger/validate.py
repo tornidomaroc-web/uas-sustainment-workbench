@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from uas_workbench.flight.record import Unknown, is_known
 from uas_workbench.life.engine import time_in_service
 from uas_workbench.life.policy import LifePolicy
 
@@ -319,9 +320,13 @@ def _transitions(
             entry.subject, before, store.flights(entry.subject), tolerance_s, until=at
         )
         if details.get("at_hours_s") is None:
+            if isinstance(tis, Unknown):
+                raise LedgerError(
+                    422, f"at_hours_s cannot be derived: {tis.reason}; state at_hours_s"
+                )
             details["at_hours_s"] = round(tis, 1)
             details["derived"] = True
-        elif details["at_hours_s"] > tis + 1.0:
+        elif is_known(tis) and details["at_hours_s"] > tis + 1.0:
             raise LedgerError(
                 422,
                 f"at_hours_s {details['at_hours_s'] / 3600:.1f} h is more than the time in "

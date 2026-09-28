@@ -4,8 +4,14 @@ Usage comes from the flight records: logged flight time, plus the flight that re
 found no log covers (the parts wore all the same), minus logs that reconcile() identified
 as duplicate uploads. Every limit applies on every basis it is set for, and whichever comes
 first decides (EASA MoC to OSO #3). An inspection with a tolerance may be overflown by
-that much, and the overflown hours count toward the next interval (14 CFR 91.409(b)).
+that much, and the overflown hours count toward the next interval (14 CFR 91.409(b)); an
+annual inspection starts the 100-hour interval too ("an annual or 100-hour inspection").
 Calendar limits run to the end of the month (14 CFR 91.409(a), "calendar months").
+
+The hours before the first log are one total, reached by the first log this tool holds.
+Before that log the time in service is not known, the inspection items that depend on it
+are not known, and the board is not known with that reason unless an open work order or a
+life limit already past grounds the aircraft, which wins.
 """
 
 from __future__ import annotations
@@ -83,15 +89,41 @@ def _usage(
     return _AircraftUsage(tuple(flown), unlogged, tuple(notes))
 
 
+def _first_log(records: Sequence[FlightRecord]) -> datetime | None:
+    starts = [r.utc_start for r in records if is_known(r.utc_start)]
+    return min(starts) if starts else None
+
+
+def _not_known(
+    key: str, before_s: float, first_log: datetime | None, until: datetime | None
+) -> Unknown | None:
+    """Why the time in service at `until` is not known, or None when it is.
+
+    The hours before the first log are one total, reached by the first log; before it, the
+    records hold no date to place them on. With no hours entered, or no dated log, or no
+    date asked (now), the total stands."""
+    if until is None or before_s <= 0 or first_log is None or until >= first_log:
+        return None
+    return Unknown(
+        f"the time in service of aircraft {key} before its first log on {first_log:%Y-%m-%d} "
+        f"is not known: {before_s / H:.1f} h had been flown by then, on dates the records "
+        "do not hold"
+    )
+
+
 def time_in_service(
     key: str,
     before_s: float,
     records: Sequence[FlightRecord],
     tolerance_s: float = FLUSH_INTERVAL_S,
     until: datetime | None = None,
-) -> float:
+) -> Maybe[float]:
     """Total time in service (14 CFR 91.417(a)(2)(i)): the hours before the first log, plus
-    the logged flight up to `until`, plus the flight reconcile() found no log covers."""
+    the logged flight up to `until`, plus the flight reconcile() found no log covers. Not
+    known before the first log when hours before it were entered."""
+    unknown = _not_known(key, before_s, _first_log(records), until)
+    if unknown is not None:
+        return unknown
     own = _usage(key, records, tolerance_s, until)
     return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
 
@@ -207,7 +239,7 @@ def _inspection_items(
     key: str,
     rule: LifeRule,
     done: InspectionDone | None,
-    time_in_service_s: float,
+    time_in_service_s: Maybe[float],
     as_of: datetime,
     fraction: float,
 ) -> list[DueItem]:
@@ -215,7 +247,27 @@ def _inspection_items(
     items: list[DueItem] = []
     unit: Unit
     for basis, limit in rule.limits():
+        if basis == "hours" and isinstance(time_in_service_s, Unknown):
+            items.append(
+                DueItem(
+                    key,
+                    subject,
+                    None,
+                    basis,
+                    "h",
+                    time_in_service_s,
+                    limit,
+                    time_in_service_s,
+                    rule.tolerance_hours,
+                    "unknown",
+                    rule.source,
+                    f"{subject} of aircraft {key} cannot be measured on {as_of:%Y-%m-%d}: "
+                    f"{time_in_service_s.reason}",
+                )
+            )
+            continue
         if basis == "hours":
+            assert not isinstance(time_in_service_s, Unknown)
             since_s = (done.at_hours_s - done.carried_over_s) if done else 0.0
             used = round((time_in_service_s - since_s) / H, 3)
             remaining = round(limit - used, 3)
@@ -305,7 +357,9 @@ def due_list(
             if not is_known(f.utc)
         )
     before = maintenance.time_in_service_before_s if maintenance else 0.0
-    time_in_service_s = before + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
+    time_in_service_s: Maybe[float] = _not_known(
+        aircraft_key, before, _first_log(flights_of(aircraft_key)), as_of
+    ) or (before + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged))
 
     items: list[DueItem] = []
     by_id: dict[str, Usage] = {}
@@ -325,11 +379,13 @@ def due_list(
         if d.name not in done_by_name or d.done_utc > done_by_name[d.name].done_utc:
             done_by_name[d.name] = d
     for name, rule in policy.inspections.items():
-        done = done_by_name.get(name)
-        if done is None:
+        # The later of this inspection and any that satisfies it starts the interval.
+        satisfying = [done_by_name[n] for n in (name, *rule.satisfied_by) if n in done_by_name]
+        done = max(satisfying, key=lambda d: d.done_utc) if satisfying else None
+        if done is None and is_known(time_in_service_s):
             notes.append(
-                f"no completed {name} is recorded for aircraft {aircraft_key}; its interval is "
-                "counted from zero time in service"
+                f"no completed {' or '.join((name, *rule.satisfied_by))} is recorded for "
+                f"aircraft {aircraft_key}; its interval is counted from zero time in service"
             )
         items.extend(
             _inspection_items(
@@ -370,20 +426,28 @@ def board(due: DueList) -> Board:
     in_work = [w for w in due.work_orders if w.state == "in_work"]
     deferred = [w for w in due.work_orders if w.state == "deferred"]
     overdue = [i for i in due.items if i.state == "overdue"]
+    unknown = [i for i in due.items if i.state == "unknown"]
     within = [i for i in due.items if i.state == "overdue_within_tolerance"]
     reasons = (
         *(_work_sentence(key, w) for w in awaiting),
         *(_work_sentence(key, w) for w in in_work),
         *(i.message for i in overdue),
+        *(i.message for i in unknown),
         *(i.message for i in within),
         *(_work_sentence(key, w) for w in deferred),
     )
+    status: Maybe[str]
     if awaiting:
         status = "AOG"
     elif in_work:
         status = "in maintenance"
     elif overdue:
         status = "unserviceable"
+    elif unknown:
+        # Serviceability cannot be asserted, with or without deferred defects; what is not
+        # known is said, never a state that reads as leave to fly.
+        tis = due.time_in_service_s
+        status = tis if isinstance(tis, Unknown) else Unknown(unknown[0].message)
     elif within or deferred:
         status = "serviceable with deferred defects"
     else:
