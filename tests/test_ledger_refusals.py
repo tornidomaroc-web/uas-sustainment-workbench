@@ -208,8 +208,10 @@ def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
 
 
 def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:
-    """A part past a life limit cannot be fitted; registering it and removing it can be."""
-    tail = "a life-limited part past its limit is replaced, not fitted again"
+    """A part that has reached a life limit, exactly or past it, cannot be fitted (14 CFR
+    43.10(c)); registering it and removing it can be. Six sentences: past and reached, on
+    each basis."""
+    tail = "a life-limited part that has reached its life limit is replaced, not fitted again"
     spent = {
         "kind": "battery pack",
         "in_service_since": "2024-06-30",
@@ -241,6 +243,27 @@ def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:
         "OLD-3 cannot be fitted to SYN-01 at 2026-09-02 09:00 UTC: it has flown 304 cycles, past "
         f"its 300-cycle life limit; {tail}"
     )
+    # Reached, not exceeded: nothing left, on each basis.
+    add(store, entry("OLD-4", "component.register", {**PACK, "hours_s_before": 300.0 * 3600.0}))
+    assert sentence(store, entry("OLD-4", "component.install", {"aircraft_key": "SYN-01"})) == (
+        "OLD-4 cannot be fitted to SYN-01 at 2026-09-01 09:00 UTC: it has flown 300.0 h, the "
+        f"whole of its 300 h life limit; {tail}"
+    )
+    at_limit = {**spent, "in_service_since": "2025-01-01", "cycles_before": 300}
+    add(store, entry("OLD-5", "component.register", at_limit, at=T - 10 * D))
+    assert sentence(store, entry("OLD-5", "component.install", {"aircraft_key": "SYN-02"})) == (
+        "OLD-5 cannot be fitted to SYN-02 at 2026-09-01 09:00 UTC: it has flown 300 cycles, the "
+        f"whole of its 300-cycle life limit; {tail}"
+    )
+    last_day = {**spent, "in_service_since": "2024-08-15", "cycles_before": 0}
+    add(store, entry("OLD-6", "component.register", last_day, at=T - 10 * D))
+    assert sentence(
+        store, entry("OLD-6", "component.install", {"aircraft_key": "SYN-02"}, at=T - D)
+    ) == (
+        "OLD-6 cannot be fitted to SYN-02 at 2026-08-31 09:00 UTC: its 24-calendar-month life "
+        f"limit ends that same day, 2026-08-31; {tail}"
+    )
+    add(store, entry("OLD-6", "component.install", {"aircraft_key": "SYN-02"}, at=T - 2 * D))
 
 
 def test_the_one_409_outside_the_ledger_reads_whole(store: Store) -> None:

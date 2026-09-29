@@ -38,7 +38,7 @@ BY = "A. Tester, maintenance"
 # SYN-01 flew five times between 2026-08-05 and 2026-08-08; nothing before, nothing after.
 BEFORE_FLIGHTS = datetime(2026, 8, 1, 9, tzinfo=UTC)
 AFTER_FLIGHTS = datetime(2026, 9, 1, 9, tzinfo=UTC)
-TAIL = "a life-limited part past its limit is replaced, not fitted again"
+TAIL = "a life-limited part that has reached its life limit is replaced, not fitted again"
 
 
 def seeded() -> Store:
@@ -154,19 +154,29 @@ def test_the_install_is_judged_at_its_own_date_so_a_back_dated_install_is_accept
     )
 
 
-def test_a_part_exactly_at_its_limit_may_still_be_fitted() -> None:
-    """The boundary is the board's: remaining 0 is due soon, not overdue, so the install is
-    accepted and the first flight puts the part past its limit on the board."""
+def test_a_part_exactly_at_its_limit_is_refused_too() -> None:
+    """14 CFR 43.10(c): the control method must deter installation of a part "after it has
+    reached its life limit". Reached, not only exceeded: a part with nothing left has no
+    flight to give a new airframe. The board's boundary is another question, whether a part
+    already fitted may keep flying, and there remaining 0 is due soon, not overdue."""
     s = seeded()
     write(s, entry("BAT-E", "component.register", battery(300), at=BEFORE_FLIGHTS - 30 * D))
-    fitted = write(
+    assert refused(
         s, entry("BAT-E", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS)
+    ) == (
+        "BAT-E cannot be fitted to SYN-01 at 2026-08-01 09:00 UTC: it has flown 300 cycles, the "
+        f"whole of its 300-cycle life limit; {TAIL}"
     )
-    assert fitted.id is not None
-    first_flight = status(s, "SYN-01", datetime(2026, 8, 5, 8, tzinfo=UTC))
-    assert first_flight.status == "unserviceable"
-    assert first_flight.reasons == (
-        "battery pack BAT-E on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
+    # One cycle short it is fitted, reaches the limit on its first flight, and keeps flying
+    # as due soon until the next flight puts it past.
+    write(s, entry("BAT-F", "component.register", battery(299), at=BEFORE_FLIGHTS - 30 * D))
+    write(s, entry("BAT-F", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS))
+    at_limit = status(s, "SYN-01", datetime(2026, 8, 5, 9, tzinfo=UTC))
+    assert at_limit.status == "serviceable" and at_limit.reasons == ()
+    past = status(s, "SYN-01", datetime(2026, 8, 6, 9, tzinfo=UTC))
+    assert past.status == "unserviceable"
+    assert past.reasons == (
+        "battery pack BAT-F on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
     )
 
 
@@ -234,14 +244,27 @@ def test_every_basis_is_checked_and_the_sentence_names_each_limit_past() -> None
         "BAT-C cannot be fitted to SYN-01 at 2026-09-01 09:00 UTC: its 24-calendar-month life "
         f"limit ended on 2026-06-30; {TAIL}"
     )
-    # On the last day of the month the calendar life has not ended.
-    write(
+    # On the last day of the month the calendar life is reached, and refused as such; the
+    # day before, it is fitted.
+    assert refused(
         s,
         entry(
             "BAT-C",
             "component.install",
             {"aircraft_key": "SYN-01"},
             at=datetime(2026, 6, 30, 23, tzinfo=UTC),
+        ),
+    ) == (
+        "BAT-C cannot be fitted to SYN-01 at 2026-06-30 23:00 UTC: its 24-calendar-month life "
+        f"limit ends that same day, 2026-06-30; {TAIL}"
+    )
+    write(
+        s,
+        entry(
+            "BAT-C",
+            "component.install",
+            {"aircraft_key": "SYN-01"},
+            at=datetime(2026, 6, 29, 23, tzinfo=UTC),
         ),
     )
     write(s, entry("BAT-D", "component.register", battery(301, "2024-06-30"), at=BEFORE_FLIGHTS))
