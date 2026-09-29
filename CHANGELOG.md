@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Documentation: corrections to the 0.3.0 text, made after the v0.3.0 tag
+
+Three sentences about 0.3.0 were wrong in wording, not in behaviour, and are corrected in
+this file and in README.md. The files inside the v0.3.0 tag and the v0.3.0 release notes keep
+the earlier wording; the corrected text below is what the documentation says from this
+change on, and no code, test, recording or version changed with it.
+
+- The 0.3.0 heading "Refused: fitting a part that is past a life limit" now reads "Refused:
+  fitting a part that has reached a life limit". The rule under it always refused a part
+  exactly at its limit too.
+- The 0.3.0 section said every re-recorded answer "passed the grounding check on its first
+  recording". It now also says that the first attempt at four of the five runs failed with
+  a server error while the model was loading and produced no answer, so each was run once
+  more, and nothing was chosen between answers.
+- README.md said the first five recorded runs were "recorded once with `--record`". Two of
+  them, and three of the four that follow, were recorded again in 0.3.0; README now says so.
+
+Found in the same sweep and corrected: README.md described the ledger refusing a part
+"after reaching or exceeding" a limit, next to a citation of 14 CFR 43.10(c), whose words
+are "reached its life limit"; its list of what remains said the ledger refuses to fit a part
+"past a limit", where it refuses one that has reached a limit; and its list of board states
+left out "not known", which 0.3.0 added.
+
 ## 0.3.0
 
 ### Corrected: time in service before an aircraft's first log is not known
@@ -38,7 +63,7 @@ on the 100-hour rule, and the note for an aircraft with neither recorded names b
 seeded fleet every annual is older than the 100-hour inspection that follows it, so no
 seeded state changes.
 
-### Refused: fitting a part that is past a life limit
+### Refused: fitting a part that has reached a life limit
 
 A component that has reached any of its life limits on the day it is fitted, exactly or
 past it, in hours, cycles or calendar months as `fleet.toml` sets them for its kind, cannot
@@ -112,9 +137,11 @@ about SYN-04's due items and the fleet's states (its reasons changed), and the t
 list ledger entries of SYN-01, SYN-04 and SYN-05 (SYN-01's two new entries shift every
 later id by one, and the annual hours changed). No recording was edited. Each of the five
 was recorded again on 2026-09-28 with the same model and the same weights (qwen3:8b, digest
-`500a1f067a9f…`), against this seed, at the same computation date, 2026-10-01; every new
-answer passed the grounding check on its first recording. The four other runs replay as
-they were.
+`500a1f067a9f…`), against this seed, at the same computation date, 2026-10-01. The first
+attempt at four of the five failed with a server error while the model was still loading
+and produced no answer; each of those four was run once more after the load. So every run
+produced exactly one answer, nothing was chosen between answers, and every answer passed
+the grounding check. The four other runs replay as they were.
 
 What the answers say now, against what they said: the SYN-04 due run names BAT-04B's
 calendar limit passed on 2026-08-31 and no cycle item, where it named two packs; the
