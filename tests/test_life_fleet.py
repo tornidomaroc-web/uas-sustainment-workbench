@@ -209,8 +209,8 @@ def test_bat_04a_is_in_storage_after_2026_08_13_and_cannot_be_fitted_again() -> 
         assert exc.value.status == 409
         assert exc.value.detail == (
             f"BAT-04A cannot be fitted to {key} at 2026-09-01 09:00 UTC: it has flown 303 "
-            "cycles, past its 300-cycle life limit; a life-limited part past its limit is "
-            "replaced, not fitted again"
+            "cycles, past its 300-cycle life limit; a life-limited part that has reached its "
+            "life limit is replaced, not fitted again"
         )
         assert s.entry_count() == before
 
