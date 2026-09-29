@@ -60,8 +60,9 @@ component carries its own usage and the airframes it was fitted to, so its life 
 with it between airframes (14 CFR 43.10). Usage is the logged flight time plus the flight
 `reconcile()` found no log covers, minus duplicate uploads. From the due list the board state
 is derived in civil vocabulary, worst first: AOG and in maintenance from open work orders,
-unserviceable from any limit past its tolerance, serviceable with deferred defects from a
-limit inside its tolerance or a deferred defect, else serviceable. Every limit and interval
+unserviceable from any limit past its tolerance, not known when an item depends on a time in
+service the records cannot give, serviceable with deferred defects from a limit inside its
+tolerance or a deferred defect, else serviceable. Every limit and interval
 lives in [`fleet.toml`](src/uas_workbench/fleet/fleet.toml) with its public source next to it,
 as an editable default. Part 107 sets no inspection interval for small unmanned aircraft, so
 the two inspections borrow the shape of the manned Part 91 rules and say so.
@@ -101,7 +102,9 @@ the calls it made with the records returned, and a deterministic grounding check
 answer unverified that states a number, a component or aircraft id, or a date that none of
 those records contain. The model is told that hours and cycles advance only with flight,
 which cannot be predicted, and that the workbench does not certify airworthiness. Five runs,
-recorded once with `--record`, ship with the package: the live demo shows them under
+recorded with `--record`, ship with the package; two of them were recorded again in 0.3.0,
+with the same model weights, after the synthetic fleet changed (CHANGELOG.md says which and
+why). The live demo shows them under
 "recorded runs, not live" with the model tag, the digest of its weights, the recording date,
 the fixed computation date, and every record the answer rests on. A test replays each
 recording against the current code on every CI run, so a change to the engine fails CI
@@ -121,9 +124,9 @@ reads are projected from the live entries on every read, so nothing about mainte
 stored twice. Impossible input is refused before anything is written, with a status and a
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
 closed that is not open, a component installed while it is on another airframe, a part
-fitted after reaching or exceeding any of its life limits (14 CFR 43.10(c); a life-limited
-part at its limit is replaced, not fitted again; one that crosses its limit while fitted
-stays, and the board says so), a
+fitted after reaching any of its life limits, exactly or past it (14 CFR 43.10(c): a
+life-limited part that has reached its life limit is replaced, not fitted again; one that
+crosses its limit while fitted stays, and the board says so), a
 back-dated installation that overlaps a window, a correction that would orphan later
 entries, a date more than five minutes in the future, negative hours or cycles. Every entry is judged at its own
 date, against the records as they stood when it happened, so a state change back-dated
@@ -147,7 +150,8 @@ successor marks it unverified, and an answer that drew on entries must end with 
 that entries record what the entering person stated and that the workbench does not certify
 airworthiness or return to service. Four more recorded runs show it: who recorded a work
 order, what superseded what and why, which components were fitted to an aircraft, and a
-question the ledger cannot answer, a certificate number, answered as not recorded. The seeded
+question the ledger cannot answer, a certificate number, answered as not recorded; the first
+three of these were recorded again in 0.3.0 for the same reason. The seeded
 fleet carries one synthetic correction so the page shows what superseding looks like.
 
 **A draft evidence pack for OSO #03.** `uasw evidence SYN-04 --out pack.html`, or
@@ -179,7 +183,7 @@ validation; the pack says so item by item.
   signatures, no certificate check, no attachment. The write token is a shared secret.
 - A life limit is never reset by work. A life-limited part at its limit is replaced by
   registering and installing a different component, and the ledger refuses to fit one that
-  is past a limit; there is no time-since-overhaul.
+  has reached a limit; there is no time-since-overhaul.
 - The assistant is a local command, not a live page feature; the page replays recordings.
   The grounding check catches invented numbers, ids and dates, not a wrong sentence built
   from real ones; the records under each answer are there so a reader can check the rest.
