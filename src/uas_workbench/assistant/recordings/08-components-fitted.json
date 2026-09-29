@@ -1,9 +1,9 @@
 {
  "slug": "which-components-were-fitted-to-syn-04-and-when",
  "question": "Which components were fitted to SYN-04, and when?",
- "answer": "Components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-04A fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+ "answer": "The components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-01B fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-26T02:54:33+00:00",
+ "recorded_utc": "2026-09-28T23:47:44+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -21,7 +21,7 @@
    ]
   },
   {
-   "content": "Components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-04A fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+   "content": "The components fitted to SYN-04 are:\n- Battery pack BAT-04B fitted on 2026-08-12.\n- Propeller set PROP-04 fitted on 2026-08-12.\n- Battery pack BAT-01B fitted on 2026-08-13.\n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
    "tool_calls": []
   }
  ],
@@ -38,7 +38,7 @@
    },
    "result": [
     {
-     "id": 31,
+     "id": 33,
      "subject": "SYN-04",
      "kind": "time_in_service.set",
      "occurred_utc": "2026-01-19T00:00:00Z",
@@ -55,7 +55,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 32,
+     "id": 34,
      "subject": "SYN-04",
      "kind": "inspection.done",
      "occurred_utc": "2026-01-20T00:00:00Z",
@@ -64,7 +64,7 @@
      "statement": "[synthetic] annual inspection completed",
      "details": {
       "name": "annual inspection",
-      "at_hours_s": 0.0,
+      "at_hours_s": 165003.79910882397,
       "carried_over_s": 0.0
      },
      "supersedes": null,
@@ -74,7 +74,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 34,
+     "id": 36,
      "subject": "SYN-04",
      "kind": "inspection.done",
      "occurred_utc": "2026-06-04T00:00:00Z",
@@ -93,7 +93,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 36,
+     "id": 38,
      "subject": "BAT-04B",
      "kind": "component.install",
      "occurred_utc": "2026-08-12T09:00:00Z",
@@ -110,7 +110,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 37,
+     "id": 39,
      "subject": "PROP-04",
      "kind": "component.install",
      "occurred_utc": "2026-08-12T09:00:00Z",
@@ -127,13 +127,13 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 39,
-     "subject": "BAT-04A",
+     "id": 12,
+     "subject": "BAT-01B",
      "kind": "component.install",
      "occurred_utc": "2026-08-13T08:00:00Z",
      "recorded_utc": "2026-08-13T08:00:00Z",
      "entered_by": "synthetic fleet generator, seed 20260925",
-     "statement": "[synthetic] battery pack BAT-04A fitted to SYN-04",
+     "statement": "[synthetic] battery pack BAT-01B fitted to SYN-04",
      "details": {
       "aircraft_key": "SYN-04"
      },

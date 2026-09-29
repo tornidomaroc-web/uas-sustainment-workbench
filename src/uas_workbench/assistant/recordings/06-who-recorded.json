@@ -3,7 +3,7 @@
  "question": "Who recorded the open work order on SYN-05, and when was it recorded?",
  "answer": "The open work order on SYN-05 was recorded by \"synthetic fleet generator, seed 20260925\" on 2026-08-07T08:27:34.800000Z. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-26T02:54:28+00:00",
+ "recorded_utc": "2026-09-28T23:48:24+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -38,7 +38,7 @@
    },
    "result": [
     {
-     "id": 43,
+     "id": 44,
      "subject": "SYN-05",
      "kind": "time_in_service.set",
      "occurred_utc": "2026-04-02T00:00:00Z",
@@ -55,7 +55,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 44,
+     "id": 45,
      "subject": "SYN-05",
      "kind": "inspection.done",
      "occurred_utc": "2026-04-03T00:00:00Z",
@@ -74,7 +74,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 45,
+     "id": 46,
      "subject": "SYN-05",
      "kind": "inspection.done",
      "occurred_utc": "2026-06-09T00:00:00Z",
@@ -93,7 +93,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 46,
+     "id": 47,
      "subject": "BAT-05A",
      "kind": "component.install",
      "occurred_utc": "2026-08-03T08:00:00Z",
@@ -110,7 +110,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 47,
+     "id": 48,
      "subject": "BAT-05B",
      "kind": "component.install",
      "occurred_utc": "2026-08-03T08:00:00Z",
@@ -127,7 +127,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 48,
+     "id": 49,
      "subject": "PROP-05",
      "kind": "component.install",
      "occurred_utc": "2026-08-03T08:00:00Z",
@@ -144,7 +144,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 49,
+     "id": 50,
      "subject": "SYN-05",
      "kind": "work_order.open",
      "occurred_utc": "2026-08-07T08:27:34.800000Z",

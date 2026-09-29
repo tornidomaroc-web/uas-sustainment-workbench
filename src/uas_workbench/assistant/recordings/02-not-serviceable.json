@@ -1,9 +1,9 @@
 {
  "slug": "which-aircraft-are-not-serviceable-and-what-stops-each-one",
  "question": "Which aircraft are not serviceable, and what stops each one?",
- "answer": "Aircraft SYN-04 is not serviceable because its battery pack BAT-04A is 6 cycles past its 300-cycle life limit, and battery pack BAT-04B passed its 24-calendar-month life limit on 2026-03-31. Aircraft SYN-03 is serviceable with deferred defects because its 100-hour inspection is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done. Aircraft SYN-05 is in maintenance since 2026-08-07 due to a synthetic low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight. Aircraft SYN-07 is on the ground awaiting parts since 2026-08-14 due to a synthetic replacement propeller set on order after a ground strike. No other aircraft are not serviceable. Hours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+ "answer": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have no maintenance record entered. \n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-25T23:18:17+00:00",
+ "recorded_utc": "2026-09-28T23:48:21+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -19,7 +19,7 @@
    ]
   },
   {
-   "content": "Aircraft SYN-04 is not serviceable because its battery pack BAT-04A is 6 cycles past its 300-cycle life limit, and battery pack BAT-04B passed its 24-calendar-month life limit on 2026-03-31. Aircraft SYN-03 is serviceable with deferred defects because its 100-hour inspection is 3.6 h overdue, within the 10 h tolerance that allows flight only to reach a place where the inspection can be done. Aircraft SYN-05 is in maintenance since 2026-08-07 due to a synthetic low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight. Aircraft SYN-07 is on the ground awaiting parts since 2026-08-14 due to a synthetic replacement propeller set on order after a ground strike. No other aircraft are not serviceable. Hours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+   "content": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have no maintenance record entered. \n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
    "tool_calls": []
   }
  ],
@@ -28,7 +28,9 @@
    "name": "list_aircraft",
    "arguments": {},
    "path": "/aircraft",
-   "query": {},
+   "query": {
+    "as_of": "2026-10-01T00:00:00Z"
+   },
    "result": [
     {
      "key": "alfa-fixed-wing",
@@ -120,10 +122,9 @@
      "attribution": "synthetic fleet generator, seed 20260925",
      "status": "unserviceable",
      "status_reasons": [
-      "battery pack BAT-04A on aircraft SYN-04 is 6 cycles past its 300-cycle life limit",
-      "battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-03-31"
+      "battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-08-31"
      ],
-     "overdue": 2,
+     "overdue": 1,
      "due_soon": 0,
      "flights": 3,
      "flight_time_known_s": 3795.2,

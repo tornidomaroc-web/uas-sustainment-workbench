@@ -1,9 +1,9 @@
 {
  "slug": "what-is-due-on-syn-04-before-2026-10-03-and-why",
  "question": "What is due on SYN-04 before 2026-10-03, and why?",
- "answer": "The following items are due on SYN-04 before 2026-10-03:\n\n1. **Battery pack BAT-04B**: It passed its 24-calendar-month life limit on 2026-03-31. This is based on EASA MoC to OSO #3 (19 Dec 2024), which states that 300 cycles / 24 months are editable defaults.\n\n2. **Battery pack BAT-04A**: It is 6 cycles past its 300-cycle life limit. This is also based on EASA MoC to OSO #3 (19 Dec 2024), with the same editable defaults mentioned.\n\nHours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+ "answer": "The battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-08-31. This is based on the EASA MoC to OSO #3 (19 Dec 2024), which states that 300 cycles / 24 months are editable defaults. \n\nHours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-25T23:18:13+00:00",
+ "recorded_utc": "2026-09-28T23:48:17+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -21,7 +21,7 @@
    ]
   },
   {
-   "content": "The following items are due on SYN-04 before 2026-10-03:\n\n1. **Battery pack BAT-04B**: It passed its 24-calendar-month life limit on 2026-03-31. This is based on EASA MoC to OSO #3 (19 Dec 2024), which states that 300 cycles / 24 months are editable defaults.\n\n2. **Battery pack BAT-04A**: It is 6 cycles past its 300-cycle life limit. This is also based on EASA MoC to OSO #3 (19 Dec 2024), with the same editable defaults mentioned.\n\nHours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
+   "content": "The battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-08-31. This is based on the EASA MoC to OSO #3 (19 Dec 2024), which states that 300 cycles / 24 months are editable defaults. \n\nHours and cycles items cannot be predicted because they advance only with flight; only calendar limits have a date.",
    "tool_calls": []
   }
  ],
@@ -42,28 +42,13 @@
      "component_id": "BAT-04B",
      "basis": "calendar",
      "unit": "days",
-     "used": 930.0,
+     "used": 777.0,
      "limit": 24.0,
-     "remaining": -184.0,
+     "remaining": -31.0,
      "tolerance": 0.0,
      "state": "overdue",
      "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
-     "message": "battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-03-31",
-     "synthetic": true
-    },
-    {
-     "aircraft_key": "SYN-04",
-     "subject": "battery pack BAT-04A",
-     "component_id": "BAT-04A",
-     "basis": "cycles",
-     "unit": "cycles",
-     "used": 306.0,
-     "limit": 300.0,
-     "remaining": -6.0,
-     "tolerance": 0.0,
-     "state": "overdue",
-     "source": "EASA MoC to OSO #3 (19 Dec 2024), https://www.easa.europa.eu/sites/default/files/dfu/MoC_to_OSO_3.pdf; 300 cycles / 24 months are editable defaults",
-     "message": "battery pack BAT-04A on aircraft SYN-04 is 6 cycles past its 300-cycle life limit",
+     "message": "battery pack BAT-04B on aircraft SYN-04 passed its 24-calendar-month life limit on 2026-08-31",
      "synthetic": true
     },
     {

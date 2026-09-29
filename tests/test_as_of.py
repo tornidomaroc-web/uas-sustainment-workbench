@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 
 import uas_workbench.service.app as app_module
 from uas_workbench.assistant.recording import load_recordings, replay
-from uas_workbench.assistant.tools import stamp
 from uas_workbench.evidence import build_pack
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.model import Fleet
@@ -39,7 +38,6 @@ T0 = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
 D = timedelta(days=1)
 H = 3600.0
 FROZEN = datetime(2028, 1, 1, tzinfo=UTC)
-MIGRATED_IN_0_2_0 = {"which-aircraft-are-not-serviceable-and-what-stops-each-one"}
 
 
 def entry(
@@ -222,10 +220,9 @@ def test_the_board_honours_as_of(client: TestClient) -> None:
 
 
 # 6. Frozen clock: every recorded run replays identically with the clock at 2028-01-01, so no
-#    recorded call depends on the day the test runs. Recordings made before 0.2.0 called
-#    list_aircraft without a date; since 0.2.0 it carries the run's as_of, and the recorded
-#    result must still equal the dated one, which shows those answers were consistent with
-#    their own as_of all along.
+#    recorded call depends on the day the test runs. Every recorded call carries the run's
+#    as_of; the one run once kept from before list_aircraft was dated was re-recorded in
+#    0.3.0, so no allowance for an undated query remains.
 class _Frozen(datetime):
     @classmethod
     def now(cls, tz: tzinfo | None = None) -> _Frozen:
@@ -246,10 +243,7 @@ def test_recorded_runs_replay_identically_with_the_clock_frozen_in_2028(
     for recording in load_recordings():
         answer = replay(recording, call)
         for now, then in zip(answer.calls, recording.calls, strict=True):
-            expected_query = dict(then.query)
-            if recording.slug in MIGRATED_IN_0_2_0 and then.name == "list_aircraft":
-                expected_query["as_of"] = stamp(recording.as_of)
-            assert (now.path, now.query) == (then.path, expected_query), recording.slug
+            assert (now.path, now.query) == (then.path, then.query), recording.slug
             assert now.result == then.result, f"{recording.slug}: {then.name} differs at 2028"
         assert answer.text == recording.answer, recording.slug
 

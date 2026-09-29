@@ -8,8 +8,6 @@ answer on the public page. The answer itself must pass the grounding check.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -20,7 +18,6 @@ from fastapi.testclient import TestClient
 
 from uas_workbench.assistant.agent import Call
 from uas_workbench.assistant.recording import Recording, load_recordings, replay
-from uas_workbench.assistant.tools import stamp
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
@@ -31,39 +28,23 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RECORDINGS = load_recordings()
 Caller = Callable[[str, dict[str, str]], Any]
 
-# Migration, 0.2.0. Before 0.2.0 the list_aircraft tool called /aircraft with no date, so the
-# board it returned was computed on the day of the recording, not at the run's as_of. Since
-# 0.2.0 the tool sends as_of, like every other dated tool. The recording below was made
-# before that change and is kept byte for byte, as evidence is; its file hash is pinned here.
-# On replay the tool now sends as_of, and the recorded result must still equal the dated one:
-# the answer was consistent with its as_of all along. The record of this change is in
-# src/uas_workbench/assistant/recordings/README.md and in CHANGELOG.md.
-MIGRATED_IN_0_2_0: dict[str, str] = {
-    "which-aircraft-are-not-serviceable-and-what-stops-each-one": (
-        "60bade96fd72e2cdcd99a41760f45e24c4c2301baf568e13ada1a63545728e8c"
-    )
-}
-RECORDINGS_DIR = Path(__file__).parent.parent / "src" / "uas_workbench" / "assistant" / "recordings"
+# Every recorded call is expected to send, on today's code, exactly the query it recorded.
+# From 0.2.0 to 0.3.0 one run made before list_aircraft was dated was kept byte for byte with
+# its hash pinned here, and the replay allowed its undated query; in 0.3.0 that run was
+# re-recorded after the seed changed (CHANGELOG.md), so every recording now carries the
+# dated query and no allowance remains.
 
 
 def expected_query(recording: Recording, then: Call) -> dict[str, str]:
-    """The query a recorded call is expected to send on today's code."""
-    query = dict(then.query)
-    if recording.slug in MIGRATED_IN_0_2_0 and then.name == "list_aircraft":
-        query["as_of"] = stamp(recording.as_of)
-    return query
+    """The query a recorded call is expected to send on today's code: its own."""
+    return dict(then.query)
 
 
-def test_migrated_recordings_are_kept_byte_for_byte() -> None:
-    by_slug = {r.slug: r for r in RECORDINGS}
-    for slug, digest in MIGRATED_IN_0_2_0.items():
-        assert slug in by_slug, slug
-        path = next(
-            p
-            for p in RECORDINGS_DIR.glob("*.json")
-            if json.loads(p.read_text("utf-8"))["slug"] == slug
-        )
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, path.name
+def test_every_recorded_call_is_dated() -> None:
+    for recording in RECORDINGS:
+        for call in recording.calls:
+            if call.name in ("list_aircraft", "aircraft_due", "fleet_due"):
+                assert call.query.get("as_of") == "2026-10-01T00:00:00Z", (recording.slug, call)
 
 
 @pytest.fixture(scope="module")
