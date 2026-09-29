@@ -131,15 +131,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   move a date, the entry is retracted and a new one recorded, and the two are then not
   linked as correction and corrected. Among entries at one instant a correction takes the
   place of the entry it corrects.
-- **A part past a life limit cannot be fitted; a part that crosses one while fitted stays.**
-  An install is refused when the part is past any of its limits on the install's own date,
-  with the usage the records held by then on every airframe it had been fitted to. What this
+- **A part that has reached a life limit cannot be fitted; a part that crosses one while
+  fitted stays.** An install is refused when the part has reached any of its limits on the
+  install's own date, exactly or past it (14 CFR 43.10(c): the control method must deter
+  installation "after it has reached its life limit"), with the usage the
+  records held by then on every airframe it had been fitted to. Reached means nothing left:
+  300 of 300 cycles, the last day of a calendar life. That is not the board's boundary,
+  which asks whether a fitted part may keep flying and calls remaining 0 due soon. What this
   does not do: it does not undo an install when a log ingested later puts that date's usage
-  over the limit; the board reports the part as past its limit, and the install stands. It
-  does not refuse a part exactly at its limit, which is due soon, not overdue. A flight with
-  no UTC start counts for no component, so it never puts a part past a limit, here or on the
-  board. And it judges the projection, not the world: a part whose true usage is higher than
-  its records say is fitted on its records.
+  at or over the limit; the board reports the part as past its limit, and the install
+  stands. A flight with no UTC start counts for no component, so it never puts a part at or
+  past a limit, here or on the board. And it judges the projection, not the world: a part
+  whose true usage is higher than its records say is fitted on its records.
 - **A state at `as_of` is valid time, not record time.** The records at a time are folded
   from the live entries that had occurred by then, with liveness decided over the whole
   ledger first, as known now. So a query about March answers "what was true in March, as
@@ -191,16 +194,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   of its weights, the recording date and the computation date. Re-recording with another
   model or another date gives different sentences; the test suite only guarantees that the
   records behind each recorded answer are what the current code returns.
-- **One recorded run predates a tool change and is kept as recorded.** Before 0.2.0 the
-  `list_aircraft` tool called `/aircraft` without a date, so the board it returned was the
-  one computed on the recording day, 2026-09-25, not at the run's computation date. The
-  run "Which aircraft are not serviceable, and what stops each one?" was recorded that
-  way. Its file is kept byte for byte and its hash is pinned in the replay test; on replay
-  the tool now sends the run's computation date, and the recorded records must equal the
-  dated ones, which they do: the answer was consistent with its computation date all
-  along. Had the tool stayed undated, that replay would have started failing on
-  2026-12-25, when one aircraft's annual inspection becomes due soon on the day of the
-  test rather than at the pinned date.
+- **A recording is evidence of one run; a seed change makes it stale.** Five of the nine
+  runs were recorded again in 0.3.0 after the synthetic fleet changed, with the same model
+  and weights at the same computation date (CHANGELOG.md says which and why); the earlier
+  files are in the history. Between 0.2.0 and 0.3.0 one run, made before the
+  `list_aircraft` tool was dated, was kept byte for byte with its hash pinned and a replay
+  allowance for its undated query; that run was among the five, so no allowance remains and
+  every recorded call is held to exactly the query it recorded.
 - **Hours and cycles cannot be projected.** Only calendar limits have a date, so "what is
   due before Friday" is answered for calendar items and stated as unknown for the rest.
 - **The ledger checks catch what they can match.** A name written as an initial and a

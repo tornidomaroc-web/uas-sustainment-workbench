@@ -121,8 +121,9 @@ reads are projected from the live entries on every read, so nothing about mainte
 stored twice. Impossible input is refused before anything is written, with a status and a
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
 closed that is not open, a component installed while it is on another airframe, a part
-fitted while past any of its life limits (a life-limited part past its limit is replaced,
-not fitted again; one that crosses its limit while fitted stays, and the board says so), a
+fitted after reaching or exceeding any of its life limits (14 CFR 43.10(c); a life-limited
+part at its limit is replaced, not fitted again; one that crosses its limit while fitted
+stays, and the board says so), a
 back-dated installation that overlaps a window, a correction that would orphan later
 entries, a date more than five minutes in the future, negative hours or cycles. Every entry is judged at its own
 date, against the records as they stood when it happened, so a state change back-dated
