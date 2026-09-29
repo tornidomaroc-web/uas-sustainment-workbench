@@ -7,9 +7,10 @@ date, whatever order it arrives in. Then every already recorded later entry of t
 subject is judged again with the new one in place, and the write is refused if one of them
 would no longer hold: the ledger never holds an entry its own records cannot accept. A
 correction keeps the date of the entry it corrects and takes its place; to move a date,
-the entry is retracted and a new one written. A component past any of its life limits on
-the day it is fitted goes on no aircraft: a life-limited part at its limit is replaced, and
-the usage it has reached travels with it (14 CFR 43.10). Shape errors are 422, unknown
+the entry is retracted and a new one written. A component that has reached any of its life
+limits on the day it is fitted, exactly or past it, goes on no aircraft: a life-limited
+part at its limit is replaced, and the usage it has reached travels with it (14 CFR 43.10).
+Shape errors are 422, unknown
 subjects 404, the public showcase aircraft 403, and transitions the records cannot accept
 409.
 """
@@ -37,7 +38,11 @@ if TYPE_CHECKING:
 CLOCK_SKEW = timedelta(minutes=5)
 SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 H = 3600.0
-NOT_FITTED_AGAIN = "a life-limited part past its limit is replaced, not fitted again"
+# 14 CFR 43.10(c): the control method "must deter the installation of the part after it has
+# reached its life limit". Reached, not only exceeded: a part with nothing left is refused.
+NOT_FITTED_AGAIN = (
+    "a life-limited part that has reached its life limit is replaced, not fitted again"
+)
 WorkStateIn = Literal["deferred", "in_work", "awaiting_parts"]
 
 
@@ -252,9 +257,11 @@ def _correction(store: Store, entry: Entry, projection: Any) -> Entry | None:
 def _limits_past(
     store: Store, c: Component, rule: LifeRule, at: datetime, tolerance_s: float
 ) -> list[str]:
-    """Each life limit of `c` that is past at `at`, in the words of the refusal; empty when
-    none is. The boundary is the board's: a limit is past when less than nothing of it
-    remains, so a part exactly at its limit is not past it (due soon, not overdue)."""
+    """Each life limit of `c` that is reached at `at`, past or exactly, in the words of the
+    refusal; empty when none is. A limit is reached when nothing of it remains: 300 of 300
+    cycles, 300.0 of 300 h, the last day of the calendar life. This is not the board's
+    boundary, which asks whether a fitted part may keep flying (remaining 0 is due soon); a
+    part with nothing left has no flight in it to give a new airframe (14 CFR 43.10(c))."""
     usage = component_usage(c, store.flights, tolerance_s, until=at)
     past: list[str] = []
     for basis, limit in rule.limits():
@@ -262,15 +269,26 @@ def _limits_past(
             used_h = round(usage.hours_s / H, 3)
             if used_h > limit:
                 past.append(f"it has flown {used_h:.1f} h, past its {limit:.0f} h life limit")
+            elif used_h == limit:
+                past.append(
+                    f"it has flown {used_h:.1f} h, the whole of its {limit:.0f} h life limit"
+                )
         elif basis == "cycles":
             if usage.cycles > limit:
                 past.append(
                     f"it has flown {usage.cycles} cycles, past its {limit:.0f}-cycle life limit"
                 )
+            elif usage.cycles == limit:
+                past.append(
+                    f"it has flown {usage.cycles} cycles, the whole of its {limit:.0f}-cycle "
+                    "life limit"
+                )
         else:
             due = end_of_month_after(c.in_service_since, int(limit))
             if at.date() > due:
                 past.append(f"its {limit:.0f}-calendar-month life limit ended on {due}")
+            elif at.date() == due:
+                past.append(f"its {limit:.0f}-calendar-month life limit ends that same day, {due}")
     return past
 
 
@@ -341,8 +359,9 @@ def _transitions(
             if on:
                 since = _stamp(on[0].from_utc)
                 raise LedgerError(409, f"{c.id} is installed on {on[0].aircraft_key} since {since}")
-            # A part past a life limit on the day it is fitted goes on no aircraft; the usage
-            # is what the records held by that day, on every airframe it had been fitted to.
+            # A part that has reached a life limit on the day it is fitted goes on no aircraft
+            # (14 CFR 43.10(c)); the usage is what the records held by that day, on every
+            # airframe it had been fitted to.
             rule = policy.component_kinds.get(c.kind)
             past = _limits_past(store, c, rule, at, tolerance_s) if rule else []
             if past:
