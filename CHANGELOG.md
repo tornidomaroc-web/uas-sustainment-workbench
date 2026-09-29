@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0
 
 ### Corrected: time in service before an aircraft's first log is not known
 
@@ -40,15 +40,28 @@ seeded state changes.
 
 ### Refused: fitting a part that is past a life limit
 
-A component past any of its life limits on the day it is fitted, in hours, cycles or
-calendar months as `fleet.toml` sets them for its kind, cannot be installed. The write is
-refused with 409 and one sentence that names each limit past: "BAT-04A cannot be fitted to
-SYN-04 at 2026-08-13 08:00 UTC: it has flown 303 cycles, past its 300-cycle life limit; a
-life-limited part past its limit is replaced, not fitted again". The usage is what the
-records held by the install's date, on every airframe the part had been fitted to, counted
-as the due list counts it (14 CFR 43.10). Reproduced before the change: the seeded fleet
-itself refitted BAT-04A to SYN-04 at 303 cycles and fitted BAT-04B five months after its
-calendar life had ended, and the ledger accepted both, as it would have from any operator.
+A component that has reached any of its life limits on the day it is fitted, exactly or
+past it, in hours, cycles or calendar months as `fleet.toml` sets them for its kind, cannot
+be installed. The write is refused with 409 and one sentence that names each limit:
+"BAT-04A cannot be fitted to SYN-04 at 2026-08-13 08:00 UTC: it has flown 303 cycles, past
+its 300-cycle life limit; a life-limited part that has reached its life limit is replaced,
+not fitted again". A limit is reached when nothing of it remains: "it has flown
+300 cycles, the whole of its 300-cycle life limit", "it has flown 300.0 h, the whole of its
+300 h life limit", "its 24-calendar-month life limit ends that same day, 2026-08-31". The
+usage is what the records held by the install's date, on every airframe the part had been
+fitted to, counted as the due list counts it (14 CFR 43.10). Reproduced before the change:
+the seeded fleet itself refitted BAT-04A to SYN-04 at 303 cycles and fitted BAT-04B five
+months after its calendar life had ended, and the ledger accepted both, as it would have
+from any operator.
+
+The ruling on the boundary: 14 CFR 43.10(c) requires a control method that deters "the
+installation of the part after it has reached its life limit" (text checked against the
+2025 edition on govinfo), so a part with nothing left is refused, not only a part past its
+limit; the refusal sentence uses the regulation's words. The board's boundary is another
+question, whether a part already fitted may keep flying: there remaining 0 is due soon, not
+overdue, and a part fitted one cycle short flies its first cycle as due soon and is past
+its limit on the next. A first draft of this change accepted the at-limit install on the
+board's boundary; the regulation's words overrule it, and no release carried that draft.
 
 The rule is judged at the entry's own date like every other rule of the write path. So a
 back-dated install is accepted when the part was under its limits on that date, although it
@@ -56,9 +69,8 @@ may be past one today: the normal life of a part is to cross its limit while fit
 there the board reports it, the install stands, and taking the part off is allowed, as is
 registering a part past its limit. The re-check of later entries carries the rule: a write
 that would leave an already recorded later install over its limit is refused naming that
-install. The boundary is the board's: a part exactly at its limit is due soon, not overdue,
-and may be fitted; its first flight puts it past the limit on the board. One sentence is
-amended: a pack one cycle past its limit reads "1 cycle past", not "1 cycles past".
+install. One sentence is amended: a pack one cycle past its limit reads "1 cycle past", not
+"1 cycles past".
 
 ### Changed: how the synthetic fleet is generated
 
@@ -93,19 +105,42 @@ state at 2026-10-01, is the same. The published evidence sample for SYN-04 chang
 records: its ledger hash was `157e5edb68a7c46496967bc798c5330cb87510a97d778fa2f0e7140998f78634`
 and is `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`.
 
-Five of the nine recorded assistant runs no longer replay: the two about SYN-04's due items
-and the fleet's states (its reasons changed), the three that list ledger entries of SYN-01,
-SYN-04 and SYN-05 (SYN-01's two new entries shift every later id by one, and the annual
-hours changed). No recording is edited; they are re-recorded in the next change of 0.3.0,
-and until then those five replays fail. The four others replay unchanged.
+### Re-recorded: five assistant runs, after the seed change
+
+Five of the nine recorded assistant runs no longer replayed on the changed seed: the two
+about SYN-04's due items and the fleet's states (its reasons changed), and the three that
+list ledger entries of SYN-01, SYN-04 and SYN-05 (SYN-01's two new entries shift every
+later id by one, and the annual hours changed). No recording was edited. Each of the five
+was recorded again on 2026-09-28 with the same model and the same weights (qwen3:8b, digest
+`500a1f067a9f…`), against this seed, at the same computation date, 2026-10-01; every new
+answer passed the grounding check on its first recording. The four other runs replay as
+they were.
+
+What the answers say now, against what they said: the SYN-04 due run names BAT-04B's
+calendar limit passed on 2026-08-31 and no cycle item, where it named two packs; the
+not-serviceable run lists SYN-04, SYN-05 and SYN-07 with the same reasons the board gives,
+and no longer names SYN-03's deferred defect, which is not "not serviceable"; the SYN-05
+work order run gives the same recorder and time; the SYN-01 supersession run says entry #5
+superseded entry #4 for the same reason, adding that it corrected the time in service; the
+SYN-04 components run names BAT-01B fitted on 2026-08-13 in place of BAT-04A. The three
+runs that use the ledger end with the sentence that the workbench does not certify
+airworthiness or return to service, and the not-serviceable run now ends with it too.
+
+Retired with the re-recording: the byte-for-byte pin of the run "Which aircraft are not
+serviceable, and what stops each one?" (SHA-256 `60bade96…28e8c`), which held that run's file
+from before `list_aircraft` was dated (0.2.0), with a replay allowance that supplied the
+missing date. Its new recording carries the date like every other, so the allowance is
+gone and the replay tests hold every recorded call to exactly the query it recorded; a test
+checks that every dated call carries the computation date. The frozen-clock replay at
+2028-01-01 covers all nine runs as before.
 
 Changed: `life.engine.time_in_service` returns a value or an Unknown; `DueItem.used` and
 `DueItem.remaining` may be Unknown; `DueState` gains `unknown`; `LifeRule.satisfied_by`;
 `DueItemOut.used` and `.remaining` may be `{"unknown": ...}`; `life.engine.component_usage`;
 `ledger.validate` judges every install against the part's life limits; the seed's entries
-(60, from 59) and their ids from SYN-01's group on. Not changed: the ledger and its file
-format, every response shape, the flights, the seed value; the version string stays 0.2.0
-until 0.3.0 is released.
+(60, from 59) and their ids from SYN-01's group on; five recordings; the version string.
+Not changed: the ledger and its file format, every response shape, the flights, the seed
+value.
 
 ## 0.2.0
 

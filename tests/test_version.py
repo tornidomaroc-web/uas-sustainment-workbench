@@ -6,7 +6,7 @@ from pathlib import Path
 from uas_workbench import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE = "0.2.0"
+RELEASE = "0.3.0"
 
 
 def test_code_and_package_declare_the_same_version() -> None:
@@ -14,5 +14,5 @@ def test_code_and_package_declare_the_same_version() -> None:
     assert __version__ == declared
 
 
-def test_the_version_is_the_first_release() -> None:
+def test_the_version_is_the_release() -> None:
     assert __version__ == RELEASE
