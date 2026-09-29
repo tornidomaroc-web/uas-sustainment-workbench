@@ -1,9 +1,9 @@
 {
  "slug": "was-anything-superseded-in-the-ledger-of-syn-01-say-what-sup",
  "question": "Was anything superseded in the ledger of SYN-01? Say what superseded what, and why.",
- "answer": "Entry #4 was superseded by entry #5. The reason given for the superseding entry is \"[synthetic] the previous logbook total was misread by ten hours.\" Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+ "answer": "Entry #5 superseded entry #4 because the previous logbook total was misread by ten hours. Entry #5 corrected the time in service for SYN-01. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-26T02:54:30+00:00",
+ "recorded_utc": "2026-09-28T23:48:26+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -21,7 +21,7 @@
    ]
   },
   {
-   "content": "Entry #4 was superseded by entry #5. The reason given for the superseding entry is \"[synthetic] the previous logbook total was misread by ten hours.\" Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+   "content": "Entry #5 superseded entry #4 because the previous logbook total was misread by ten hours. Entry #5 corrected the time in service for SYN-01. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
    "tool_calls": []
   }
  ],
@@ -81,7 +81,7 @@
      "statement": "[synthetic] annual inspection completed",
      "details": {
       "name": "annual inspection",
-      "at_hours_s": 0.0,
+      "at_hours_s": 64380.86493272282,
       "carried_over_s": 0.0
      },
      "supersedes": null,
@@ -161,7 +161,7 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 35,
+     "id": 37,
      "subject": "BAT-04A",
      "kind": "component.install",
      "occurred_utc": "2026-08-04T08:00:00Z",
@@ -178,13 +178,30 @@
      "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
     },
     {
-     "id": 38,
+     "id": 11,
+     "subject": "BAT-01B",
+     "kind": "component.remove",
+     "occurred_utc": "2026-08-13T08:00:00Z",
+     "recorded_utc": "2026-08-13T08:00:00Z",
+     "entered_by": "synthetic fleet generator, seed 20260925",
+     "statement": "[synthetic] battery pack BAT-01B removed from SYN-01",
+     "details": {
+      "aircraft_key": "SYN-01"
+     },
+     "supersedes": null,
+     "reason": null,
+     "synthetic": true,
+     "superseded_by": null,
+     "note": "This entry records what the entering person stated. The workbench does not certify airworthiness or return to service."
+    },
+    {
+     "id": 40,
      "subject": "BAT-04A",
      "kind": "component.remove",
      "occurred_utc": "2026-08-13T08:00:00Z",
      "recorded_utc": "2026-08-13T08:00:00Z",
      "entered_by": "synthetic fleet generator, seed 20260925",
-     "statement": "[synthetic] battery pack BAT-04A removed from SYN-01",
+     "statement": "[synthetic] battery pack BAT-04A removed from SYN-01 and placed in storage",
      "details": {
       "aircraft_key": "SYN-01"
      },
