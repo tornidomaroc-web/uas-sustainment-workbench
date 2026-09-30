@@ -1,6 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (unreleased)
+
+### Added: a short cue beside every sentence, on request
+
+Every reason and due item is one full sentence, up to about 230 characters, because the
+sentence is the record's word; a wall board cannot carry that. With `?cues=true` on
+`/aircraft`, `/aircraft/{key}`, `/aircraft/{key}/due` and `/fleet/due`, each due item gains
+`cue` and the board state gains `status_cue` and `status_cues`, one per reason in the same
+order: at most 40 characters, built from the same fields as the sentence by one grammar in
+`life/cue.py`, never typed per case. The sentence stays exactly as it is.
+
+What a cue keeps and drops. Kept: the part id or inspection name, the number, its unit and
+the direction. Dropped: the aircraft key (a board row names it), the regulation, the
+tolerance explanation, a calendar item's count of days (its date stays), and a work order's
+description (a person's words, never cut). A cue says what its state says and nothing
+stronger or weaker: "PROP-01 102.9 h left of 300 h", "BAT-01A 206 cycles left of 300",
+"BAT-04B 17 days left, due 2026-08-31", "100 h insp due in 82.5 h", "annual insp due by
+2027-04-30"; past a limit, "BAT-04A 1 cycle past 300-cycle limit", "BAT-04B past calendar
+limit 2026-08-31", "100 h insp 12.0 h overdue"; inside a tolerance, "100 h insp 3.6 h
+overdue, in tolerance"; not known, "100 h insp: time in service not known"; open work orders,
+"AOG awaiting parts since 2026-08-14", "in maintenance since 2026-08-07", "deferred defect
+since 2026-08-07"; a board state's own cue is the state, or "not known: no maintenance
+record" and "not known: time in service".
+
+Proven by `tests/test_cues.py`: every cue the seeded fleet produces at every scene plan time
+and at now is within the limit; every cue names the same part, numbers, unit and state as its
+sentence, judged by a checker that a mutation of each property fails; every cue passes the
+assistant's own grounding check against its item, so it adds no number, id, date or name the
+records lack.
+
+Why on request. Adding a field to the responses would change what four of the nine recorded
+assistant runs replay and what the evidence pack holds. The plain response models now forbid
+extra fields, so a response is one shape or the other; without the option the bytes are
+exactly what they were, the recordings replay unchanged, the evidence pack does not carry
+cues, and the assistant does not read them. The version string stays 0.3.0 until release.
 
 ### Documentation: corrections to the 0.3.0 text, made after the v0.3.0 tag
 
