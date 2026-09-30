@@ -93,6 +93,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   form comes from, none is a manufacturer's number, and Part 107 sets no inspection
   interval at all; the two inspections borrow the manned Part 91 shape so the tolerance
   and calendar logic have a public source.
+- **A cue is shorter than its sentence, never other than it, and never the record.** The
+  short cue served with `?cues=true` drops the aircraft key, the regulation, the tolerance
+  explanation, a calendar item's day count and a work order's description, and keeps the
+  part or inspection, the number, the unit and the state; it is generated, never edited, and
+  the tests refuse one that names another part, another number, another unit or a state its
+  sentence does not say. It is a display aid: the sentence is the record's word, the
+  evidence pack does not carry cues, and the assistant does not read them.
 
 ## Limits of the maintenance ledger
 
