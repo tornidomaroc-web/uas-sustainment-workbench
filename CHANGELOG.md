@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0
 
 ### Added: a short cue beside every sentence, on request
 
@@ -34,14 +34,21 @@ Why on request. Adding a field to the responses would change what four of the ni
 assistant runs replay and what the evidence pack holds. The plain response models now forbid
 extra fields, so a response is one shape or the other; without the option the bytes are
 exactly what they were, the recordings replay unchanged, the evidence pack does not carry
-cues, and the assistant does not read them. The version string stays 0.3.0 until release.
+cues, and the assistant does not read them.
+
+Changed: `life/cue.py` (new); the `cues` option on the four routes and the cued response
+models (`cue`, `status_cue`, `status_cues`); the plain response models forbid extra fields;
+the version string. Not changed: the ledger and its file format, every response without the
+option, the seed, the nine recorded runs, the published evidence sample's hash.
 
 ### Documentation: corrections to the 0.3.0 text, made after the v0.3.0 tag
 
 Three sentences about 0.3.0 were wrong in wording, not in behaviour, and are corrected in
 this file and in README.md. The files inside the v0.3.0 tag and the v0.3.0 release notes keep
-the earlier wording; the corrected text below is what the documentation says from this
-change on, and no code, test, recording or version changed with it.
+the earlier wording; the corrected text below is what the documentation has said since
+2026-09-29, and no code, test, recording or version changed with the correction. It is
+listed under 0.4.0 because 0.4.0 is the first release whose files carry it: the v0.3.0 tag
+is not moved, and no 0.3.1 was cut for wording alone.
 
 - The 0.3.0 heading "Refused: fitting a part that is past a life limit" now reads "Refused:
   fitting a part that has reached a life limit". The rule under it always refused a part
