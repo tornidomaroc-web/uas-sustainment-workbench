@@ -28,7 +28,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from uas_workbench import __version__
 from uas_workbench.fleet import FleetConfig, load_config
@@ -40,6 +40,7 @@ from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.flight.record import FlightRecord
 from uas_workbench.ledger import NOTE, Entry, LedgerError, append, entry_to_json
 from uas_workbench.life import Board, Component, DueList, board, due_list
+from uas_workbench.life.cue import item_cue, reason_cues, status_cue
 
 from .observability import (
     AIRCRAFT_BY_STATUS,
@@ -150,6 +151,29 @@ class DueOut(BaseModel):
     time_in_service_s: float | UnknownOut
     items: list[DueItemOut]
     notes: list[str]
+
+
+# With `cues=true`, the same responses with a short cue beside every sentence (life/cue.py):
+# at most 40 characters, from the same data, never stronger or weaker than the sentence. The
+# plain models forbid extra fields, so a response is one shape or the other, never a mix,
+# and without the option the bytes are exactly what they were before cues existed.
+for _model in (AircraftOut, DueItemOut, DueOut):
+    _model.model_config = ConfigDict(extra="forbid")
+
+
+class DueItemCueOut(DueItemOut):
+    cue: str
+
+
+class AircraftCueOut(AircraftOut):
+    status_cue: str
+    status_cues: list[str]  # one per status reason, in the same order
+
+
+class DueCueOut(DueOut):
+    status_cue: str
+    status_cues: list[str]
+    items: list[DueItemCueOut]  # type: ignore[assignment]
 
 
 class EntryIn(BaseModel):
@@ -334,13 +358,55 @@ def due_view(
     return due, state, out
 
 
+def due_cued(due: DueList, state: Board, out: DueOut) -> DueCueOut:
+    """The same due list with a cue beside every item and every reason."""
+    by_message = {i.message: i for i in due.items}
+    return DueCueOut(
+        **out.model_dump(exclude={"items"}),
+        status_cue=status_cue(state.status),
+        status_cues=list(reason_cues(due, state)),
+        items=[
+            DueItemCueOut(**i.model_dump(), cue=item_cue(by_message[i.message], due.as_of))
+            for i in out.items
+        ],
+    )
+
+
 def aircraft_view(
     store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
 ) -> AircraftOut:
     """One line of the board at `as_of` (default: now): state, reasons, counts."""
+    return _aircraft_views(store, aircraft, config, as_of)[0]
+
+
+def aircraft_cued(
+    store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
+) -> AircraftCueOut:
+    """The board line with the state and each reason cued."""
+    row, due, state = _aircraft_views(store, aircraft, config, as_of)
+    return AircraftCueOut(
+        **row.model_dump(),
+        status_cue=status_cue(state.status),
+        status_cues=list(reason_cues(due, state)),
+    )
+
+
+def _aircraft_views(
+    store: Store, aircraft: Aircraft, config: FleetConfig, as_of: datetime | None = None
+) -> tuple[AircraftOut, DueList, Board]:
     records = flights_until(store.flights(aircraft.key), as_of)
     result, _ = reconcile_view(store, aircraft, config, as_of)
-    _, state, due = due_view(store, aircraft, config, as_of)
+    due_list_, state, due = due_view(store, aircraft, config, as_of)
+    return _aircraft_row(aircraft, records, result, state, due), due_list_, state
+
+
+def _aircraft_row(
+    aircraft: Aircraft,
+    records: Sequence[FlightRecord],
+    result: Reconciliation,
+    state: Board,
+    due: DueOut,
+) -> AircraftOut:
     return AircraftOut(
         key=aircraft.key,
         label=aircraft.label,
@@ -413,6 +479,18 @@ def fleet_due(store: Store, config: FleetConfig, as_of: datetime | None = None) 
     return sorted(items, key=lambda i: _rank(i.state, i.remaining, i.limit))
 
 
+def fleet_due_cued(
+    store: Store, config: FleetConfig, as_of: datetime | None = None
+) -> list[DueItemCueOut]:
+    items = [
+        i
+        for a in store.aircraft()
+        for i in due_cued(*due_view(store, a, config, as_of)).items
+        if i.state != "ok"
+    ]
+    return sorted(items, key=lambda i: _rank(i.state, i.remaining, i.limit))
+
+
 def refresh_gauges(store: Store, config: FleetConfig) -> None:
     FLIGHTS_STORED.set(store.flight_count())
     kinds: Counter[str] = Counter()
@@ -439,6 +517,14 @@ READERS = {".ulg": read_ulog, ".bin": read_dataflash}
 
 AsOf = Annotated[
     datetime | None, Query(description="Compute the due list at this UTC time instead of now.")
+]
+Cues = Annotated[
+    bool,
+    Query(
+        description="Add a short cue (at most 40 characters, from the same data) beside every "
+        "sentence: `cue` on each due item, `status_cue` and `status_cues` on the board state. "
+        "Without it the response is exactly as before."
+    ),
 ]
 
 
@@ -535,14 +621,16 @@ def create_app(
             "flights": store.flight_count(),
         }
 
-    @app.get("/aircraft", tags=["fleet"], response_model=list[AircraftOut])
-    def list_aircraft(as_of: AsOf = None) -> list[AircraftOut]:
+    @app.get("/aircraft", tags=["fleet"], response_model=list[AircraftCueOut | AircraftOut])
+    def list_aircraft(as_of: AsOf = None, cues: Cues = False) -> list[AircraftOut]:
         """The board: every aircraft with its state and reasons, now or at `as_of`."""
-        return [aircraft_view(store, a, cfg, _utc(as_of)) for a in store.aircraft()]
+        view = aircraft_cued if cues else aircraft_view
+        return [view(store, a, cfg, _utc(as_of)) for a in store.aircraft()]
 
-    @app.get("/aircraft/{key}", tags=["fleet"], response_model=AircraftOut)
-    def get_aircraft(key: str, as_of: AsOf = None) -> AircraftOut:
-        return aircraft_view(store, _aircraft_or_404(key), cfg, _utc(as_of))
+    @app.get("/aircraft/{key}", tags=["fleet"], response_model=AircraftCueOut | AircraftOut)
+    def get_aircraft(key: str, as_of: AsOf = None, cues: Cues = False) -> AircraftOut:
+        view = aircraft_cued if cues else aircraft_view
+        return view(store, _aircraft_or_404(key), cfg, _utc(as_of))
 
     @app.get("/aircraft/{key}/flights", tags=["flights"], response_model=list[FlightOut])
     def list_flights(key: str) -> list[FlightOut]:
@@ -557,15 +645,18 @@ def create_app(
     def fleet_findings() -> list[FindingOut]:
         return [f for a in store.aircraft() for f in reconcile_view(store, a, cfg)[1].findings]
 
-    @app.get("/aircraft/{key}/due", tags=["life"], response_model=DueOut)
-    def aircraft_due(key: str, as_of: AsOf = None) -> DueOut:
+    @app.get("/aircraft/{key}/due", tags=["life"], response_model=DueCueOut | DueOut)
+    def aircraft_due(key: str, as_of: AsOf = None, cues: Cues = False) -> DueOut:
         """Component life and inspection due list, and the board state with its reasons."""
-        return due_view(store, _aircraft_or_404(key), cfg, _utc(as_of))[2]
+        due, state, out = due_view(store, _aircraft_or_404(key), cfg, _utc(as_of))
+        return due_cued(due, state, out) if cues else out
 
-    @app.get("/fleet/due", tags=["life"], response_model=list[DueItemOut])
-    def fleet_due_items(as_of: AsOf = None) -> list[DueItemOut]:
+    @app.get("/fleet/due", tags=["life"], response_model=list[DueItemCueOut | DueItemOut])
+    def fleet_due_items(as_of: AsOf = None, cues: Cues = False) -> Sequence[DueItemOut]:
         """What a maintenance lead asks first: everything due soon or overdue, worst first."""
-        return fleet_due(store, cfg, _utc(as_of))
+        return (
+            fleet_due_cued(store, cfg, _utc(as_of)) if cues else fleet_due(store, cfg, _utc(as_of))
+        )
 
     def _pack(key: str, as_of: datetime | None) -> dict[str, Any]:
         from uas_workbench.evidence import build_pack  # the pack builds on this module's views

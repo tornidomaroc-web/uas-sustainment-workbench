@@ -31,7 +31,7 @@ from uas_workbench.assistant.agent import Call, ground
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
-from uas_workbench.life import Board, DueItem, DueList, board
+from uas_workbench.life import Board, DueItem, DueList
 from uas_workbench.life.cue import CUE_LIMIT, item_cue, problems, reason_cues
 from uas_workbench.service.app import create_app, due_view
 from uas_workbench.service.store import Store
@@ -123,8 +123,14 @@ def test_not_known_items_say_not_known(store: Store) -> None:
 
 
 def test_reason_cues_stand_beside_the_reasons(store: Store) -> None:
-    seen = {"AOG": 0, "in maintenance": 0, "unserviceable": 0, "serviceable with deferred defects": 0,
-            "not known": 0}  # fmt: skip
+    labels = (
+        "AOG",
+        "in maintenance",
+        "unserviceable",
+        "serviceable with deferred defects",
+        "not known",
+    )
+    seen = dict.fromkeys(labels, 0)
     for key, t, due, state in every_due(store):
         cues = reason_cues(due, state)
         assert len(cues) == len(state.reasons), (key, t)
@@ -175,15 +181,25 @@ def test_every_item_cue_passes_the_assistant_grounding_check_against_its_item(st
 
 
 def test_every_reason_cue_passes_the_grounding_check_against_the_due_list(store: Store) -> None:
-    for key, t, due, state in every_due(store):
+    for key, _t, due, state in every_due(store):
         result = {
             "aircraft_key": key,
-            "status": state.status if isinstance(state.status, str) else {"unknown": state.status.reason},
+            "status": state.status
+            if isinstance(state.status, str)
+            else {"unknown": state.status.reason},
             "status_reasons": list(state.reasons),
-            "items": [{k: v for k, v in dataclasses.asdict(i).items() if k != "cue"} for i in due.items],
+            "items": [
+                {k: v for k, v in dataclasses.asdict(i).items() if k != "cue"} for i in due.items
+            ],
             "work_orders": [dataclasses.asdict(w) for w in due.work_orders],
         }
-        call = Call("aircraft_due", {"key": key}, f"/aircraft/{key}/due", {}, json.loads(json.dumps(result, default=str)))
+        call = Call(
+            "aircraft_due",
+            {"key": key},
+            f"/aircraft/{key}/due",
+            {},
+            json.loads(json.dumps(result, default=str)),
+        )
         for cue in reason_cues(due, state):
             grounding = ground(cue, (call,))
             assert grounding.verified, (cue, grounding.unsupported)
@@ -192,8 +208,12 @@ def test_every_reason_cue_passes_the_grounding_check_against_the_due_list(store:
 # ---- opt-in on the service ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/aircraft", "/aircraft/SYN-04", "/aircraft/SYN-04/due", "/fleet/due"])
-def test_responses_are_byte_identical_unless_cues_are_asked_for(client: TestClient, path: str) -> None:
+@pytest.mark.parametrize(
+    "path", ["/aircraft", "/aircraft/SYN-04", "/aircraft/SYN-04/due", "/fleet/due"]
+)
+def test_responses_are_byte_identical_unless_cues_are_asked_for(
+    client: TestClient, path: str
+) -> None:
     plain = client.get(path, params={"as_of": "2026-10-01T00:00:00Z"})
     again = client.get(path, params={"as_of": "2026-10-01T00:00:00Z", "cues": "false"})
     cued = client.get(path, params={"as_of": "2026-10-01T00:00:00Z", "cues": "true"})
@@ -204,14 +224,17 @@ def test_responses_are_byte_identical_unless_cues_are_asked_for(client: TestClie
 
 
 def test_cued_due_list_carries_a_cue_per_item_and_per_reason(client: TestClient) -> None:
-    due = client.get("/aircraft/SYN-04/due", params={"as_of": "2026-10-01T00:00:00Z", "cues": "true"}).json()
+    due = client.get(
+        "/aircraft/SYN-04/due", params={"as_of": "2026-10-01T00:00:00Z", "cues": "true"}
+    ).json()
     assert len(due["status_cues"]) == len(due["status_reasons"]) >= 1
     for item in due["items"]:
         assert item["cue"] and len(item["cue"]) <= CUE_LIMIT
         assert item["message"]  # the sentence stays
     plain = client.get("/aircraft/SYN-04/due", params={"as_of": "2026-10-01T00:00:00Z"}).json()
-    stripped = {**due, "status_cues": None, "items": [{k: v for k, v in i.items() if k != "cue"} for i in due["items"]]}
-    assert {**plain, "status_cues": None} == stripped
+    stripped = {k: v for k, v in due.items() if k not in ("status_cue", "status_cues")}
+    stripped["items"] = [{k: v for k, v in i.items() if k != "cue"} for i in due["items"]]
+    assert plain == stripped
 
 
 def test_cued_board_and_fleet_due(client: TestClient) -> None:
@@ -220,7 +243,9 @@ def test_cued_board_and_fleet_due(client: TestClient) -> None:
     assert by_key["SYN-07"]["status_cues"][0].startswith("AOG awaiting parts since 2026-08-14")
     assert by_key["SYN-06"]["status_cue"] == "not known: no maintenance record"
     assert by_key["SYN-01"]["status_cue"] == "serviceable"
-    items = client.get("/fleet/due", params={"as_of": "2026-10-01T00:00:00Z", "cues": "true"}).json()
+    items = client.get(
+        "/fleet/due", params={"as_of": "2026-10-01T00:00:00Z", "cues": "true"}
+    ).json()
     assert items and all(len(i["cue"]) <= CUE_LIMIT for i in items)
 
 
@@ -235,21 +260,26 @@ def test_the_evidence_pack_and_openapi_are_unchanged_by_the_option(client: TestC
 # ---- mutation: the checker refuses each broken property ----------------------------------
 
 
-def _one(store: Store, state: str) -> tuple[DueItem, datetime]:
+def _one(store: Store, state: str, component: bool | None = None) -> tuple[DueItem, datetime]:
     for _, t, due, _ in every_due(store):
         for item in due.items:
-            if item.state == state:
+            if item.state == state and (
+                component is None or (item.component_id is not None) == component
+            ):
                 return item, t
     raise LookupError(state)
 
 
 def test_the_checker_refuses_a_cue_that_is_too_long(store: Store) -> None:
     item, t = _one(store, "ok")
-    assert any("longer than" in p for p in problems(item_cue(item, t) + " and then some more words", item, t))
+    assert any(
+        "longer than" in p
+        for p in problems(item_cue(item, t) + " and then some more words", item, t)
+    )
 
 
 def test_the_checker_refuses_a_cue_naming_another_part(store: Store) -> None:
-    item, t = _one(store, "ok")
+    item, t = _one(store, "ok", component=True)
     assert item.component_id
     other = item_cue(item, t).replace(item.component_id, "BAT-99Z")
     assert any("does not name" in p for p in problems(other, item, t))
@@ -266,7 +296,11 @@ def test_the_checker_refuses_a_cue_with_another_unit(store: Store) -> None:
     item, t = _one(store, "ok")
     cue = item_cue(item, t)
     swapped = {"h": "cycles", "cycles": "h", "days": "h"}[item.unit]
-    mutated = cue.replace(f" {item.unit}", f" {swapped}") if f" {item.unit}" in cue else cue + f" {swapped}"
+    mutated = (
+        cue.replace(f" {item.unit}", f" {swapped}")
+        if f" {item.unit}" in cue
+        else cue + f" {swapped}"
+    )
     assert any("unit" in p for p in problems(mutated, item, t))
 
 
