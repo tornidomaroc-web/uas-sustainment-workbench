@@ -8,10 +8,18 @@ that much, and the overflown hours count toward the next interval (14 CFR 91.409
 annual inspection starts the 100-hour interval too ("an annual or 100-hour inspection").
 Calendar limits run to the end of the month (14 CFR 91.409(a), "calendar months").
 
+A limit counted in completed units is reached when its last unit completes. A flight's cycle
+and hours count once the flight is over: from the end of its log, the last instant its flight
+can have ended (log_end), never from its start. A part whose cycles or hours have reached its
+limit, exactly or past it, grounds the aircraft: nothing of its life is left for another
+flight, and the ledger refuses to fit such a part for the same reason (14 CFR 43.10(c),
+"after it has reached its life limit"). A calendar life is counted in days and its last day
+completes at midnight, so on that day the part is still within its life.
+
 The hours before the first log are one total, reached by the first log this tool holds.
 Before that log the time in service is not known, the inspection items that depend on it
 are not known, and the board is not known with that reason unless an open work order or a
-life limit already past grounds the aircraft, which wins.
+life limit reached or past grounds the aircraft, which wins.
 """
 
 from __future__ import annotations
@@ -19,7 +27,7 @@ from __future__ import annotations
 import calendar
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from uas_workbench.flight.reconcile import FLUSH_INTERVAL_S, reconcile
 from uas_workbench.flight.record import FlightRecord, Maybe, Unknown, is_known
@@ -57,9 +65,21 @@ class _AircraftUsage:
     notes: tuple[str, ...]
 
 
-def _before(utc: Maybe[datetime], until: datetime | None) -> bool:
-    """A flight counts up to `until`; a flight with no UTC start is counted whenever."""
-    return until is None or not is_known(utc) or utc <= until
+def log_end(record: FlightRecord) -> Maybe[datetime]:
+    """When a log's flight counts: the end of the log.
+
+    A record holds no landing time: its flight time is a total airborne within the log, not
+    an interval. The log's end is the last instant its flight can have ended, so that is when
+    its cycle and hours count. A log with no UTC start has no end either."""
+    if not is_known(record.utc_start):
+        return record.utc_start
+    return record.utc_start + timedelta(seconds=record.log_span_s)
+
+
+def counted(record: FlightRecord, until: datetime | None) -> bool:
+    """A log counts once it has ended by `until`; a log with no UTC start counts whenever."""
+    end = log_end(record)
+    return until is None or not is_known(end) or end <= until
 
 
 def _usage(
@@ -74,17 +94,17 @@ def _usage(
         if why.startswith("duplicate of "):
             notes.append(f"log {r.log_ref} of aircraft {key} is a {why} and is not counted")
             continue
-        if not _before(r.utc_start, until):
+        if not counted(r, until):
             continue
         seconds = r.flight_time_s if is_known(r.flight_time_s) else 0.0
         cycle = not is_known(r.flight_time_s) or r.flight_time_s > 0
         flown.append(_Flown(r.log_ref, r.utc_start, seconds, cycle))
+    # Flight no log covers has no recorded end. It was flown after the log it followed, so it
+    # counts with that log: the earliest it can have been flown, never later than it was.
     unlogged = tuple(
         (by_ref[f.log_ref].utc_start, f.seconds)
         for f in result.findings
-        if f.kind == "unlogged_flight"
-        and f.log_ref in by_ref
-        and _before(by_ref[f.log_ref].utc_start, until)
+        if f.kind == "unlogged_flight" and f.log_ref in by_ref and counted(by_ref[f.log_ref], until)
     )
     return _AircraftUsage(tuple(flown), unlogged, tuple(notes))
 
@@ -119,8 +139,8 @@ def time_in_service(
     until: datetime | None = None,
 ) -> Maybe[float]:
     """Total time in service (14 CFR 91.417(a)(2)(i)): the hours before the first log, plus
-    the logged flight up to `until`, plus the flight reconcile() found no log covers. Not
-    known before the first log when hours before it were entered."""
+    the flight of the logs that had ended by `until`, plus the flight reconcile() found no
+    log covers. Not known before the first log when hours before it were entered."""
     unknown = _not_known(key, before_s, _first_log(records), until)
     if unknown is not None:
         return unknown
@@ -162,7 +182,8 @@ def component_usage(
 ) -> Usage:
     """The hours and cycles a component has reached by `until`: its usage before this tool's
     first record, plus every flight of every airframe it was fitted to while it was fitted
-    (14 CFR 43.10), counted as due_list() counts them."""
+    (14 CFR 43.10), counted as due_list() counts them: a log from its end, in the
+    installation window it started in."""
     keys = {i.aircraft_key for i in component.installations}
     usage = {k: _usage(k, flights_of(k), tolerance_s, until) for k in keys}
     return _component_usage(component, usage)
@@ -194,28 +215,46 @@ def _component_items(
     items: list[DueItem] = []
     unit: Unit
     for basis, limit in rule.limits():
+        # Hours and cycles are completed units: at remaining 0 the whole life is used and the
+        # limit is reached, which grounds as past does. A calendar life at remaining 0 is on
+        # its last day, which is not over: it stays within its life until the day ends.
+        reached = False
         if basis == "hours":
             used = round(usage.hours_s / H, 3)
             remaining = round(limit - used, 3)
             unit, tolerance = "h", 0.0
-            message = (
-                f"{subject} on aircraft {key} has {remaining:.1f} h left of its {limit:.0f} h "
-                "life limit"
-                if remaining >= 0
-                else f"{subject} on aircraft {key} is {-remaining:.1f} h past its {limit:.0f} h "
-                "life limit"
-            )
+            reached = remaining <= 0
+            if remaining > 0:
+                message = (
+                    f"{subject} on aircraft {key} has {remaining:.1f} h left of its "
+                    f"{limit:.0f} h life limit"
+                )
+            elif remaining == 0:
+                message = f"{subject} on aircraft {key} has reached its {limit:.0f} h life limit"
+            else:
+                message = (
+                    f"{subject} on aircraft {key} is {-remaining:.1f} h past its {limit:.0f} h "
+                    "life limit"
+                )
             scale = limit
         elif basis == "cycles":
             used, remaining = float(usage.cycles), limit - usage.cycles
             unit, tolerance = "cycles", 0.0
-            message = (
-                f"{subject} on aircraft {key} has {_plural(remaining, 'cycle')} left of its "
-                f"{limit:.0f}-cycle life limit"
-                if remaining >= 0
-                else f"{subject} on aircraft {key} is {_plural(-remaining, 'cycle')} past its "
-                f"{limit:.0f}-cycle life limit"
-            )
+            reached = remaining <= 0
+            if remaining > 0:
+                message = (
+                    f"{subject} on aircraft {key} has {_plural(remaining, 'cycle')} left of its "
+                    f"{limit:.0f}-cycle life limit"
+                )
+            elif remaining == 0:
+                message = (
+                    f"{subject} on aircraft {key} has reached its {limit:.0f}-cycle life limit"
+                )
+            else:
+                message = (
+                    f"{subject} on aircraft {key} is {_plural(-remaining, 'cycle')} past its "
+                    f"{limit:.0f}-cycle life limit"
+                )
             scale = limit
         else:
             due = end_of_month_after(c.in_service_since, int(limit))
@@ -241,7 +280,7 @@ def _component_items(
                 limit,
                 remaining,
                 tolerance,
-                _state(remaining, scale, tolerance, fraction),
+                "overdue" if reached else _state(remaining, scale, tolerance, fraction),
                 rule.source,
                 message,
             )
@@ -353,8 +392,8 @@ def due_list(
 
     `components` may be the whole fleet's; the ones installed on this aircraft at `as_of` are
     selected here. `flights_of` is asked for every aircraft a selected component has been on,
-    because its life status travelled with it (14 CFR 43.10). Flights after `as_of` do not
-    count; a flight with no UTC start counts whenever.
+    because its life status travelled with it (14 CFR 43.10). A log counts once it has ended
+    by `as_of` (log_end); a flight with no UTC start counts whenever.
     """
     installed = [c for c in components if _installed_on(c, aircraft_key, as_of)]
     if maintenance is None and not installed:

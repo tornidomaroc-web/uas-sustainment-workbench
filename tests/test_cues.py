@@ -309,7 +309,10 @@ def test_the_checker_refuses_a_cue_stronger_or_weaker_than_its_state(store: Stor
     cue = item_cue(within, t)
     assert any("state" in p for p in problems(cue.replace(" in tolerance", ""), within, t))
     overdue, t2 = _one(store, "overdue")
-    weaker = item_cue(overdue, t2).replace("past", "left of").replace("overdue", "due in")
+    # The first overdue item of the seeded fleet may be past, overdue or exactly reached.
+    weaker = item_cue(overdue, t2)
+    for word, softer in (("past", "left of"), ("overdue", "due in"), ("reached", "left of")):
+        weaker = weaker.replace(word, softer)
     assert any("state" in p for p in problems(weaker, overdue, t2))
     unknown, t3 = _one(store, "unknown")
     assert any("not known" in p for p in problems("100 h insp due in 5.0 h", unknown, t3))

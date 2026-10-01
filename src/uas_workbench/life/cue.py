@@ -4,9 +4,10 @@ The sentence stays the record's word; the cue is at most CUE_LIMIT characters, b
 same fields by one grammar, never typed per case. The aircraft key is dropped, because a board
 row already names it; the regulation, the tolerance explanation and the counted days of a
 calendar item are dropped; the part id or inspection name, the number, its unit and the
-direction (left, past, overdue, in tolerance, not known) are never dropped. A cue therefore
-says exactly what the state says, never a stronger word for a weaker state or the reverse,
-and a not-known item's cue says not known.
+direction (left, reached, past, overdue, in tolerance, not known) are never dropped. A cue
+therefore says exactly what the state says, never a stronger word for a weaker state or the
+reverse, and a not-known item's cue says not known. A limit exactly reached reads "reached",
+never "0 left" and never "past": the sentence says "has reached", and so does the cue.
 
   item_cue(item, as_of)       the cue of a due item
   reason_cues(due, board)     the cues of the board's reasons, one for one in the same order
@@ -19,6 +20,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
 
   BAT-04A 1 cycle past 300-cycle limit     BAT-01A 206 cycles left of 300
   PROP-01 1.2 h past 300 h limit           PROP-01 102.9 h left of 300 h
+  BAT-04A reached 300-cycle limit          PROP-01 reached 300 h limit
   BAT-04B past calendar limit 2026-08-31   BAT-04B 17 days left, due 2026-08-31
   100 h insp 3.6 h overdue, in tolerance   100 h insp 12.0 h overdue
   100 h insp due in 82.5 h                 annual insp due by 2027-04-30
@@ -46,9 +48,11 @@ STATE_WORDS: dict[str, tuple[str, ...]] = {
     "ok": ("left", "due in", "due by"),
     "due_soon": ("left", "due in", "due by"),
     "overdue_within_tolerance": ("in tolerance",),
-    "overdue": ("past", "overdue"),
+    "overdue": ("past", "overdue", "reached"),
     "unknown": (NOT_KNOWN,),
 }
+# The sentence of a life limit exactly reached; its cue says "reached" and no other does.
+HAS_REACHED = "has reached its"
 UNIT_WORDS: dict[str, tuple[str, ...]] = {"h": (" h",), "cycles": ("cycle",), "days": ("day",)}
 
 
@@ -87,16 +91,22 @@ def item_cue(item: DueItem, as_of: datetime) -> str:
     if item.component_id is not None:
         cid = item.component_id
         if item.basis == "hours":
-            if rem >= 0:
+            if rem > 0:
                 return _fit(f"{cid} {rem:.1f} h left of {limit:.0f} h", f"{cid} {rem:.1f} h left")
+            if rem == 0:
+                return _fit(f"{cid} reached {limit:.0f} h limit", f"{cid} reached {limit:.0f} h")
             return _fit(
                 f"{cid} {-rem:.1f} h past {limit:.0f} h limit", f"{cid} {-rem:.1f} h past limit"
             )
         if item.basis == "cycles":
-            if rem >= 0:
+            if rem > 0:
                 return _fit(
                     f"{cid} {_plural(rem, 'cycle')} left of {limit:.0f}",
                     f"{cid} {_plural(rem, 'cycle')} left",
+                )
+            if rem == 0:
+                return _fit(
+                    f"{cid} reached {limit:.0f}-cycle limit", f"{cid} reached {limit:.0f} cycles"
                 )
             return _fit(
                 f"{cid} {_plural(-rem, 'cycle')} past {limit:.0f}-cycle limit",
@@ -201,6 +211,12 @@ def problems(cue: str, item: DueItem, as_of: datetime) -> list[str]:
             for w in words:
                 if w in cue and not (w == "overdue" and item.state == "overdue_within_tolerance"):
                     found.append(f"state word {w!r} belongs to {state}, not {item.state}")
+    # Reached is its own word: a part past its limit is not merely at it, and one exactly at
+    # it is neither past nor overdue.
+    if "reached" in cue and HAS_REACHED not in item.message:
+        found.append("the cue says reached and the sentence does not")
+    if HAS_REACHED in item.message and "reached" not in cue:
+        found.append("the sentence says the limit is reached and the cue does not say reached")
     if item.state == "unknown" and NOT_KNOWN not in cue:
         found.append("a not-known item's cue must say not known")
     if item.state == "unknown" and "serviceable" in cue:
