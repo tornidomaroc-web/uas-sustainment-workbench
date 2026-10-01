@@ -232,8 +232,10 @@ def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:
         "OLD-2 cannot be fitted to SYN-02 at 2026-09-01 09:00 UTC: it has flown 300.5 h, past its "
         f"300 h life limit; {tail}"
     )
-    # A part that crossed its limit while fitted comes off freely, as BAT-04A did in the seeded
-    # fleet: over its cycles on SYN-01 from 2026-08-06, taken off on 2026-08-13.
+    # A part that reached its limit while fitted comes off freely, as BAT-04A did in the seeded
+    # fleet: at its limit on SYN-01 from 2026-08-06, taken off on 2026-08-13. OLD-3 is fitted
+    # one cycle short and flies SYN-01's three seeded flights: 302 (304 on the 0.4.0 seed,
+    # which had five).
     crossed = {**PACK, "kind": "battery pack", "cycles_before": 299}
     add(store, entry("OLD-3", "component.register", crossed, at=T - 40 * D))
     add(store, entry("OLD-3", "component.install", {"aircraft_key": "SYN-01"}, at=T - 31 * D))
@@ -242,7 +244,7 @@ def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:
     assert sentence(
         store, entry("OLD-3", "component.install", {"aircraft_key": "SYN-01"}, at=T + D)
     ) == (
-        "OLD-3 cannot be fitted to SYN-01 at 2026-09-02 09:00 UTC: it has flown 304 cycles, past "
+        "OLD-3 cannot be fitted to SYN-01 at 2026-09-02 09:00 UTC: it has flown 302 cycles, past "
         f"its 300-cycle life limit; {tail}"
     )
     # Reached, not exceeded: nothing left, on each basis.

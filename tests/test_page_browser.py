@@ -93,22 +93,54 @@ def test_findings_are_readable_at_the_top(page: Any) -> None:
     assert top is not None and fleet is not None and top["y"] < fleet["y"]
 
 
-def test_flights_logged_while_grounded_are_listed_above_the_fleet(page: Any) -> None:
-    """On the unchanged demo seed: seven, each a full sentence, labelled synthetic, with the
-    count of logs judged and not judged; none about a real aircraft."""
+def test_the_demo_fleet_shows_no_flight_logged_while_grounded_and_says_what_was_judged(
+    page: Any,
+) -> None:
+    """Since the 0.5.0 seed the demo fleet holds none (the 0.4.0 seed held seven, and this
+    section listed them). The section stays, above the fleet table, and says so with the
+    count of logs judged and not judged, so an empty list is not read as nothing looked at."""
     lines = page.locator("#grounded li")
-    assert lines.count() == 7
-    texts = lines.all_inner_texts()
-    assert all(t.startswith("a flight of aircraft SYN-0") for t in texts)
-    assert all("while the records show the aircraft" in t for t in texts)
-    assert "2026-08-06 11:07:54 UTC" in texts[0] and "unserviceable" in texts[0]
-    assert page.locator("#grounded li.synthetic").count() == 7
+    assert lines.count() == 1
+    assert lines.all_inner_texts() == [
+        "No judged log started while the records show its aircraft unserviceable, in "
+        "maintenance or AOG."
+    ]
+    assert page.locator("#grounded li.finding").count() == 0
     sub = page.inner_text("#grounded-sub")
-    assert "32 of 40 logs judged; 8 not judged" in sub
+    assert "26 of 34 logs judged; 8 not judged" in sub
     assert "no log is refused" in sub
     top = page.locator("#grounded").bounding_box()
     fleet = page.locator("#fleet").bounding_box()
     assert top is not None and fleet is not None and top["y"] < fleet["y"]
+
+
+def test_a_fleet_that_did_fly_while_grounded_has_each_flight_listed(
+    page: Any, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The same page over the demo fleet plus three hand-built aircraft that flew while
+    grounded (tests/test_grounded_flights.py): five full sentences, labelled synthetic."""
+    from test_grounded_flights import flown_grounded
+
+    site = export_static(flown_grounded(), tmp_path_factory.mktemp("site-with-findings"))
+    handler = partial(_QuietHandler, directory=str(site))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(None, server.serve_forever, daemon=True).start()
+    other = page.context.browser.new_page()  # a second tab of the browser the module opened
+    try:
+        other.goto(f"http://127.0.0.1:{server.server_address[1]}/", wait_until="networkidle")
+        other.wait_for_selector("#fleet tbody tr")
+        lines = other.locator("#grounded li")
+        assert lines.count() == 5
+        texts = lines.all_inner_texts()
+        assert all(t.startswith("a flight of aircraft FX-0") for t in texts)
+        assert all("while the records show the aircraft" in t for t in texts)
+        assert "2026-03-10 10:00:00 UTC" in texts[0] and "in maintenance" in texts[0]
+        assert other.locator("#grounded li.finding.synthetic").count() == 5
+        assert "32 of 40 logs judged; 8 not judged" in other.inner_text("#grounded-sub")
+        assert BROKEN.search(other.inner_text("body")) is None
+    finally:
+        other.close()
+        server.shutdown()
 
 
 def test_every_fleet_cell_is_filled_and_status_is_civil(page: Any) -> None:

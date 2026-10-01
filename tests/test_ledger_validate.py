@@ -265,13 +265,14 @@ def test_a_component_is_on_one_airframe_at_a_time(store: Store) -> None:
         ("SYN-02", True),
     ]
     # The pack SYN-01 lent to SYN-04 in the seeded fleet is on SYN-04 now; the pack that came
-    # off SYN-01 into storage is past its cycle limit and goes on no aircraft (0.3.0).
+    # off SYN-01 has reached its cycle limit and goes on no aircraft (0.3.0; at exactly its
+    # limit since the 0.5.0 seed, which no longer flies it past).
     refused(store, draft("BAT-01B", "component.install", {"aircraft_key": "SYN-01"}), 409, "SYN-04")
     refused(
         store,
         draft("BAT-04A", "component.install", {"aircraft_key": "SYN-01"}),
         409,
-        "303 cycles",
+        "300 cycles, the whole of its 300-cycle life limit",
         "not fitted again",
     )
 

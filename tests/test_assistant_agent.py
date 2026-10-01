@@ -105,7 +105,7 @@ def test_grounding_rejects_numbers_ids_and_dates_absent_from_the_records(
         [
             Turn("", (ToolCall("aircraft_due", {"key": "SYN-04"}),)),
             Turn(
-                "SYN-04 has 2 packs. BAT-01B has 270 cycles left of 300; BAT-04B passed its limit "
+                "SYN-04 has 2 packs. BAT-01B has 272 cycles left of 300; BAT-04B passed its limit "
                 "on 2026-08-31. Also BAT-99Z is 42 cycles over and the annual is due 2027-02-28.",
                 (),
             ),
