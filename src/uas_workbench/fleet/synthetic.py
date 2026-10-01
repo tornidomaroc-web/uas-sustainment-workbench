@@ -12,6 +12,13 @@ board state appears once when the life engine computes it. No board state is wri
 anywhere: the engine derives it from these records and the flights. Every record the seed
 writes is one the ledger's write rules accept in order (tests/test_as_of.py holds that), so
 the seed never tells a story the tool would refuse to record.
+
+Nor one the tool would report: a synthetic aircraft does not fly while its own records show
+it unserviceable, in maintenance or AOG. The flights are drawn first, all of them, so the
+random draws are what they always were; then every log that would start while its aircraft
+is grounded is left out (_stop_flying_when_grounded), judged by the same comparison the
+service reports with (life.grounded). Until 0.5.0 the seed kept those logs, and recorded
+aircraft flying on a part past its limit and with a work order open.
 """
 
 from __future__ import annotations
@@ -30,7 +37,19 @@ from uas_workbench.flight.record import (
     is_known,
 )
 from uas_workbench.ledger.model import Entry
-from uas_workbench.life import Component, InspectionDone, Installation, MaintenanceRecord, WorkOrder
+from uas_workbench.ledger.project import project
+from uas_workbench.life import (
+    Board,
+    Component,
+    DueList,
+    InspectionDone,
+    Installation,
+    MaintenanceRecord,
+    WorkOrder,
+    board,
+    due_list,
+)
+from uas_workbench.life.grounded import grounded_flights
 
 from .config import FleetConfig
 from .model import Aircraft, Fleet
@@ -59,12 +78,15 @@ LIFE_CASES: dict[int, str] = {
     6: "no_record",  # nothing entered: status unknown, with that reason
     7: "awaiting_parts",  # AOG
 }
-# The battery story between two airframes. BAT-04A began on the lender two cycles short of
-# its limit, crossed it on the lender's third flight, and came off an hour before the
-# borrower's first flight into storage: a part past a life limit cannot be fitted
-# (ledger.validate), so it is never fitted again. The lender's pack B took its place on the
-# borrower that hour, under its limit, its cycles travelling with it (14 CFR 43.10).
+# The battery story between two airframes. BAT-04A began on the lender three cycles short of
+# its limit, so the lender's third flight is its 300th cycle: a permitted flight, and its
+# last. When that flight's log ends the pack has reached its limit and the lender is
+# unserviceable; it does not fly again until the pack comes off, an hour before the borrower's
+# first flight, tagged unserviceable and segregated: a part that has reached a life limit
+# cannot be fitted (ledger.validate), so it goes on nothing again. The lender's pack B went to
+# the borrower that hour, under its limit, its cycles travelling with it (14 CFR 43.10).
 LENDER, BORROWER = 1, 4
+SHORT_OF_LIMIT = 3  # BAT-04A's cycles left when the lender's first log begins
 KINDS = ("fixed-wing", "VTOL", "fixed-wing", "quadrotor", "fixed-wing", "VTOL")
 UNLOGGED_S = 420.0
 H = 3600.0
@@ -108,8 +130,8 @@ def generate(config: FleetConfig) -> Fleet:
         life_case = LIFE_CASES.get(index, "clean")
         if life_case == "no_record":
             continue
-        record, fitted = _maintenance(parts, config, key, index, life_case, flights)
-        entries.extend(_as_entries(record, fitted, attribution, corrected=index == 1))
+        record, fitted, spent = _maintenance(parts, config, key, index, life_case, flights)
+        entries.extend(_as_entries(record, fitted, attribution, corrected=index == 1, spent=spent))
     # Provisional ids in order of entry; the store maps them to its own ids on seeding. The
     # one correction points at the earlier time-in-service entry of the same aircraft.
     numbered: list[Entry] = []
@@ -120,7 +142,44 @@ def generate(config: FleetConfig) -> Fleet:
             supersedes = next(p.id for p in numbered if p.subject == e.subject and p.kind == e.kind)
             reason = "[synthetic] the previous logbook total was misread by ten hours"
         numbered.append(dataclasses.replace(e, id=n, supersedes=supersedes, reason=reason))
-    return Fleet(tuple(aircraft), flights, tuple(numbered))
+    return Fleet(
+        tuple(aircraft), _stop_flying_when_grounded(config, flights, numbered), tuple(numbered)
+    )
+
+
+def _stop_flying_when_grounded(
+    config: FleetConfig, flights: dict[str, tuple[FlightRecord, ...]], entries: list[Entry]
+) -> dict[str, tuple[FlightRecord, ...]]:
+    """The flights without any log that would start while its aircraft's own records show it
+    grounded. Judged as the service judges (life.grounded): each log on the board at its own
+    start. Leaving a log out changes what the later ones are judged on (a pack's cycles), so
+    this repeats until nothing is left to report; the entries are not touched."""
+    kept = dict(flights)
+    while True:
+        dropped = False
+        for key in kept:
+
+            def state_at(at: datetime, key: str = key) -> tuple[DueList, Board]:
+                then = project(entries, at)
+                due = due_list(
+                    key,
+                    maintenance=then.maintenance.get(key),
+                    components=then.components,
+                    flights_of=lambda k: kept.get(k, ()),
+                    policy=config.life,
+                    as_of=at,
+                    tolerance_s=config.tolerance_s,
+                )
+                return due, board(due)
+
+            found = grounded_flights(key, kept[key], state_at, tolerance_s=config.tolerance_s)
+            if found.findings:
+                # The earliest one only: the logs after it are judged again without it.
+                first = found.findings[0].log_ref
+                kept[key] = tuple(r for r in kept[key] if r.log_ref != first)
+                dropped = True
+        if not dropped:
+            return kept
 
 
 def _flights(
@@ -269,8 +328,8 @@ def _logged_s(records: tuple[FlightRecord, ...]) -> float:
 
 
 def _handover(flights: dict[str, tuple[FlightRecord, ...]]) -> datetime:
-    """When the lender's pack B goes to the borrower and BAT-04A goes into storage: an hour
-    before the borrower's first flight."""
+    """When the lender's pack B goes to the borrower and BAT-04A comes off the lender, tagged
+    unserviceable and segregated: an hour before the borrower's first flight."""
     return _first_start(flights[_key(BORROWER)]) - timedelta(hours=1)
 
 
@@ -312,7 +371,9 @@ def _maintenance(
     index: int,
     case: str,
     flights: dict[str, tuple[FlightRecord, ...]],
-) -> tuple[MaintenanceRecord, list[Component]]:
+) -> tuple[MaintenanceRecord, list[Component], frozenset[str]]:
+    """The record, the parts, and the ids of the parts that come off at a life limit."""
+    spent: frozenset[str] = frozenset()
     records = flights[key]
     first = _first_start(records)
     fitted = first - timedelta(days=1)
@@ -376,16 +437,18 @@ def _maintenance(
         battery = rules.component_kinds["battery pack"]
         lender = _key(LENDER)
         handover = _handover(flights)
-        # Pack A began on the lender two cycles short of its limit, crossed it there (14 CFR
-        # 43.10: the status travels with the part) and came off at the handover into storage.
-        # It is never fitted again: a part past a life limit cannot be (ledger.validate).
+        # Pack A began on the lender three cycles short of its limit and reached it there, at
+        # the end of the lender's third log (14 CFR 43.10: the status travels with the part).
+        # It came off at the handover, tagged unserviceable and segregated, and is never fitted
+        # again: a part that has reached a life limit cannot be (ledger.validate).
         packs[0] = dataclasses.replace(
             packs[0],
-            cycles_before=(battery.cycles or 300) - 2,
+            cycles_before=(battery.cycles or 300) - SHORT_OF_LIMIT,
             installations=(
                 Installation(lender, _first_start(flights[lender]) - timedelta(days=1), handover),
             ),
         )
+        spent = frozenset({packs[0].id})
         # Pack B's calendar life ends while it is fitted: in service since the 15th of the
         # month its limit before this aircraft's first log, so the life runs to the end of
         # the month of that log and the aircraft is grounded from the first of the next.
@@ -421,17 +484,23 @@ def _maintenance(
         work_orders=work,
         synthetic=True,
     )
-    return record, [*packs, prop]
+    return record, [*packs, prop], spent
 
 
 def _as_entries(
-    record: MaintenanceRecord, parts: list[Component], by: str, corrected: bool = False
+    record: MaintenanceRecord,
+    parts: list[Component],
+    by: str,
+    corrected: bool = False,
+    spent: frozenset[str] = frozenset(),
 ) -> list[Entry]:
     """The ledger entries that project back to exactly this record and these components.
 
     Every entry is synthetic, entered by the generator, and its statement starts with
     "[synthetic]". Removals sort before installs at the same instant, so a part that moved
-    between airframes is recorded as taken off one and fitted to the other. With
+    between airframes is recorded as taken off one and fitted to the other. A part in `spent`
+    came off at a life limit: its removal says it was tagged unserviceable and segregated,
+    which is what is done with a life-expired part, never that it was placed in storage. With
     `corrected`, the time in service is entered wrong first and then superseded by the
     right value, so the demo shows what a correction looks like; the projection is the same.
     """
@@ -551,8 +620,15 @@ def _as_entries(
                 )
             )
             if inst.to_utc is not None:
-                # A removal that no later installation follows is a removal into storage.
-                where = " and placed in storage" if n == len(c.installations) - 1 else ""
+                # A removal that no later installation follows: a part at a life limit is
+                # tagged and kept apart from serviceable stock; any other goes into storage.
+                where = ""
+                if n == len(c.installations) - 1:
+                    where = (
+                        ", tagged unserviceable and segregated"
+                        if c.id in spent
+                        else " and placed in storage"
+                    )
                 out.append(
                     (
                         inst.to_utc,
