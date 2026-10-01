@@ -41,6 +41,7 @@ from uas_workbench.flight.record import FlightRecord
 from uas_workbench.ledger import NOTE, Entry, LedgerError, append, entry_to_json
 from uas_workbench.life import Board, Component, DueList, board, due_list
 from uas_workbench.life.cue import item_cue, reason_cues, status_cue
+from uas_workbench.life.engine import counted
 
 from .observability import (
     AIRCRAFT_BY_STATUS,
@@ -262,11 +263,10 @@ def flight_view(record: FlightRecord) -> FlightOut:
 def flights_until(
     records: Sequence[FlightRecord], as_of: datetime | None
 ) -> Sequence[FlightRecord]:
-    """The flight records that had started by `as_of`; one with no UTC start counts whenever,
-    as the life engine counts it."""
-    if as_of is None:
-        return records
-    return [r for r in records if not is_known(r.utc_start) or r.utc_start <= as_of]
+    """The flight records whose logs had ended by `as_of`; one with no UTC start counts
+    whenever. The life engine's own rule (life.engine.counted): a log is a file that exists
+    once it is closed, and its flight counts from then."""
+    return [r for r in records if counted(r, as_of)]
 
 
 def reconcile_view(
@@ -321,7 +321,7 @@ def due_view(
     """The due list and board state of one aircraft at `as_of` (default: now).
 
     The records are folded from the entries that had occurred by `as_of`, and only the
-    flights that had started by then count; see uas_workbench.ledger.project.
+    flights whose logs had ended by then count; see uas_workbench.ledger.project.
     """
     at = as_of or datetime.now(UTC)
     due = due_list(

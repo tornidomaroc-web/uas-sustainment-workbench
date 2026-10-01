@@ -68,9 +68,16 @@ def test_time_in_service_before_the_first_log_is_not_known() -> None:
     assert due.time_in_service_s == Unknown(NOT_KNOWN)
     assert time_in_service("A", 50.0 * H, flights_a()["A"], until=before) == Unknown(NOT_KNOWN)
 
+    # At the first log's start the total entered is reached and known; the log's own flight
+    # counts once the log has ended, 1900 s later (0.5.0: a flight counts once it is over).
     at_first = compute("A", rec, flights=flights_a(), as_of=FIRST_LOG)
-    assert at_first.time_in_service_s == 50.0 * H + 1800.0
-    assert time_in_service("A", 50.0 * H, flights_a()["A"], until=FIRST_LOG) == 50.0 * H + 1800.0
+    assert at_first.time_in_service_s == 50.0 * H
+    assert time_in_service("A", 50.0 * H, flights_a()["A"], until=FIRST_LOG) == 50.0 * H
+    ended = FIRST_LOG + timedelta(seconds=1900)
+    assert compute("A", rec, flights=flights_a(), as_of=ended).time_in_service_s == (
+        50.0 * H + 1800.0
+    )
+    assert time_in_service("A", 50.0 * H, flights_a()["A"], until=ended) == 50.0 * H + 1800.0
     assert time_in_service("A", 50.0 * H, flights_a()["A"]) == 50.0 * H + 1800.0  # now
 
     zero = compute("A", record("A", inspections=()), flights=flights_a(), as_of=before)

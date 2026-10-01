@@ -173,7 +173,7 @@ def build_pack(
         raise KeyError(aircraft_key)
     now = generated_utc or datetime.now(UTC).replace(microsecond=0)
     # Everything the pack reads is fixed at as_of: the entries that had occurred by then
-    # (liveness decided over the whole ledger), and the flights that had started by then.
+    # (liveness decided over the whole ledger), and the flights whose logs had ended by then.
     entries = [e for e in entries_about(store, aircraft_key) if e.occurred_utc <= as_of]
     log = _log(store, entries)
     records = flights_until(store.flights(aircraft_key), as_of)

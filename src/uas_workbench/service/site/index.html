@@ -194,7 +194,7 @@
 
   const stateWord = (s) => String(s).replace(/_/g, ' ');
   const stateClass = (s) => String(s).replace(/_/g, '-');
-  $('#due-sub').textContent = `Every limit that is past, within its tolerance, or has less than ${Math.round((data.due_soon_fraction ?? 0.1) * 100)} % of its interval left, worst first. Each interval and limit cites its public civil source in the aircraft detail.`;
+  $('#due-sub').textContent = `Every limit that is reached or past, within its tolerance, or has less than ${Math.round((data.due_soon_fraction ?? 0.1) * 100)} % of its interval left, worst first. Each interval and limit cites its public civil source in the aircraft detail.`;
   const dueList = $('#due ul');
   if (dueItems.length) {
     for (const i of dueItems) {
@@ -259,7 +259,7 @@
     }
     sh += '</p>';
     if (d.status_reasons.length) sh += '<ul>' + d.status_reasons.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>';
-    else if (!isUnknown(d.status)) sh += '<p class="sub">Nothing past its limit, no open work.</p>';
+    else if (!isUnknown(d.status)) sh += '<p class="sub">Nothing at or past its limit, no open work.</p>';
     $('#detail-status').innerHTML = sh;
     const db = $('#due-list tbody');
     db.innerHTML = '';

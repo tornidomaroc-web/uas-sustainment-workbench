@@ -6,11 +6,12 @@ cycles, and the one calendar item passed its date on 2026-08-31, so the demo doe
 its story as the clock runs.
 
 The story the seed tells about its batteries, pinned here to the minute: BAT-04A began on
-SYN-01 two cycles short of its limit, crossed it on SYN-01's third flight on 2026-08-06, came
-off on 2026-08-13 into storage and is never fitted again, since a part past a life limit
-cannot be fitted (ledger.validate). SYN-01 lends BAT-01B to SYN-04 that morning; its cycles
-from SYN-01 count on SYN-04 (14 CFR 43.10) and stay under the limit. SYN-04 is grounded by
-BAT-04B alone, whose 24-calendar-month life ends on 2026-08-31 while it is fitted.
+SYN-01 two cycles short of its limit, reached it when SYN-01's second log ended on 2026-08-06
+(a cycle counts once its log has ended, and a limit reached grounds), came
+off on 2026-08-13 into storage and is never fitted again, since a part that has reached a
+life limit cannot be fitted (ledger.validate). SYN-01 lends BAT-01B to SYN-04 that morning;
+its cycles from SYN-01 count on SYN-04 (14 CFR 43.10) and stay under the limit. SYN-04 is
+grounded by BAT-04B alone, whose 24-calendar-month life ends on 2026-08-31 while it is fitted.
 """
 
 from __future__ import annotations
@@ -122,13 +123,30 @@ def test_the_lent_battery_keeps_its_cycles_from_the_first_airframe_and_stays_und
     assert lent.id not in {i.component_id for i in on_lender.items}
 
 
-def test_syn_01_crosses_the_cycle_limit_on_2026_08_06_between_11_07_and_11_08_utc() -> None:
+def test_syn_01_is_grounded_when_bat_04a_reaches_its_limit_at_the_end_of_its_second_log() -> None:
+    """Until 0.5.0 this test read "crosses the cycle limit on 2026-08-06 between 11:07 and
+    11:08": the engine counted a cycle at take-off and called 300 of 300 due soon, so the board
+    turned as the third flight began. The seed is unchanged; the engine now counts a cycle when
+    its log ends and grounds at the limit, so the same records read: BAT-04A, two cycles short
+    at the start, reaches 300 when the second log ends at 09:07:54, and the flights that follow
+    are flights of an unserviceable aircraft. The seed's story is corrected next (CHANGELOG)."""
     s = seeded()
-    before = state(s, "SYN-01", datetime(2026, 8, 6, 11, 7, tzinfo=UTC))
+    before = state(s, "SYN-01", datetime(2026, 8, 6, 9, 7, tzinfo=UTC))
     assert before.status == "serviceable" and before.reasons == ()
-    after = state(s, "SYN-01", datetime(2026, 8, 6, 11, 8, tzinfo=UTC))
-    assert after.status == "unserviceable"
-    assert after.reasons == (
+    reached = (
+        "unserviceable",
+        ("battery pack BAT-04A on aircraft SYN-01 has reached its 300-cycle life limit",),
+    )
+    after = state(s, "SYN-01", datetime(2026, 8, 6, 9, 8, tzinfo=UTC))
+    assert (after.status, after.reasons) == reached
+    # The third flight starts at 11:07:54 with the limit reached; its own cycle counts when
+    # its log ends at 11:39:19, and only then is the pack one cycle past.
+    for minute in (7, 8, 39):
+        during = state(s, "SYN-01", datetime(2026, 8, 6, 11, minute, tzinfo=UTC))
+        assert (during.status, during.reasons) == reached, minute
+    landed = state(s, "SYN-01", datetime(2026, 8, 6, 11, 40, tzinfo=UTC))
+    assert landed.status == "unserviceable"
+    assert landed.reasons == (
         "battery pack BAT-04A on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
     )
     # It stays grounded by that pack until the pack comes off on 2026-08-13 at 08:00 UTC.
