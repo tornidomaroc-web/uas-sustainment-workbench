@@ -3,7 +3,7 @@
  "question": "Was anything superseded in the ledger of SYN-01? Say what superseded what, and why.",
  "answer": "Entry #5 superseded entry #4 because the previous logbook total was misread by ten hours. Entry #5 corrected the time in service for SYN-01. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-28T23:48:26+00:00",
+ "recorded_utc": "2026-10-01T21:07:21+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -201,7 +201,7 @@
      "occurred_utc": "2026-08-13T08:00:00Z",
      "recorded_utc": "2026-08-13T08:00:00Z",
      "entered_by": "synthetic fleet generator, seed 20260925",
-     "statement": "[synthetic] battery pack BAT-04A removed from SYN-01 and placed in storage",
+     "statement": "[synthetic] battery pack BAT-04A removed from SYN-01, tagged unserviceable and segregated",
      "details": {
       "aircraft_key": "SYN-01"
      },
