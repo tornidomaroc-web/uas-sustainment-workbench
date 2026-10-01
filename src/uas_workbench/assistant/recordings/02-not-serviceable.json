@@ -1,9 +1,9 @@
 {
  "slug": "which-aircraft-are-not-serviceable-and-what-stops-each-one",
  "question": "Which aircraft are not serviceable, and what stops each one?",
- "answer": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have no maintenance record entered. \n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+ "answer": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have unknown maintenance status. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
  "as_of": "2026-10-01T00:00:00+00:00",
- "recorded_utc": "2026-09-28T23:48:21+00:00",
+ "recorded_utc": "2026-10-01T21:07:12+00:00",
  "model_tag": "qwen3:8b",
  "model_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
  "synthetic": true,
@@ -19,7 +19,7 @@
    ]
   },
   {
-   "content": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have no maintenance record entered. \n\nEntries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
+   "content": "The aircraft that are not serviceable are:\n\n1. **SYN-04**: Unserviceable because the battery pack BAT-04B passed its 24-calendar-month life limit on 2026-08-31.\n2. **SYN-05**: In maintenance since 2026-08-07 due to a low-battery message in flight 2, requiring inspection of the battery connector and pack before the next flight.\n3. **SYN-07**: On the ground awaiting parts since 2026-08-14 due to a ground strike, with a replacement propeller set on order.\n\nOther aircraft are either serviceable or have unknown maintenance status. Entries record what the entering person stated; the workbench does not certify airworthiness or return to service.",
    "tool_calls": []
   }
  ],
@@ -77,8 +77,8 @@
      "status_reasons": [],
      "overdue": 0,
      "due_soon": 0,
-     "flights": 5,
-     "flight_time_known_s": 7516.9,
+     "flights": 3,
+     "flight_time_known_s": 5534.2,
      "findings": 0
     },
     {
@@ -143,8 +143,8 @@
      ],
      "overdue": 0,
      "due_soon": 0,
-     "flights": 6,
-     "flight_time_known_s": 7139.8,
+     "flights": 2,
+     "flight_time_known_s": 2194.6,
      "findings": 0
     },
     {
