@@ -116,18 +116,25 @@ aircraft; its maintenance records are generated with it, fixed so that every civ
 state appears once, and its board states are computed from those records, never stored. It
 exists so `reconcile()` has consecutive logs to compare and the life engine has records to
 work from, and every record it writes is one the ledger's own write rules accept, in order.
-Its batteries tell one story: a pack that reaches its cycle limit on SYN-01 in August 2026
-comes off into storage and cannot be fitted again, a pack lent by SYN-01 to SYN-04 carries
-its cycles with it, and SYN-04 is grounded from September 2026 by a pack whose calendar life
-ended while it was fitted. The two real aircraft have no maintenance record, so their state
-is unknown, with that reason. A known fault in the seed, unchanged since 0.4.0 and being
-corrected before the next release: seven of its logged flights start while the records show
-the aircraft unserviceable or in maintenance, three on SYN-01 after that pack reached its
-limit and four on SYN-05 with a work order open. Logs are evidence and are never refused, so
-the tool counts those flights, and it now reports each of the seven on the demo page, in the
-routes above and in the evidence packs of those two aircraft. No operator should read the
-seed as practice to follow; the next change gives the demo a fleet whose aircraft stop
-flying when they are grounded (CHANGELOG.md, 0.5.0).
+A synthetic aircraft does not fly while its own records show it grounded: the generator
+draws every flight, then leaves out any log that would start while its aircraft is
+unserviceable, in maintenance or AOG, judged by the same comparison the service reports with.
+Its batteries tell one story: a pack flies its 300th and last permitted cycle on SYN-01 on
+2026-08-06, grounds that aircraft from the end of that flight's log, and comes off a week
+later tagged unserviceable and segregated, never to be fitted again; a pack lent by SYN-01 to
+SYN-04 carries its cycles with it; and SYN-04 is grounded from September 2026 by a pack whose
+calendar life ended while it was fitted. SYN-05 does not fly after the work order on it
+opens. The two real aircraft have no maintenance record, so their state is unknown, with
+that reason.
+
+This was not always so, and the released 0.4.0 shows it. Its seed kept every flight it drew,
+so it recorded one take-off on a pack already at its limit, which that version's board
+called serviceable, and six flights by aircraft its own board showed as unserviceable or in
+maintenance: two on SYN-01 past that limit, four on SYN-05 with a work order open that said
+to inspect before the next flight. The pack then went "into storage" at 303 cycles. 0.5.0
+corrected the rules first, then reported those flights, then changed the generation; the
+finding stays in the tool and reports any such flight in an operator's own records
+(CHANGELOG.md, 0.5.0).
 
 **An assistant that phrases, and never computes.** `uasw ask "what is due on SYN-04 before
 2026-10-03, and why?"` sends the question to a small open model served locally by Ollama and
@@ -138,8 +145,8 @@ answer unverified that states a number, a component or aircraft id, or a date th
 those records contain. The model is told that hours and cycles advance only with flight,
 which cannot be predicted, and that the workbench does not certify airworthiness. Five runs,
 recorded with `--record`, ship with the package; two of them were recorded again in 0.3.0,
-with the same model weights, after the synthetic fleet changed (CHANGELOG.md says which and
-why). The live demo shows them under
+and one of those again in 0.5.0, with the same model weights, each time after the synthetic
+fleet changed (CHANGELOG.md says which and why). The live demo shows them under
 "recorded runs, not live" with the model tag, the digest of its weights, the recording date,
 the fixed computation date, and every record the answer rests on. A test replays each
 recording against the current code on every CI run, so a change to the engine fails CI
@@ -187,7 +194,8 @@ that entries record what the entering person stated and that the workbench does 
 airworthiness or return to service. Four more recorded runs show it: who recorded a work
 order, what superseded what and why, which components were fitted to an aircraft, and a
 question the ledger cannot answer, a certificate number, answered as not recorded; the first
-three of these were recorded again in 0.3.0 for the same reason. The seeded
+three of these were recorded again in 0.3.0 for the same reason, and the second of them
+again in 0.5.0. The seeded
 fleet carries one synthetic correction so the page shows what superseding looks like.
 
 **A draft evidence pack for OSO #03.** `uasw evidence SYN-04 --out pack.html`, or
