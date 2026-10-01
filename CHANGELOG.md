@@ -1,5 +1,134 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+One rule, stated once and applied everywhere: **a limit counted in completed units is reached
+when its last unit completes.** A cycle completes when its flight is over, an hour when it
+has been flown, a calendar day at midnight. Three changes follow from it. The version string
+stays 0.4.0 until the release; the synthetic seed is not changed in this section.
+
+### Changed: a life limit reached grounds the aircraft
+
+Until now a fitted part with nothing left of its cycles or hours read "due soon" and the
+board read serviceable: "has 0 cycles left of its 300-cycle life limit". The ledger has
+refused to fit a part in exactly that condition since 0.3.0 (14 CFR 43.10(c), "after it has
+reached its life limit"), so the two rules disagreed at the limit: a part the ledger would
+not put on an aircraft could take off on one. Now a part whose cycles or hours have reached
+its limit, exactly or past it, is `overdue` and the aircraft is unserviceable. Before an
+aircraft's first log, a limit reached grounds it as a limit past already did.
+
+New sentences, one per basis, for remaining exactly 0:
+
+- "battery pack BAT-04A on aircraft SYN-01 has reached its 300-cycle life limit"
+- "propeller set PROP-01 on aircraft SYN-01 has reached its 300 h life limit"
+
+Sentences that can no longer be produced: "... has 0 cycles left of its 300-cycle life
+limit" and "... has 0.0 h left of its 300 h life limit". Every other sentence of the engine
+is word for word what it was, including the calendar ones.
+
+The calendar rule was checked against the same reasoning and stays: a calendar life of N
+calendar months runs through the last day of its month (14 CFR 91.409(a) counts calendar
+months to their last day), so on that day part of the last unit is left and the part is
+within its life; it is past from the next day. "0 days left, due by <date>" is therefore
+still a valid part, where "0 cycles left" was not.
+
+Not changed: an inspection at exactly zero hours remaining still reads "due in 0.0 h". The
+100-hour inspection has a tolerance for the flight that overruns it (91.409(b)); a life
+limit has none. LIMITS.md says so.
+
+### Changed: a flight's cycle and hours count once the flight is over
+
+Until now a log counted from its UTC start, so a cycle was counted as the aircraft took
+off, and with the change above the board would have grounded an aircraft at the start of
+its last permitted flight. A record holds no landing time (flight time is a total airborne
+within the log, and the UTC start is the log's start), so a log now counts from its end,
+start plus span: the last instant its flight can have ended. `life.engine.log_end` and
+`life.engine.counted` are that rule, and everything that asks "by this date" uses it: the due
+list, time in service, a component's usage when the ledger judges an install or derives an
+inspection's hours, and the logs a dated board row, reconciliation or evidence pack lists
+(`flights_until`). At a date inside a log, that log is not listed and not counted; before
+0.5.0 it was both.
+
+A flight with no recorded end: a log with a UTC start always has an end, even when its
+flight time is not known (one cycle, no hours, from that end); a log with no UTC start counts
+for the airframe at any date and for no component, as before; flight no log covers counts
+from the end of the log it followed, the earliest it can have been flown, so a limit is never
+reported later than it was reached (LIMITS.md).
+
+### Changed: a part may be fitted on the last day of its calendar life
+
+0.3.0 refused an install on the last day of a part's calendar life with "its
+24-calendar-month life limit ends that same day, <date>", while the board called a fitted
+part valid on that same day. By the rule above the life is reached when that day ends, so
+the refusal is withdrawn and that sentence no longer exists. From the next day the install
+is refused as before, with the unchanged sentence "its 24-calendar-month life limit ended on
+<date>". This is the only 409 whose rule or words changed; no 422 changed. The board and
+the fit refusal now agree at the limit on hours, cycles and calendar, and
+`tests/test_reached_limit_and_landed_usage.py` holds that through the ledger on each basis.
+
+### Added: the cue of a reached limit
+
+"BAT-04A reached 300-cycle limit", "PROP-01 reached 300 h limit"; with an id too long for
+that form, "<id> reached 300 cycles" and "<id> reached 300 h". The checker refuses "reached"
+on a cue whose sentence does not say "has reached", and any other word on a cue whose
+sentence does: a part one cycle past is not merely at its limit, and one at its limit is
+neither "left" nor "past". The demo page's two captions say "reached or past" and "at or
+past" where they said "past".
+
+### Measured on the unchanged seed, 0.4.0 against this change
+
+Same seed, same records, 1018 answers compared: the four dated routes with and without cues
+for all nine aircraft at the 24 scene plan times and at now, plus flights and reconciliation.
+
+- **58 answers differ, at 8 of the 24 plan times; none at 2026-10-01 and none at now.** Six
+  of the eight are the first second of an aircraft's first log (SYN-01, 02, 03, 04, 05, 07)
+  and one, 2026-08-06 11:08, is inside SYN-01's third log: that log is no longer listed or
+  counted, so the row's `flights` and `flight_time_known_s` are lower and each hours and
+  cycles item reads one flight less. The eighth is 11:07 that day, below.
+- **One board state differs at a plan time:** SYN-01 at 2026-08-06 11:07 reads unserviceable
+  ("has reached its 300-cycle life limit") where it read serviceable. At 11:08 it is
+  unserviceable in both, with the reached sentence where it had "1 cycle past". SYN-03 at
+  2026-08-11 09:00 keeps its state and reads 1.1 h overdue where it read 1.7 h.
+- **Over the whole period**, SYN-01 turns unserviceable at 2026-08-06 09:07:54, when its
+  second log ends with BAT-04A at 300 of 300, not at 11:07:54 when its third log starts; each
+  later count moves from a log's start to its end. No other aircraft's state changes at any
+  instant; SYN-03's overflown hours step at log ends.
+- **The nine recorded assistant runs replay identically**, records and text, and stay
+  grounded: none was recorded again and no model was run.
+- **No ledger hash changes** in any of 225 evidence packs (nine aircraft, 25 dates); the
+  published SYN-04 sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`. Eight packs differ in
+  their computed sections, all at the dates above.
+
+### Known and not yet corrected: the seed records flights by grounded aircraft
+
+The seed is byte for byte the 0.4.0 seed, and the rule above makes plain what it records.
+Seven logged flights start while the records show the aircraft unserviceable or in
+maintenance: SYN-01 at 2026-08-06 11:07:54 (BAT-04A at its limit; 0.4.0 called this one
+serviceable), at 12:09:19 and on 2026-08-08 at 12:24:12 (one and two cycles past); SYN-05
+on 2026-08-07, 2026-08-08 and twice on 2026-08-10 with a work order open that says to
+inspect before the next flight. 0.4.0 was released with six of these visible and one hidden
+by its own boundary. A log is evidence and is never refused, so the flights stay counted;
+the tool does not yet report such a flight as a finding. Both are the next two changes
+before 0.5.0 is released: the finding, shown on a test fixture, and a seed whose aircraft
+stop flying when they are grounded. Until then `fleet/synthetic.py` still describes BAT-04A
+as crossing its limit on SYN-01's third flight, which by this rule it reaches at the end of
+the second.
+
+Tests: 274 (254 + 20 new in `tests/test_reached_limit_and_landed_usage.py`, 16 of which fail
+on 0.4.0). Seven existing tests in five files changed because their rule changed, each saying
+so where it changed: the cue mutation test accepts a reached cue as its overdue example; the
+0.3.0 refusal sentences are five, not six; the SYN-01 story test follows the unchanged seed
+under the new rule; two install tests expect a fitted part at its limit to ground the
+aircraft, and a third expects an install on the last calendar day to be accepted; time in
+service at a first log's start is the total entered, the log's own flight counting from its
+end.
+
+Changed: `life/engine.py`, `life/cue.py`, `ledger/validate.py` (the calendar boundary of the
+fit refusal), `service/app.py` (`flights_until`), two captions in the demo page. Not
+changed: the seed, the ledger's file format, the response shapes, the nine recorded runs,
+the evidence sample's hash, the version string.
+
 ## 0.4.0
 
 ### Added: a short cue beside every sentence, on request
