@@ -8,8 +8,9 @@ subject is judged again with the new one in place, and the write is refused if o
 would no longer hold: the ledger never holds an entry its own records cannot accept. A
 correction keeps the date of the entry it corrects and takes its place; to move a date,
 the entry is retracted and a new one written. A component that has reached any of its life
-limits on the day it is fitted, exactly or past it, goes on no aircraft: a life-limited
+limits when it is fitted, exactly or past it, goes on no aircraft: a life-limited
 part at its limit is replaced, and the usage it has reached travels with it (14 CFR 43.10).
+A calendar life is reached when its last day ends; on that day the part may still be fitted.
 Shape errors are 422, unknown
 subjects 404, the public showcase aircraft 403, and transitions the records cannot accept
 409.
@@ -259,9 +260,11 @@ def _limits_past(
 ) -> list[str]:
     """Each life limit of `c` that is reached at `at`, past or exactly, in the words of the
     refusal; empty when none is. A limit is reached when nothing of it remains: 300 of 300
-    cycles, 300.0 of 300 h, the last day of the calendar life. This is not the board's
-    boundary, which asks whether a fitted part may keep flying (remaining 0 is due soon); a
-    part with nothing left has no flight in it to give a new airframe (14 CFR 43.10(c))."""
+    cycles, 300.0 of 300 h, the end of the last day of the calendar life. On that last day
+    something remains, so the part is within its life and may be fitted. This is the board's
+    boundary too (life.engine): what grounds an aircraft when fitted is what cannot be fitted,
+    and a part with nothing left has no flight in it to give (14 CFR 43.10(c)). The usage is
+    counted as the board counts it, a log from its end."""
     usage = component_usage(c, store.flights, tolerance_s, until=at)
     past: list[str] = []
     for basis, limit in rule.limits():
@@ -287,8 +290,6 @@ def _limits_past(
             due = end_of_month_after(c.in_service_since, int(limit))
             if at.date() > due:
                 past.append(f"its {limit:.0f}-calendar-month life limit ended on {due}")
-            elif at.date() == due:
-                past.append(f"its {limit:.0f}-calendar-month life limit ends that same day, {due}")
     return past
 
 
@@ -359,8 +360,8 @@ def _transitions(
             if on:
                 since = _stamp(on[0].from_utc)
                 raise LedgerError(409, f"{c.id} is installed on {on[0].aircraft_key} since {since}")
-            # A part that has reached a life limit on the day it is fitted goes on no aircraft
-            # (14 CFR 43.10(c)); the usage is what the records held by that day, on every
+            # A part that has reached a life limit when it is fitted goes on no aircraft
+            # (14 CFR 43.10(c)); the usage is what the records held by then, on every
             # airframe it had been fitted to.
             rule = policy.component_kinds.get(c.kind)
             past = _limits_past(store, c, rule, at, tolerance_s) if rule else []
