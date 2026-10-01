@@ -42,6 +42,8 @@ from uas_workbench.ledger import NOTE, Entry, LedgerError, append, entry_to_json
 from uas_workbench.life import Board, Component, DueList, board, due_list
 from uas_workbench.life.cue import item_cue, reason_cues, status_cue
 from uas_workbench.life.engine import counted
+from uas_workbench.life.grounded import KIND as GROUNDED_KIND
+from uas_workbench.life.grounded import GroundedFlight, GroundedFlights, grounded_flights
 
 from .observability import (
     AIRCRAFT_BY_STATUS,
@@ -175,6 +177,50 @@ class DueCueOut(DueOut):
     status_cue: str
     status_cues: list[str]
     items: list[DueItemCueOut]  # type: ignore[assignment]
+
+
+class GroundedFlightOut(BaseModel):
+    """A logged flight that started while the records show the aircraft grounded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    aircraft_key: str
+    kind: str  # "flight_while_grounded"
+    log_ref: str
+    utc_start: datetime
+    status: str  # the board state at the log's start: unserviceable, in maintenance or AOG
+    status_reasons: list[str]  # what grounded the aircraft at that instant, worst first
+    message: str
+    synthetic: bool
+
+
+class GroundedFlightCueOut(GroundedFlightOut):
+    cue: str
+    cause_cues: list[str]  # one per status reason, in the same order
+
+
+class NotJudgedOut(BaseModel):
+    log_ref: str
+    utc_start: datetime | UnknownOut
+    why: str
+
+
+class GroundedFlightsOut(BaseModel):
+    aircraft_key: str
+    synthetic: bool
+    as_of: datetime
+    logs: int  # the logs that had ended by as_of
+    judged: int  # those whose flight started in a known state
+    findings: list[GroundedFlightCueOut | GroundedFlightOut]
+    not_judged: list[NotJudgedOut]
+
+
+class FleetGroundedOut(BaseModel):
+    as_of: datetime
+    logs: int
+    judged: int
+    not_judged: int
+    findings: list[GroundedFlightCueOut | GroundedFlightOut]  # in the order the logs started
 
 
 class EntryIn(BaseModel):
@@ -491,6 +537,89 @@ def fleet_due_cued(
     return sorted(items, key=lambda i: _rank(i.state, i.remaining, i.limit))
 
 
+def showcase_keys() -> set[str]:
+    """The public showcase aircraft: real flights, no maintenance record held or accepted."""
+    from uas_workbench.fleet.showcase import ALFA_KEY, PX4_KEY  # avoids an import cycle
+
+    return {ALFA_KEY, PX4_KEY}
+
+
+def grounded_view(
+    store: Store,
+    aircraft: Aircraft,
+    config: FleetConfig,
+    as_of: datetime | None = None,
+    cues: bool = False,
+) -> tuple[GroundedFlights, GroundedFlightsOut]:
+    """The logged flights of one aircraft that started while the records show it grounded,
+    among the logs that had ended by `as_of` (default: now), and the logs not judged with
+    why. Each log is judged on the board at its own start, as the ledger stands today."""
+    at = as_of or datetime.now(UTC)
+    excluded = (
+        f"aircraft {aircraft.key} is a public showcase aircraft: no maintenance record is held "
+        "or accepted for it, so its flights are not judged"
+        if aircraft.key in showcase_keys()
+        else None
+    )
+    result = grounded_flights(
+        aircraft.key,
+        store.flights(aircraft.key),
+        lambda t: due_view(store, aircraft, config, t)[:2],
+        until=at,
+        tolerance_s=config.tolerance_s,
+        excluded=excluded,
+    )
+    out = GroundedFlightsOut(
+        aircraft_key=aircraft.key,
+        synthetic=aircraft.synthetic,
+        as_of=at,
+        logs=result.logs,
+        judged=result.judged,
+        findings=[_grounded_out(f, aircraft.synthetic, cues) for f in result.findings],
+        not_judged=[
+            NotJudgedOut(log_ref=n.log_ref, utc_start=_maybe(n.utc_start), why=n.why)
+            for n in result.not_judged
+        ],
+    )
+    return result, out
+
+
+def _grounded_out(
+    f: GroundedFlight, synthetic: bool, cues: bool
+) -> GroundedFlightCueOut | GroundedFlightOut:
+    plain = GroundedFlightOut(
+        aircraft_key=f.aircraft_key,
+        kind=GROUNDED_KIND,
+        log_ref=f.log_ref,
+        utc_start=f.utc_start,
+        status=f.status,
+        status_reasons=list(f.reasons),
+        message=f.message,
+        synthetic=synthetic,
+    )
+    if not cues:
+        return plain
+    return GroundedFlightCueOut(**plain.model_dump(), cue=f.cue, cause_cues=list(f.cause_cues))
+
+
+def fleet_grounded(
+    store: Store, config: FleetConfig, as_of: datetime | None = None, cues: bool = False
+) -> FleetGroundedOut:
+    """Every such flight across the fleet, in the order the logs started."""
+    at = as_of or datetime.now(UTC)
+    views = [grounded_view(store, a, config, at, cues)[1] for a in store.aircraft()]
+    findings = sorted(
+        (f for v in views for f in v.findings), key=lambda f: (f.utc_start, f.aircraft_key)
+    )
+    return FleetGroundedOut(
+        as_of=at,
+        logs=sum(v.logs for v in views),
+        judged=sum(v.judged for v in views),
+        not_judged=sum(len(v.not_judged) for v in views),
+        findings=findings,
+    )
+
+
 def refresh_gauges(store: Store, config: FleetConfig) -> None:
     FLIGHTS_STORED.set(store.flight_count())
     kinds: Counter[str] = Counter()
@@ -657,6 +786,21 @@ def create_app(
         return (
             fleet_due_cued(store, cfg, _utc(as_of)) if cues else fleet_due(store, cfg, _utc(as_of))
         )
+
+    @app.get("/aircraft/{key}/grounded-flights", tags=["life"], response_model=GroundedFlightsOut)
+    def aircraft_grounded_flights(
+        key: str, as_of: AsOf = None, cues: Cues = False
+    ) -> GroundedFlightsOut:
+        """Logged flights that started while the records show the aircraft unserviceable, in
+        maintenance or AOG, each judged on the board at its own log's start; and the logs not
+        judged, with why. A report of what the records show: no log is refused, and a state
+        that is not known is never a finding."""
+        return grounded_view(store, _aircraft_or_404(key), cfg, _utc(as_of), cues)[1]
+
+    @app.get("/fleet/grounded-flights", tags=["life"], response_model=FleetGroundedOut)
+    def fleet_grounded_flights(as_of: AsOf = None, cues: Cues = False) -> FleetGroundedOut:
+        """Every such flight across the fleet, in the order the logs started."""
+        return fleet_grounded(store, cfg, _utc(as_of), cues)
 
     def _pack(key: str, as_of: datetime | None) -> dict[str, Any]:
         from uas_workbench.evidence import build_pack  # the pack builds on this module's views

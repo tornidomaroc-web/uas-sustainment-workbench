@@ -209,6 +209,31 @@ def render_html(pack: dict[str, Any]) -> str:
         out.append("<p>Findings from reconciling the logs against the autopilot's counter:</p><ul>")
         out.extend(f"<li>{_e(f['message'])}</li>" for f in u["findings"])
         out.append("</ul>")
+    g = u["grounded_flights"]
+    out.append(
+        "<p><strong>Flights logged while the records show the aircraft grounded.</strong> Each "
+        "log's start is compared with the board state the records give at that instant. A "
+        "line here says that the records and a log disagree, not which is right, and no log "
+        "is refused.</p>"
+    )
+    if g["findings"]:
+        out.append(
+            "<ul>" + "".join(f"<li>{_e(f['message'])}</li>" for f in g["findings"]) + "</ul>"
+        )
+    elif g["judged"]:
+        out.append(
+            f"<p>Of the {_e(g['judged'])} log{'' if g['judged'] == 1 else 's'} judged, not one "
+            "started while the records show the aircraft unserviceable, in maintenance or "
+            "AOG.</p>"
+        )
+    else:
+        out.append("<p>No log of this aircraft could be judged; the reasons follow.</p>")
+    if g["not_judged"]:
+        out.append(
+            '<p class="muted">Not judged: '
+            + "; ".join(_e(n["why"]) for n in g["not_judged"])
+            + "</p>"
+        )
     if u["unchecked"]:
         out.append(
             '<p class="muted">Not checked: '

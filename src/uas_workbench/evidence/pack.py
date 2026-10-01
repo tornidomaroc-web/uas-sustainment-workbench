@@ -25,6 +25,7 @@ from uas_workbench.service.app import (
     entry_view,
     flight_view,
     flights_until,
+    grounded_view,
     reconcile_view,
 )
 from uas_workbench.service.store import Store
@@ -178,6 +179,7 @@ def build_pack(
     log = _log(store, entries)
     records = flights_until(store.flights(aircraft_key), as_of)
     result, recon = reconcile_view(store, aircraft, config, as_of)
+    grounded = grounded_view(store, aircraft, config, as_of)[1].model_dump(mode="json")
     due, _board, due_out = due_view(store, aircraft, config, as_of)
     maintenance = store.maintenance(aircraft_key, as_of)
     has_record = maintenance is not None or bool(due.usage)
@@ -259,6 +261,11 @@ def build_pack(
             "unlogged_s": unlogged_s,
             "flights": [flight_view(r).model_dump(mode="json") for r in records],
             "findings": [f.model_dump(mode="json") for f in recon.findings],
+            # Flights whose log started while the records show the aircraft grounded, and the
+            # logs that could not be judged with why: sentences, never cues.
+            "grounded_flights": {
+                k: grounded[k] for k in ("logs", "judged", "findings", "not_judged")
+            },
             "unchecked": dict(recon.unchecked),
             "tolerance_s": config.tolerance_s,
         },

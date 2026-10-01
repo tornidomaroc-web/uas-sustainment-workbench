@@ -24,6 +24,7 @@ from .app import (
     entries_about,
     entry_view,
     fleet_due,
+    fleet_grounded,
     flight_view,
     reconcile_view,
 )
@@ -75,6 +76,9 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
         "aircraft": aircraft,
         "findings": findings,
         "due": [i.model_dump(mode="json") for i in fleet_due(store, cfg, now)],
+        # Flights logged while the records show the aircraft grounded, as /fleet/grounded-flights
+        # answers at the same instant.
+        "grounded_flights": fleet_grounded(store, cfg, now).model_dump(mode="json"),
     }
     # One sample draft evidence pack, for one synthetic aircraft only.
     from uas_workbench.evidence import build_pack, render_html
