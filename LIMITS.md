@@ -64,7 +64,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   the first log are one total, reached by that log; the records hold no date to place them
   on. So at an `as_of` before the first dated log the time in service, the 100-hour
   inspection item and the board read not known, with the sentence that says why, unless an
-  open work order or a life limit already past grounds the aircraft. An aircraft in that
+  open work order or a life limit reached or past grounds the aircraft. An aircraft in that
   state is not serviceable and not unserviceable: the tool cannot tell, and says so. The
   window runs from the entry of the hours before the first log to that log, and it cannot
   be made smaller than the records it holds: an inspection done before the first log states
@@ -83,6 +83,40 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **A cycle is one flight record.** No public log carries a battery cycle count that is
   filled in, and a log is not a flight (above), so one record with flight time counts as
   one cycle: one take-off and one landing. A flight with several landings is still one.
+- **A flight counts when its log ends, not when it lands.** A record holds no landing time:
+  its flight time is a total airborne within the log, not an interval, and the UTC start is
+  the start of the log, not the take-off. The end of the log (start plus span) is the last
+  instant its flight can have ended, so the cycle and the hours count from there, never from
+  the start and never partway through. The board therefore turns up to the length of the
+  ground time inside the log after the wheels stopped: seconds on PX4, which logs from arming
+  to disarming by default, and for as long as the log ran on under ArduPilot's own logging
+  settings. It never turns before the flight is over, and the next log of the same flight
+  controller cannot start before this one ends, so that aircraft's next logged flight never
+  starts on usage not yet counted. The same instant decides
+  which logs a dated answer lists: a log is a file that exists once it is closed. Until
+  0.5.0 a log counted from its start, so the board could ground an aircraft as it took off
+  on its last permitted cycle.
+- **A flight with no recorded end is counted on the early side, and says so.** Three cases.
+  A log with a UTC start always has an end, its span, even when its flight time is not
+  known: it counts one cycle and no hours from that end. A log with no UTC start has no
+  instant at all: it counts for the airframe at any date asked and for no component, with a
+  note, as before. Flight that no log covers, found by `reconcile()` from the next boot's
+  counter, was flown after the log it followed and ended at a time no record holds: it counts
+  with that log, from that log's end, the earliest it can have been flown. That errs early by
+  design, up to the gap to the next log, so a limit is never reported later than it was
+  reached; and it is known only once the next log exists, so a dated answer between the two
+  logs changes when that next log is ingested.
+- **Reached means nothing left, in completed units.** A part at exactly its cycle or hours
+  limit has used the whole of its life: it grounds the aircraft with a sentence that says it
+  has reached its limit, and the ledger refuses to fit it, at the same count. Hours are
+  compared after rounding to a thousandth of an hour (3.6 s), on the board and in the ledger
+  alike, so "exactly" is that wide. A calendar life is counted in days and its last day
+  completes at midnight UTC: on that day the part is within its life, valid on the board and
+  accepted at an install; from the next day it is past on both. 0.3.0 and 0.4.0 refused an
+  install on that last day while the board called the same day valid; 0.5.0 withdrew that
+  refusal. What this does not cover: an inspection at exactly zero hours remaining still
+  reads "due in 0.0 h", because 14 CFR 91.409(b) gives the 100-hour inspection a tolerance
+  for the flight that overruns it and a life limit has none.
 - **Which part is on which airframe is an operator record.** Logs identify the flight
   controller only, never a battery pack, a motor or a propeller, so every installation
   window is entered by hand and a flight with no UTC start cannot be assigned to any
@@ -138,15 +172,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   move a date, the entry is retracted and a new one recorded, and the two are then not
   linked as correction and corrected. Among entries at one instant a correction takes the
   place of the entry it corrects.
-- **A part that has reached a life limit cannot be fitted; a part that crosses one while
-  fitted stays.** An install is refused when the part has reached any of its limits on the
-  install's own date, exactly or past it (14 CFR 43.10(c): the control method must deter
+- **A part that has reached a life limit cannot be fitted; a part that reaches one while
+  fitted stays on record.** An install is refused when the part has reached any of its limits
+  at the install's own date, exactly or past it (14 CFR 43.10(c): the control method must deter
   installation "after it has reached its life limit"), with the usage the
   records held by then on every airframe it had been fitted to. Reached means nothing left:
-  300 of 300 cycles, the last day of a calendar life. That is not the board's boundary,
-  which asks whether a fitted part may keep flying and calls remaining 0 due soon. What this
+  300 of 300 cycles, the whole of the hours, the end of the last day of a calendar life.
+  Since 0.5.0 that is the board's boundary too: what cannot be fitted grounds the aircraft
+  it is fitted to. What this
   does not do: it does not undo an install when a log ingested later puts that date's usage
-  at or over the limit; the board reports the part as past its limit, and the install
+  at or over the limit; the board reports the part as at or past its limit, and the install
   stands. A flight with no UTC start counts for no component, so it never puts a part at or
   past a limit, here or on the board. And it judges the projection, not the world: a part
   whose true usage is higher than its records say is fitted on its records.
