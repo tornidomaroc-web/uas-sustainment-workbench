@@ -168,8 +168,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   board row, which stay what they were: the board is the state now, and the answers the
   recorded assistant runs read are unchanged. Not the assistant, which has no tool for it,
   and not `/metrics`. Each answer judges every log on a board computed at that log's start,
-  so the cost grows with the square of the number of logs; measured at 35 ms for the demo
-  fleet's 40 logs, and not tried on a large fleet.
+  so the cost grows with the square of the number of logs; measured at 28 ms for the demo
+  fleet's 34 logs (35 ms for the 40 of the 0.4.0 seed), and not tried on a large fleet.
+- **The demo fleet shows no such flight because it is generated not to, which shows nothing
+  about the finding.** Since 0.5.0 the generator draws every flight and then leaves out each
+  log that would start while its aircraft is grounded, using this same comparison, so the
+  demo's empty list is true by construction. What the finding reports is shown elsewhere:
+  on hand-built aircraft in the tests, each state and each not-known case, and by a test that
+  puts the left-out logs back and finds six of them reported. An aircraft left out of flying
+  is also an aircraft with fewer logs: SYN-01 has three and SYN-05 two, and the reconciliation
+  of each has that much less to compare.
 - **A cue is shorter than its sentence, never other than it, and never the record.** The
   short cue served with `?cues=true` drops the aircraft key, the regulation, the tolerance
   explanation, a calendar item's day count and a work order's description, and keeps the
@@ -282,9 +290,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   model or another date gives different sentences; the test suite only guarantees that the
   records behind each recorded answer are what the current code returns.
 - **A recording is evidence of one run; a seed change makes it stale.** Five of the nine
-  runs were recorded again in 0.3.0 after the synthetic fleet changed, with the same model
-  and weights at the same computation date (CHANGELOG.md says which and why); the earlier
-  files are in the history. Between 0.2.0 and 0.3.0 one run, made before the
+  runs were recorded again in 0.3.0 after the synthetic fleet changed, and two of those
+  (which aircraft are not serviceable; what was superseded on SYN-01) again in 0.5.0 after
+  it changed once more, each time with the same model and weights at the same computation
+  date (CHANGELOG.md says which and why); the earlier files are in the history. A run is
+  recorded once and kept as it came: the 0.5.0 answer to the first of those two says the
+  remaining aircraft "have unknown maintenance status" where the 0.3.0 answer said "have no
+  maintenance record entered", the same records phrased less exactly, and it stays. Between 0.2.0 and 0.3.0 one run, made before the
   `list_aircraft` tool was dated, was kept byte for byte with its hash pinned and a replay
   allowance for its undated query; that run was among the five, so no allowance remains and
   every recorded call is held to exactly the query it recorded.

@@ -4,8 +4,22 @@
 
 One rule, stated once and applied everywhere: **a limit counted in completed units is reached
 when its last unit completes.** A cycle completes when its flight is over, an hour when it
-has been flown, a calendar day at midnight. Three changes follow from it. The version string
-stays 0.4.0 until the release; the synthetic seed is not changed in this section.
+has been flown, a calendar day at midnight. Three changes to the rules follow from it; then
+the tool reports a flight logged while the records show the aircraft grounded; then the
+synthetic fleet is generated so that its aircraft do not make such flights. The order
+matters and is kept below: the first two were measured on the 0.4.0 seed, unchanged, and
+the third changes that seed. The version string stays 0.4.0 until the release.
+
+**What the released 0.4.0 seed recorded, stated plainly.** One take-off on a battery pack
+already at its life limit, which 0.4.0's own board called serviceable (SYN-01, 2026-08-06
+11:07:54, BAT-04A at 300 of 300 cycles), and six flights by aircraft that 0.4.0's own board
+showed as unserviceable or in maintenance: SYN-01 at 12:09:19 that day and on 2026-08-08 at
+12:24:12, one and two cycles past the limit; SYN-05 on 2026-08-07 at 08:41:42, on 2026-08-08
+at 08:54:49 and on 2026-08-10 at 09:18:30 and 10:02:32, with a work order open that said to
+inspect before the next flight. The pack was then recorded as "placed in storage" at 303
+cycles. None of it was a real aircraft or a real flight; all of it was the demo teaching
+what no operator should do, and none of it was flagged. The v0.4.0 tag and its release are
+not moved or edited.
 
 ### Changed: a life limit reached grounds the aircraft
 
@@ -75,7 +89,7 @@ sentence does: a part one cycle past is not merely at its limit, and one at its 
 neither "left" nor "past". The demo page's two captions say "reached or past" and "at or
 past" where they said "past".
 
-### Measured on the unchanged seed: 0.4.0 against the changes above
+### Measured on the 0.4.0 seed, unchanged: 0.4.0 against the changes above
 
 Same seed, same records, 1018 answers compared: the four dated routes with and without cues
 for all nine aircraft at the 24 scene plan times and at now, plus flights and reconciliation.
@@ -148,7 +162,7 @@ Where it is served, and why there.
   runs, made with six, would no longer be runs of the assistant as it stands. That waits for
   a change in which runs are recorded again.
 
-Measured on the unchanged seed, the changes above against this one: all 1021 existing
+Measured on the 0.4.0 seed, still unchanged, the changes above against this one: all 1021 existing
 answers compared (the four dated routes with and without cues for nine aircraft at the 24
 scene plan times and at now, plus flights, reconciliation, the fleet's findings, the ledger
 and health) are identical; the nine recorded runs replay identically and none was recorded
@@ -161,28 +175,79 @@ judged, 7 findings at now; at the plan times the findings appear as their logs e
 through 2026-08-06 11:08, two by 2026-08-07 08:27, five by 2026-08-08 13:59, seven from
 2026-08-10 13:59.
 
-### Known and not yet corrected: the seed records flights by grounded aircraft
+### Changed: how the synthetic fleet is generated
 
-The seed is byte for byte the 0.4.0 seed, and the rule above makes plain what it records.
-Seven logged flights start while the records show the aircraft unserviceable or in
-maintenance: SYN-01 at 2026-08-06 11:07:54 (BAT-04A at its limit; 0.4.0 called this one
-serviceable), at 12:09:19 and on 2026-08-08 at 12:24:12 (one and two cycles past); SYN-05
-on 2026-08-07, 2026-08-08 and twice on 2026-08-10 with a work order open that says to
-inspect before the next flight. 0.4.0 was released with six of these visible and one hidden
-by its own boundary. A log is evidence and is never refused, so the flights stay counted,
-and the finding above now reports exactly these seven, which a test pins. What remains
-before 0.5.0 is released is a seed whose aircraft stop flying when they are grounded; with
-it that test becomes "none". Until then `fleet/synthetic.py` still describes BAT-04A
-as crossing its limit on SYN-01's third flight, which by this rule it reaches at the end of
-the second, and the demo page lists the seven.
+A generation change, made so that the demo fleet no longer records flights by grounded
+aircraft. With the rules above on the 0.4.0 seed, seven logged flights started while the
+records showed the aircraft unserviceable or in maintenance (the six and the take-off listed
+at the top of this section), and the finding reported exactly those seven. Three things
+change in `fleet/synthetic.py`:
 
-Tests: 308. 20 in `tests/test_reached_limit_and_landed_usage.py`, 16 of which fail
-on 0.4.0; 33 in `tests/test_grounded_flights.py` and one more in the browser test, none of
-which can pass before the finding exists: the seven of the seed and every log accounted
-for, each state and each not-known case on a hand-built fixture through the ledger, the
-showcase exclusion, the instant judged, an upload for a grounded aircraft accepted and
-counted, five mutations of the rules that each change the seed's answer, and a checker
-that refuses each altered property of a finding and of its cue.
+- **BAT-04A starts three cycles short of its limit, not two** (297 cycles before, where it
+  had 298). SYN-01's third flight, from 2026-08-06 11:07:54, is then the pack's 300th cycle:
+  a permitted flight, and its last. The aircraft is serviceable when it starts and through
+  it; when its log ends at 11:39:19 the pack has reached its limit and SYN-01 is
+  unserviceable, until the pack comes off on 2026-08-13 at 08:00.
+- **Logs end at grounding.** Every flight is drawn as before, so every random draw is what
+  it was; then each log that would start while its aircraft's own records show it
+  unserviceable, in maintenance or AOG is left out, judged by the comparison the service
+  reports with (`life/grounded.py`), repeated until none remains. SYN-01 keeps three logs of
+  five and SYN-05 two of six; the fleet has 30 synthetic logs where it had 36. The rule is
+  the generator's, not a list of logs: a different seed is filtered the same way.
+- **BAT-04A's removal reads "tagged unserviceable and segregated"**, which is what is done
+  with a life-expired part, where it read "placed in storage". It comes off at exactly 300
+  cycles, where it came off at 303.
+
+What does not change, pinned by digest in `tests/test_synthetic.py`: the flights of the five
+other aircraft, the logs SYN-01 and SYN-05 keep, and all 60 entries but BAT-04A's
+registration (its cycles) and removal (its statement), byte for byte. The entry ids are the
+same, and every entry is still accepted by the ledger's write rules in order.
+
+Recorded again: runs 02 and 07, on 2026-10-01, with qwen3:8b at the same weights (digest
+`500a1f067a9f…`, checked before recording) and the same computation date. Run 02 reads the
+board rows, where SYN-01's `flights` is 3 for 5 and SYN-05's 2 for 6; run 07 reads SYN-01's
+entries, where the removal's statement changed. Each was run once, passed the grounding
+check, and is kept as it came; no attempt failed and nothing was chosen between answers. Run
+07's answer is word for word the earlier one. Run 02 names the same three aircraft with the
+same causes; its closing sentence says the other aircraft "are either serviceable or have
+unknown maintenance status" where it said "or have no maintenance record entered", which is
+less exact and stays. The seven other runs replay unchanged and were not touched.
+
+Measured, the 0.4.0 seed under the rules above against the new seed:
+
+- **Findings: none**, where there were seven. 34 logs (30 synthetic, 4 real), 26 judged, 8
+  not judged, where there were 40, 32 and 8.
+- **Ledger hashes:** the published SYN-04 sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`. SYN-01's changes, from
+  `730f95f06daf78db0a7be7806fb1270acfcff660b72989b839857c959e9249ec` to
+  `eec1794ac2b29ec2937d72ab04bae3905936524f2455483c1c7631fa6b6f231c`, at every date from the
+  removal on, because that entry's statement changed. No other aircraft's changes.
+- **Board states at the 24 scene plan times and at now: two differ**, both SYN-01, at
+  2026-08-06 11:07 and 11:08, serviceable where the unchanged seed read unserviceable. Over
+  the whole period SYN-01 turns unserviceable at 11:39:19 that day (it turned at 09:07:54),
+  with "has reached its 300-cycle life limit" until the pack comes off, never "past". Every
+  state at 2026-10-01 and at now is what it was.
+- **Other answers:** 242 of 1021 differ. From their grounding on, SYN-01's and SYN-05's rows
+  count fewer flights (3 for 5, 5534.2 s for 7516.9 s; 2 for 6, 2194.6 s for 7139.8 s) and
+  their hours and cycles items read that much less; SYN-04's lent pack BAT-01B reads 272
+  cycles left where it read 270, having flown two flights fewer on SYN-01.
+- **The demo page at now:** 42 values of `fleet.json` differ, all of the kinds above, and
+  the section of flights logged while grounded reads none of 26 logs judged where it listed
+  seven of 32. The SYN-04 sample pack differs in five values, all BAT-01B's two cycles.
+
+Tests: 314. 20 in `tests/test_reached_limit_and_landed_usage.py`, 16 of which fail
+on 0.4.0; 35 in `tests/test_grounded_flights.py` and two in the browser test for the
+finding: every log of the seed accounted for, each state and each not-known case on a
+hand-built fixture through the ledger, the showcase exclusion, the instant judged, an upload
+for a grounded aircraft accepted and counted, five mutations of the rules that each change
+the answer, and a checker that refuses each altered property of a finding and of its cue.
+With the seed, the test that pinned its seven findings pins none; the routes, the pack and
+the page are tested on three hand-built aircraft added to the demo fleet (five findings),
+and the page is rendered once with none and once with five; a test puts the left-out logs
+back and finds six reported; `tests/test_life_fleet.py` holds SYN-01 serviceable through
+its third flight and unserviceable from the end of that log, and SYN-05 with no log after
+its work order opens. Tests that counted SYN-01's five flights count three (302 cycles for
+304 in three refusal sentences, whose words are otherwise the same).
 Seven existing tests in five files changed because their rule changed, each saying
 so where it changed: the cue mutation test accepts a reached cue as its overdue example; the
 0.3.0 refusal sentences are five, not six; the SYN-01 story test follows the unchanged seed
@@ -194,9 +259,9 @@ end.
 Changed: `life/engine.py`, `life/cue.py`, `life/grounded.py` (new), `ledger/validate.py` (the
 calendar boundary of the fit refusal), `service/app.py` (`flights_until`, the two new routes),
 the usage section of the evidence pack, the static export (one new key) and the demo page
-(two captions, one new section). Not changed: the seed, the ledger's file format, the shape
-of every response that existed, the nine recorded runs, the evidence sample's hash, the
-version string.
+(two captions, one new section), `fleet/synthetic.py` (the generation), recorded runs 02 and
+07. Not changed: the ledger's file format, the shape of every response that existed, the
+seven other recorded runs, the evidence sample's hash, the version string.
 
 ## 0.4.0
 
