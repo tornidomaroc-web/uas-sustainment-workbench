@@ -75,7 +75,7 @@ sentence does: a part one cycle past is not merely at its limit, and one at its 
 neither "left" nor "past". The demo page's two captions say "reached or past" and "at or
 past" where they said "past".
 
-### Measured on the unchanged seed, 0.4.0 against this change
+### Measured on the unchanged seed: 0.4.0 against the changes above
 
 Same seed, same records, 1018 answers compared: the four dated routes with and without cues
 for all nine aircraft at the 24 scene plan times and at now, plus flights and reconciliation.
@@ -100,6 +100,67 @@ for all nine aircraft at the 24 scene plan times and at now, plus flights and re
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`. Eight packs differ in
   their computed sections, all at the dates above.
 
+### Added: a flight logged while the records show the aircraft grounded is reported
+
+A log is evidence: it is never refused, and its flight counts toward usage whatever the
+board said. Until now nothing compared the two. `life/grounded.py` compares every log's
+start with the board state the records give at that instant, and a flight that began while
+that state was a known unserviceable, in maintenance or AOG is reported:
+
+- "a flight of aircraft SYN-01 was logged from 2026-08-06 12:09:19 UTC while the records
+  show the aircraft unserviceable at that time: battery pack BAT-04A on aircraft SYN-01 is 1
+  cycle past its 300-cycle life limit"
+
+One sentence per flight: the aircraft, the log's start, the state, and every cause that
+grounded it at that instant, worst first, in the board's own sentences. With `?cues=true`,
+`cue` ("flown unserviceable 2026-08-06 12:09", "flown in maintenance 2026-08-07 08:41",
+"flown AOG ...") and `cause_cues`, the existing cues of those causes ("BAT-04A 1 cycle past
+300-cycle limit"). The sentence says the records and the log disagree; it does not say
+which is right, and LIMITS.md lists what it cannot know: an entry dated back, a time typed
+to the day, a log filed under the wrong airframe, a check flight the operator permitted.
+
+What is judged. The instant is the log's start itself, on everything dated up to and
+including it, the log's own flight excluded (a log counts from its end): the answer the
+board gives at `as_of=<the log's start>`, so every finding can be checked there. A log
+that starts the second before a work order opens is not reported; one that starts at the
+same instant is.
+
+What is never a finding. A state that is not known: a flight before any maintenance record
+existed, and every log of an aircraft with no record. A log with no UTC start, which cannot
+be placed in time. A log with 0 s airborne, or one that cannot say whether the aircraft
+flew. The second upload of the same log. Each is listed as not judged, with why, and the
+answer carries how many logs were judged, so an empty list is never mistaken for a clean
+one. The two public showcase aircraft are never judged, by key, whatever the store holds.
+
+Where it is served, and why there.
+
+- `GET /aircraft/{key}/grounded-flights` and `GET /fleet/grounded-flights`, with `as_of` and
+  `cues`: the logs that had ended by then, judged, with the findings in the order the logs
+  started and the logs not judged.
+- The evidence pack, in its usage section, as sentences: a pack that lists an aircraft's
+  flights and its maintenance log and stays silent where the two disagree would be hiding
+  what a reader of it looks for first. No pack's ledger hash changes.
+- The demo page, above the fleet table, with the count of logs judged and not judged.
+- Not the board, the due list, a board row's `findings` count or reconciliation. The board
+  is the state now with its reasons, and a past flight is neither; and those are the answers
+  the nine recorded assistant runs read, which stay byte for byte.
+- Not the assistant: a seventh tool would change what the model is offered, and the nine
+  runs, made with six, would no longer be runs of the assistant as it stands. That waits for
+  a change in which runs are recorded again.
+
+Measured on the unchanged seed, the changes above against this one: all 1021 existing
+answers compared (the four dated routes with and without cues for nine aircraft at the 24
+scene plan times and at now, plus flights, reconciliation, the fleet's findings, the ledger
+and health) are identical; the nine recorded runs replay identically and none was recorded
+again; no ledger hash changes in 225 evidence packs and each pack is identical apart from
+the new part of its usage section; the published SYN-04 sample keeps its hash and gains
+"Of the 3 logs judged, not one started while the records show the aircraft unserviceable,
+in maintenance or AOG." The static site's `fleet.json` gains one key, `grounded_flights`,
+and every existing key is identical. The new fleet route answers 40 logs, 32 judged, 8 not
+judged, 7 findings at now; at the plan times the findings appear as their logs end: none
+through 2026-08-06 11:08, two by 2026-08-07 08:27, five by 2026-08-08 13:59, seven from
+2026-08-10 13:59.
+
 ### Known and not yet corrected: the seed records flights by grounded aircraft
 
 The seed is byte for byte the 0.4.0 seed, and the rule above makes plain what it records.
@@ -108,15 +169,21 @@ maintenance: SYN-01 at 2026-08-06 11:07:54 (BAT-04A at its limit; 0.4.0 called t
 serviceable), at 12:09:19 and on 2026-08-08 at 12:24:12 (one and two cycles past); SYN-05
 on 2026-08-07, 2026-08-08 and twice on 2026-08-10 with a work order open that says to
 inspect before the next flight. 0.4.0 was released with six of these visible and one hidden
-by its own boundary. A log is evidence and is never refused, so the flights stay counted;
-the tool does not yet report such a flight as a finding. Both are the next two changes
-before 0.5.0 is released: the finding, shown on a test fixture, and a seed whose aircraft
-stop flying when they are grounded. Until then `fleet/synthetic.py` still describes BAT-04A
+by its own boundary. A log is evidence and is never refused, so the flights stay counted,
+and the finding above now reports exactly these seven, which a test pins. What remains
+before 0.5.0 is released is a seed whose aircraft stop flying when they are grounded; with
+it that test becomes "none". Until then `fleet/synthetic.py` still describes BAT-04A
 as crossing its limit on SYN-01's third flight, which by this rule it reaches at the end of
-the second.
+the second, and the demo page lists the seven.
 
-Tests: 274 (254 + 20 new in `tests/test_reached_limit_and_landed_usage.py`, 16 of which fail
-on 0.4.0). Seven existing tests in five files changed because their rule changed, each saying
+Tests: 308. 20 in `tests/test_reached_limit_and_landed_usage.py`, 16 of which fail
+on 0.4.0; 33 in `tests/test_grounded_flights.py` and one more in the browser test, none of
+which can pass before the finding exists: the seven of the seed and every log accounted
+for, each state and each not-known case on a hand-built fixture through the ledger, the
+showcase exclusion, the instant judged, an upload for a grounded aircraft accepted and
+counted, five mutations of the rules that each change the seed's answer, and a checker
+that refuses each altered property of a finding and of its cue.
+Seven existing tests in five files changed because their rule changed, each saying
 so where it changed: the cue mutation test accepts a reached cue as its overdue example; the
 0.3.0 refusal sentences are five, not six; the SYN-01 story test follows the unchanged seed
 under the new rule; two install tests expect a fitted part at its limit to ground the
@@ -124,10 +191,12 @@ aircraft, and a third expects an install on the last calendar day to be accepted
 service at a first log's start is the total entered, the log's own flight counting from its
 end.
 
-Changed: `life/engine.py`, `life/cue.py`, `ledger/validate.py` (the calendar boundary of the
-fit refusal), `service/app.py` (`flights_until`), two captions in the demo page. Not
-changed: the seed, the ledger's file format, the response shapes, the nine recorded runs,
-the evidence sample's hash, the version string.
+Changed: `life/engine.py`, `life/cue.py`, `life/grounded.py` (new), `ledger/validate.py` (the
+calendar boundary of the fit refusal), `service/app.py` (`flights_until`, the two new routes),
+the usage section of the evidence pack, the static export (one new key) and the demo page
+(two captions, one new section). Not changed: the seed, the ledger's file format, the shape
+of every response that existed, the nine recorded runs, the evidence sample's hash, the
+version string.
 
 ## 0.4.0
 

@@ -127,6 +127,49 @@ field-level tables. This file is about what that means for a maintenance tool.
   form comes from, none is a manufacturer's number, and Part 107 sets no inspection
   interval at all; the two inspections borrow the manned Part 91 shape so the tolerance
   and calendar logic have a public source.
+- **A flight logged while the aircraft was grounded is reported; the report says the records
+  and the log disagree, not which is right.** Each log's start is compared with the board
+  state the records give at that instant, and a known unserviceable, in maintenance or AOG
+  is a finding. What the finding cannot know, each a reason it may be wrong about the world:
+  - *Who knew what, when.* The state at the log's start is what the ledger says today about
+    that time (valid time). An entry dated back after the flight makes the flight a finding,
+    and a retraction unmakes one; the tool does not tell an entry made on the day from one
+    made a month later, though the ledger keeps both dates.
+  - *How precisely an entry is dated.* A log's start is to the second, from the GPS clock.
+    An entry carries the time a person typed. A work order dated to a day, entered as
+    midnight, turns every flight of that day into a finding, including flights before the
+    defect was found; the finding is only as fine as the coarser of the two times.
+  - *Whose log it is.* A log names the flight controller, never the airframe. A log filed
+    under the wrong aircraft is judged against the wrong records.
+  - *Whether the flight was permitted.* The tool holds no release to service and no permission
+    for a check flight after maintenance, so a flight an operator authorised with a work order
+    still open is reported like any other.
+  - *What the log does not hold.* A log with no UTC start cannot be placed in time and is not
+    judged. A log with 0 s airborne is not a flight (maintenance runs an aircraft on the
+    ground) and one that cannot say whether the aircraft flew is not called a flight; neither
+    is judged. Flight that no log covers has no start at all and is never judged, although
+    it counts toward usage.
+- **The instant judged is the log's start itself, not the moment before.** Everything dated
+  up to and including that instant counts: an entry with the same time stamp, a calendar
+  life that ended at that midnight, an earlier log that ended at that instant. The log's own
+  flight does not, because a log counts from its end. This is the answer the board gives at
+  `as_of=<the log's start>`, so each finding can be checked there. It also means an
+  aircraft's first log is judged on a known state: the hours before the first log are a
+  total reached by that log's start, so the state is known from that instant, and not known
+  only before it.
+- **Not known is never a finding, and is listed.** A log that starts when no maintenance
+  record had been entered is not judged, with that reason; so is every log of an aircraft
+  with no record at all. The two public showcase aircraft are never judged, by key, whatever
+  the store holds: their flights are real people's, and the tool accepts no record for them.
+  The answer carries how many logs were judged and each log that was not with why, so "no
+  findings" is never read as "all clear" when little could be judged.
+- **Where the finding is served, and where it is not.** Two routes, the evidence pack's
+  usage section and the demo page. Not the board, the due list or the count of findings on a
+  board row, which stay what they were: the board is the state now, and the answers the
+  recorded assistant runs read are unchanged. Not the assistant, which has no tool for it,
+  and not `/metrics`. Each answer judges every log on a board computed at that log's start,
+  so the cost grows with the square of the number of logs; measured at 35 ms for the demo
+  fleet's 40 logs, and not tried on a large fleet.
 - **A cue is shorter than its sentence, never other than it, and never the record.** The
   short cue served with `?cues=true` drops the aircraft key, the regulation, the tolerance
   explanation, a calendar item's day count and a work order's description, and keeps the
@@ -205,7 +248,9 @@ field-level tables. This file is about what that means for a maintenance tool.
 
 - **It gathers; it does not find.** Every item of OSO #03 is marked supported, partly or
   not evidenced by this workbench. None of that is a finding of compliance, and the pack
-  says so in its first lines; the authority decides what the records show.
+  says so in its first lines; the authority decides what the records show. The flights its
+  usage section lists as logged while the records show the aircraft grounded are
+  disagreements between a log and the ledger, reported as that and nothing more.
 - **Most of OSO #03 is out of reach of a records tool.** Instructions, staff
   authorisation, competence, training, release to service, a procedure manual and
   third-party validation are not held and cannot be evidenced. The pack can evidence the
