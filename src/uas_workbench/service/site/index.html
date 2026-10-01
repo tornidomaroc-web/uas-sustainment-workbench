@@ -28,8 +28,9 @@
   .card { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 12px 14px; }
   .summary { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 12px 0; font-size: .95rem; }
   .summary b { font-size: 1.25rem; font-variant-numeric: tabular-nums; margin-right: 4px; }
-  #findings ul { margin: 6px 0 0; padding-left: 20px; }
-  #findings li { margin: 4px 0; }
+  #findings ul, #grounded ul { margin: 6px 0 0; padding-left: 20px; }
+  #findings li, #grounded li { margin: 4px 0; }
+  #findings, #grounded { margin-top: 12px; }
   .wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; background: var(--card); font-size: .93rem; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -97,6 +98,12 @@
   <section class="card" id="findings">
     <h2 style="margin-top:0">Findings: flight the logs do not cover</h2>
     <p class="sub" style="margin-bottom:0">Each line compares consecutive logs of one aircraft with the autopilot's own lifetime counter. Flight found this way counts toward component life.</p>
+    <ul></ul>
+  </section>
+
+  <section class="card" id="grounded">
+    <h2 style="margin-top:0">Flights logged while the records show the aircraft grounded</h2>
+    <p class="sub" id="grounded-sub" style="margin-bottom:0"></p>
     <ul></ul>
   </section>
 
@@ -218,6 +225,22 @@
     }
   } else {
     list.innerHTML = '<li>No findings: every interval between consecutive logs agrees with the counter.</li>';
+  }
+
+  const g = data.grounded_flights || { logs: 0, judged: 0, not_judged: 0, findings: [] };
+  $('#grounded-sub').textContent = `Each log's start is compared with the board state the records give at that instant: unserviceable, in maintenance or AOG is reported. ` +
+    `${g.judged} of ${g.logs} logs judged; ${g.not_judged} not judged, because the state then is not known or the log cannot be placed. ` +
+    'A line says that the records and a log disagree, not which is right; no log is refused, and its flight counts toward component life all the same.';
+  const groundedList = $('#grounded ul');
+  if (g.findings.length) {
+    for (const f of g.findings) {
+      const li = document.createElement('li');
+      li.className = 'finding ' + (f.synthetic ? 'synthetic' : 'real');
+      li.textContent = f.message;
+      groundedList.appendChild(li);
+    }
+  } else {
+    groundedList.innerHTML = '<li>No judged log started while the records show its aircraft unserviceable, in maintenance or AOG.</li>';
   }
 
   const tbody = $('#fleet tbody');

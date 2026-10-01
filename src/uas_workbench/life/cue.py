@@ -14,6 +14,8 @@ never "0 left" and never "past": the sentence says "has reached", and so does th
   status_cue(status)          the board state in a few words; not known says why in short
   problems(cue, item, as_of)  what a cue gets wrong against its item: the checker the tests
                               and the mutation tests share
+  flight_cue(status, start)   the cue of a flight logged while the aircraft was grounded
+                              (life/grounded.py), and flight_cue_problems, its checker
 
 Grammar, with the longest form first and a shorter one when an id would push it past the
 limit; the shortest form still names the part, the number, the unit and the direction:
@@ -27,6 +29,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
   annual insp 12 days overdue              100 h insp: time in service not known
   AOG awaiting parts since 2026-08-14      in maintenance since 2026-08-07
   deferred defect since 2026-08-07         not known: no maintenance record
+  flown unserviceable 2026-08-06 12:09     flown in maintenance 2026-08-07 08:41
 """
 
 from __future__ import annotations
@@ -151,6 +154,37 @@ def status_cue(status: Maybe[str]) -> str:
     if status.reason == NO_RECORD:
         return f"{NOT_KNOWN}: no maintenance record"
     return f"{NOT_KNOWN}: time in service"
+
+
+GROUNDED_STATES = ("unserviceable", "in maintenance", "AOG")
+START = re.compile(r"\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b")
+
+
+def flight_cue(status: str, start: datetime) -> str:
+    """The cue of a flight logged while the aircraft was grounded: the state and the minute
+    the log started. The cause is the sentence's and has cues of its own (reason_cues)."""
+    return f"flown {status} {start:%Y-%m-%d %H:%M}"
+
+
+def flight_cue_problems(cue: str, status: str, start: datetime) -> list[str]:
+    """Every way `cue` fails to be the short form of a grounded-flight finding."""
+    found: list[str] = []
+    if len(cue) > CUE_LIMIT:
+        found.append(f"longer than {CUE_LIMIT} characters: {len(cue)}")
+    if not cue.startswith("flown "):
+        found.append("does not begin with flown")
+    # "unserviceable" holds "serviceable": the states are matched as whole words.
+    said = [s for s in GROUNDED_STATES if re.search(rf"(?<![a-z]){re.escape(s)}(?![a-z])", cue)]
+    if said != [status]:
+        found.append(f"state {status} not said alone ({', '.join(said) or 'none said'})")
+    if re.search(r"(?<![a-z])serviceable", cue) or NOT_KNOWN in cue:
+        found.append("state: a grounded flight's cue never says serviceable or not known")
+    starts = START.findall(cue)
+    if starts != [f"{start:%Y-%m-%d %H:%M}"]:
+        found.append(f"start {start:%Y-%m-%d %H:%M} not given once ({', '.join(starts) or 'none'})")
+    for n in re.findall(r"\d+", START.sub(" ", cue)):
+        found.append(f"number {n} is not in the sentence")
+    return found
 
 
 def reason_cues(due: DueList, state: Board) -> tuple[str, ...]:

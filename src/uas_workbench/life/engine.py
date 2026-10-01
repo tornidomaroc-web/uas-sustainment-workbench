@@ -466,6 +466,17 @@ def _work_sentence(key: str, w: WorkOrder) -> str:
     return f"aircraft {key} carries a deferred defect since {since}: {w.description}"
 
 
+def grounding_reasons(due: DueList) -> tuple[str, ...]:
+    """The reasons that ground the aircraft, worst first as board() lists them: open work
+    orders awaiting parts or in work, and limits reached or past. Empty when nothing does."""
+    key = due.aircraft_key
+    return (
+        *(_work_sentence(key, w) for w in due.work_orders if w.state == "awaiting_parts"),
+        *(_work_sentence(key, w) for w in due.work_orders if w.state == "in_work"),
+        *(i.message for i in due.items if i.state == "overdue"),
+    )
+
+
 def board(due: DueList) -> Board:
     """Worst condition wins: AOG, in maintenance, unserviceable, deferred defects, serviceable.
 
