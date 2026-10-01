@@ -16,9 +16,12 @@ time its sentence prints.
                with no UTC start, a log that does not say whether the aircraft flew. Each is
                listed as not judged, with why. The two public showcase aircraft are never
                judged, whatever the store holds.
-  the seed     on the demo seed, unchanged in this change, the finding reports exactly seven
-               flights: three by SYN-01 and four by SYN-05.
-  mutation     each rule, broken, changes that answer; each property of a finding, broken,
+  the seed     the demo fleet holds no such flight: since 0.5.0 a synthetic aircraft does not
+               fly while its records show it grounded. (The 0.4.0 seed held seven, three by
+               SYN-01 and four by SYN-05, and this test pinned them until the seed changed.)
+               What the routes, the pack and the page do with findings is shown on three
+               hand-built aircraft added to the demo fleet through the ledger.
+  mutation     each rule, broken, changes the answer; each property of a finding, broken,
                is refused by the checker the tests share.
 """
 
@@ -34,6 +37,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import uas_workbench.fleet.synthetic as synthetic_module
 import uas_workbench.life.grounded as grounded_module
 import uas_workbench.service.app as app_module
 from uas_workbench.evidence import build_pack, render_html
@@ -78,16 +82,15 @@ SPAN_S = 1900.0
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 BY = "A. Tester, maintenance"
 WORK = "[synthetic] as described"
-# The seven flights of the unchanged demo seed, in the order they started.
-SEVEN = [
-    ("SYN-01", "2026-08-06 11:07:54", "unserviceable"),
-    ("SYN-01", "2026-08-06 12:09:19", "unserviceable"),
-    ("SYN-05", "2026-08-07 08:41:42", "in maintenance"),
-    ("SYN-05", "2026-08-08 08:54:49", "in maintenance"),
-    ("SYN-01", "2026-08-08 12:24:12", "unserviceable"),
-    ("SYN-05", "2026-08-10 09:18:30", "in maintenance"),
-    ("SYN-05", "2026-08-10 10:02:32", "in maintenance"),
+# The five flights of the three hand-built aircraft (flown_grounded), in the order they started.
+FIVE = [
+    ("FX-02", "2026-03-10 10:00:00", "in maintenance"),
+    ("FX-03", "2026-03-10 12:00:00", "AOG"),
+    ("FX-01", "2026-03-11 10:00:00", "unserviceable"),
+    ("FX-02", "2026-03-11 10:00:00", "in maintenance"),
+    ("FX-01", "2026-03-12 10:00:00", "unserviceable"),
 ]
+FX_02_WORK = "aircraft FX-02 is in maintenance since 2026-03-10: [synthetic] as described"
 SYN_05_WORK = (
     "aircraft SYN-05 is in maintenance since 2026-08-07: [synthetic] low-battery message in "
     "flight 2: inspect the battery connector and the pack before the next flight"
@@ -154,7 +157,9 @@ def write(store: Store, e: Entry) -> Entry:
     return append(store, e, policy=POLICY, now=NOW, tolerance_s=CONFIG.tolerance_s)
 
 
-def fit(store: Store, id_: str, kind: str, at: datetime = FITTED, **usage: Any) -> None:
+def fit(
+    store: Store, id_: str, kind: str, at: datetime = FITTED, key: str = KEY, **usage: Any
+) -> None:
     details = {
         "kind": kind,
         "in_service_since": "2025-06-01",
@@ -163,7 +168,7 @@ def fit(store: Store, id_: str, kind: str, at: datetime = FITTED, **usage: Any) 
         **usage,
     }
     write(store, entry(id_, "component.register", details, at=at - D))
-    write(store, entry(id_, "component.install", {"aircraft_key": KEY}, at=at))
+    write(store, entry(id_, "component.install", {"aircraft_key": key}, at=at))
 
 
 def with_a_record(logs: Sequence[FlightRecord]) -> Store:
@@ -173,8 +178,10 @@ def with_a_record(logs: Sequence[FlightRecord]) -> Store:
     return store
 
 
-def open_work(store: Store, state: str, at: datetime, work_id: str = "WO-1") -> None:
-    write(store, entry(KEY, "work_order.open", {"state": state, "work_id": work_id}, at=at))
+def open_work(
+    store: Store, state: str, at: datetime, work_id: str = "WO-1", key: str = KEY
+) -> None:
+    write(store, entry(key, "work_order.open", {"state": state, "work_id": work_id}, at=at))
 
 
 def judge(store: Store, key: str = KEY, as_of: datetime | None = NOW) -> GroundedFlights:
@@ -187,6 +194,26 @@ def seeded() -> Store:
     store = Store(":memory:")
     store.add_fleet(generate(CONFIG))
     store.add_fleet(showcase(FIXTURES))
+    return store
+
+
+def flown_grounded() -> Store:
+    """The demo fleet plus three hand-built synthetic aircraft, their records written through
+    the ledger, that did fly while grounded: FX-01 twice on a pack that had reached its limit
+    (its first flight is the pack's 300th cycle, a permitted one), FX-02 twice with a work order
+    in work, FX-03 once while awaiting parts. Six logs, all judged, five findings (FIVE)."""
+    store = seeded()
+    starts = {"FX-01": (T1, T2, T2 + D), "FX-02": (T1, T2), "FX-03": (T1 + 2 * HOUR,)}
+    for key, times in starts.items():
+        store.add_aircraft(
+            Aircraft(key, "Synthetic test aircraft", "px4", True, "CC0", "synthetic")
+        )
+        for n, at in enumerate(times, start=1):
+            store.add_flight(key, flight(n, at, key=key))
+        fit(store, f"PROP-{key}", "propeller set", key=key)
+    fit(store, "BAT-FX", "battery pack", key="FX-01", cycles_before=299)
+    open_work(store, "in_work", T1 - HOUR, "WO-FX2", key="FX-02")
+    open_work(store, "awaiting_parts", T1 - HOUR, "WO-FX3", key="FX-03")
     return store
 
 
@@ -209,36 +236,45 @@ def all_findings(store: Store) -> list[GroundedFlight]:
     return sorted(out, key=lambda f: (f.utc_start, f.aircraft_key))
 
 
-# ---- the demo seed: exactly seven ---------------------------------------------------------
+# ---- the demo seed: none; the hand-built aircraft: five ------------------------------------
 
 
-def test_the_demo_seed_holds_exactly_seven_such_flights() -> None:
+def test_the_demo_seed_holds_no_such_flight() -> None:
+    """Until the 0.5.0 seed this test read "exactly seven": SYN-01 at 2026-08-06 11:07:54 and
+    12:09:19 and on 2026-08-08 at 12:24:12, unserviceable; SYN-05 on 2026-08-07 08:41:42,
+    2026-08-08 08:54:49 and 2026-08-10 at 09:18:30 and 10:02:32, in maintenance. The generator
+    now leaves out a log that would start while its aircraft is grounded, and BAT-04A's last
+    permitted cycle is the 11:07:54 flight."""
     store = seeded()
+    assert all_findings(store) == []
+    assert fleet_grounded(store, CONFIG, NOW).findings == []
+
+
+def test_the_hand_built_aircraft_are_reported_in_the_order_their_logs_started() -> None:
+    store = flown_grounded()
     found = all_findings(store)
-    assert seen(found) == SEVEN
-    assert found[0].message == (
-        "a flight of aircraft SYN-01 was logged from 2026-08-06 11:07:54 UTC while the records "
-        "show the aircraft unserviceable at that time: battery pack BAT-04A on aircraft SYN-01 "
+    assert seen(found) == FIVE
+    assert found[2].message == (
+        "a flight of aircraft FX-01 was logged from 2026-03-11 10:00:00 UTC while the records "
+        "show the aircraft unserviceable at that time: battery pack BAT-FX on aircraft FX-01 "
         "has reached its 300-cycle life limit"
     )
-    assert found[1].reasons == (
-        "battery pack BAT-04A on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
-    )
     assert found[4].reasons == (
-        "battery pack BAT-04A on aircraft SYN-01 is 2 cycles past its 300-cycle life limit",
+        "battery pack BAT-FX on aircraft FX-01 is 1 cycle past its 300-cycle life limit",
     )
-    assert found[2].message == (
-        "a flight of aircraft SYN-05 was logged from 2026-08-07 08:41:42 UTC while the records "
-        f"show the aircraft in maintenance at that time: {SYN_05_WORK}"
+    assert found[0].message == (
+        "a flight of aircraft FX-02 was logged from 2026-03-10 10:00:00 UTC while the records "
+        f"show the aircraft in maintenance at that time: {FX_02_WORK}"
     )
-    assert all(f.reasons == (SYN_05_WORK,) for f in found if f.aircraft_key == "SYN-05")
+    assert all(f.reasons == (FX_02_WORK,) for f in found if f.aircraft_key == "FX-02")
     assert [f.cue for f in found[:3]] == [
-        "flown unserviceable 2026-08-06 11:07",
-        "flown unserviceable 2026-08-06 12:09",
-        "flown in maintenance 2026-08-07 08:41",
+        "flown in maintenance 2026-03-10 10:00",
+        "flown AOG 2026-03-10 12:00",
+        "flown unserviceable 2026-03-11 10:00",
     ]
-    assert found[0].cause_cues == ("BAT-04A reached 300-cycle limit",)
-    assert found[2].cause_cues == ("in maintenance since 2026-08-07",)
+    assert found[2].cause_cues == ("BAT-FX reached 300-cycle limit",)
+    assert found[4].cause_cues == ("BAT-FX 1 cycle past 300-cycle limit",)
+    assert found[0].cause_cues == ("in maintenance since 2026-03-10",)
 
 
 def test_every_log_of_the_seed_is_judged_or_listed_as_not_judged_with_why() -> None:
@@ -248,11 +284,11 @@ def test_every_log_of_the_seed_is_judged_or_listed_as_not_judged_with_why() -> N
     assert counts == {
         ALFA_KEY: (3, 0, 0, 3),
         PX4_KEY: (1, 0, 0, 1),
-        "SYN-01": (5, 5, 3, 0),
+        "SYN-01": (3, 3, 0, 0),  # (5, 5, 3, 0) on the 0.4.0 seed
         "SYN-02": (6, 6, 0, 0),
         "SYN-03": (7, 6, 0, 1),  # one duplicate upload
         "SYN-04": (3, 3, 0, 0),
-        "SYN-05": (6, 6, 4, 0),
+        "SYN-05": (2, 2, 0, 0),  # (6, 6, 4, 0) on the 0.4.0 seed
         "SYN-06": (3, 0, 0, 3),  # no maintenance record; one log has no UTC start
         "SYN-07": (6, 6, 0, 0),
     }  # fmt: skip
@@ -275,7 +311,8 @@ def test_every_log_of_the_seed_is_judged_or_listed_as_not_judged_with_why() -> N
 def test_each_finding_agrees_with_the_board_at_the_log_start() -> None:
     """What a reader can check: the board at `as_of=<the log's start>` says the same state
     and holds the same reasons."""
-    store = seeded()
+    store = flown_grounded()
+    assert len(all_findings(store)) == 5
     for f in all_findings(store):
         aircraft = store.get_aircraft(f.aircraft_key)
         assert aircraft is not None
@@ -575,7 +612,8 @@ def test_the_board_and_the_due_list_do_not_carry_the_finding() -> None:
 
 
 def test_the_words_report_and_do_not_accuse_or_certify() -> None:
-    store = seeded()
+    store = flown_grounded()
+    assert len(all_findings(store)) == 5
     texts = [f.message for f in all_findings(store)] + [f.cue for f in all_findings(store)]
     for a in store.aircraft():
         texts += [n.why for n in judge(store, a.key).not_judged]
@@ -597,35 +635,39 @@ def test_the_words_report_and_do_not_accuse_or_certify() -> None:
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(create_app(seeded()))
+    """The service over the demo fleet plus the three hand-built aircraft."""
+    return TestClient(create_app(flown_grounded()))
 
 
 def test_the_aircraft_route_lists_findings_and_what_was_not_judged(client: TestClient) -> None:
-    body = client.get("/aircraft/SYN-01/grounded-flights", params={"as_of": "2026-10-01T00:00:00Z"})
+    body = client.get("/aircraft/FX-01/grounded-flights", params={"as_of": "2026-10-01T00:00:00Z"})
     assert body.status_code == 200
     data = body.json()
     assert sorted(data) == [
         "aircraft_key", "as_of", "findings", "judged", "logs", "not_judged", "synthetic",
     ]  # fmt: skip
     assert (data["aircraft_key"], data["synthetic"], data["logs"], data["judged"]) == (
-        "SYN-01", True, 5, 5,
+        "FX-01", True, 3, 3,
     )  # fmt: skip
     assert data["as_of"] == "2026-10-01T00:00:00Z"
+    assert len(data["findings"]) == 2
     first = data["findings"][0]
     assert first == {
-        "aircraft_key": "SYN-01",
+        "aircraft_key": "FX-01",
         "kind": "flight_while_grounded",
-        "log_ref": "SYN-01-2026-08-06-03.synthetic",
-        "utc_start": "2026-08-06T11:07:54.400000Z",
+        "log_ref": "FX-01-02",
+        "utc_start": "2026-03-11T10:00:00Z",
         "status": "unserviceable",
         "status_reasons": [
-            "battery pack BAT-04A on aircraft SYN-01 has reached its 300-cycle life limit"
+            "battery pack BAT-FX on aircraft FX-01 has reached its 300-cycle life limit"
         ],
-        "message": "a flight of aircraft SYN-01 was logged from 2026-08-06 11:07:54 UTC while "
-        "the records show the aircraft unserviceable at that time: battery pack BAT-04A on "
-        "aircraft SYN-01 has reached its 300-cycle life limit",
+        "message": "a flight of aircraft FX-01 was logged from 2026-03-11 10:00:00 UTC while "
+        "the records show the aircraft unserviceable at that time: battery pack BAT-FX on "
+        "aircraft FX-01 has reached its 300-cycle life limit",
         "synthetic": True,
     }
+    demo = client.get("/aircraft/SYN-01/grounded-flights").json()
+    assert (demo["logs"], demo["judged"], demo["findings"], demo["not_judged"]) == (3, 3, [], [])
     unknown = client.get("/aircraft/SYN-06/grounded-flights").json()
     assert (unknown["logs"], unknown["judged"], unknown["findings"]) == (3, 0, [])
     assert unknown["not_judged"][2]["utc_start"] == {
@@ -634,27 +676,29 @@ def test_the_aircraft_route_lists_findings_and_what_was_not_judged(client: TestC
     assert client.get("/aircraft/NOPE/grounded-flights").status_code == 404
 
 
-def test_the_fleet_route_lists_all_seven_in_the_order_they_started(client: TestClient) -> None:
+def test_the_fleet_route_lists_all_five_in_the_order_they_started(client: TestClient) -> None:
     data = client.get("/fleet/grounded-flights", params={"as_of": "2026-10-01T00:00:00Z"}).json()
     assert sorted(data) == ["as_of", "findings", "judged", "logs", "not_judged"]
+    # The demo fleet's 34 logs (26 judged, 8 not) and the six of the hand-built aircraft.
     assert (data["logs"], data["judged"], data["not_judged"]) == (40, 32, 8)
     got = [
         (f["aircraft_key"], f["utc_start"][:19].replace("T", " "), f["status"])
         for f in data["findings"]
     ]
-    assert got == SEVEN
-    early = client.get("/fleet/grounded-flights", params={"as_of": "2026-08-06T12:00:00Z"}).json()
-    assert [f["log_ref"] for f in early["findings"]] == ["SYN-01-2026-08-06-03.synthetic"]
+    assert got == FIVE
+    early = client.get("/fleet/grounded-flights", params={"as_of": "2026-03-10T12:00:00Z"}).json()
+    assert [f["log_ref"] for f in early["findings"]] == ["FX-02-01"]  # the only log ended by then
 
 
 def test_cues_are_added_on_request_and_only_then(client: TestClient) -> None:
     query = {"as_of": "2026-10-01T00:00:00Z"}
-    for path in ("/aircraft/SYN-05/grounded-flights", "/fleet/grounded-flights"):
+    for path in ("/aircraft/FX-02/grounded-flights", "/fleet/grounded-flights"):
         plain = client.get(path, params=query)
         again = client.get(path, params={**query, "cues": "false"})
         cued = client.get(path, params={**query, "cues": "true"})
         assert plain.content == again.content
         assert b'"cue"' not in plain.content and b'"cause_cues"' not in plain.content
+        assert len(cued.json()["findings"]) >= 2
         for f in cued.json()["findings"]:
             assert len(f["cue"]) <= CUE_LIMIT and f["cue"].startswith("flown ")
             assert len(f["cause_cues"]) == len(f["status_reasons"]) >= 1
@@ -671,18 +715,21 @@ def test_cues_are_added_on_request_and_only_then(client: TestClient) -> None:
 
 
 def test_the_evidence_pack_lists_the_flights_and_keeps_its_ledger_hash() -> None:
-    store = seeded()
+    store = flown_grounded()
     at = datetime(2026, 10, 1, tzinfo=UTC)
-    pack = build_pack(store, "SYN-01", CONFIG, as_of=at, commit=None, generated_utc=at)
+    pack = build_pack(store, "FX-01", CONFIG, as_of=at, commit=None, generated_utc=at)
     section = pack["usage"]["grounded_flights"]
-    assert (section["logs"], section["judged"], len(section["findings"])) == (5, 5, 3)
+    assert (section["logs"], section["judged"], len(section["findings"])) == (3, 3, 2)
     assert section["findings"][0]["message"].startswith(
-        "a flight of aircraft SYN-01 was logged from 2026-08-06 11:07:54 UTC while the records "
+        "a flight of aircraft FX-01 was logged from 2026-03-11 10:00:00 UTC while the records "
     )
     assert "cue" not in section["findings"][0]  # the pack holds sentences, never cues
     html = render_html(pack)
     assert "Flights logged while the records show the aircraft grounded" in html
-    assert "was logged from 2026-08-06 12:09:19 UTC while the records show the aircraft" in html
+    assert "was logged from 2026-03-12 10:00:00 UTC while the records show the aircraft" in html
+    once_flagged = build_pack(store, "SYN-01", CONFIG, as_of=at, commit=None, generated_utc=at)
+    assert once_flagged["usage"]["grounded_flights"]["findings"] == []
+    assert "Of the 3 logs judged, not one started while" in render_html(once_flagged)
     clean = build_pack(store, "SYN-04", CONFIG, as_of=at, commit=None, generated_utc=at)
     assert clean["ledger_hash"] == (
         "3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf"
@@ -699,50 +746,71 @@ def test_the_evidence_pack_lists_the_flights_and_keeps_its_ledger_hash() -> None
 
 
 def test_the_static_export_carries_the_findings_for_the_page(tmp_path: Path) -> None:
+    """The demo fleet's own export holds none; with the hand-built aircraft, five."""
     site = export_static(seeded(), tmp_path / "site")
     data = json.loads((site / "fleet.json").read_text(encoding="utf-8"))
     section = data["grounded_flights"]
-    assert (section["logs"], section["judged"], section["not_judged"]) == (40, 32, 8)
-    assert len(section["findings"]) == 7
-    assert all(f["synthetic"] is True for f in section["findings"])
+    assert (section["logs"], section["judged"], section["not_judged"]) == (34, 26, 8)
+    assert section["findings"] == []
     page = (site / "index.html").read_text(encoding="utf-8")
     assert 'id="grounded"' in page
+    with_five = export_static(flown_grounded(), tmp_path / "five")
+    data = json.loads((with_five / "fleet.json").read_text(encoding="utf-8"))
+    section = data["grounded_flights"]
+    assert (section["logs"], section["judged"], section["not_judged"]) == (40, 32, 8)
+    assert len(section["findings"]) == 5
+    assert all(f["synthetic"] is True for f in section["findings"])
 
 
 # ---- mutation: each rule, broken, changes the answer --------------------------------------------
+#
+# The store is built before the rule is broken: the generator itself leaves out the logs this
+# comparison would report, so a fleet generated under a broken rule would hide the breakage.
 
 
 def test_judging_at_the_end_of_the_log_instead_of_its_start_changes_the_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    store = flown_grounded()
     monkeypatch.setattr(grounded_module, "judged_at", log_end)
-    assert seen(all_findings(seeded())) != SEVEN
+    found = seen(all_findings(store))
+    # SYN-01's third flight and FX-01's first, each a pack's last permitted cycle, are
+    # reported when judged at their end, where the pack has reached its limit.
+    assert found != FIVE
+    assert ("SYN-01", "2026-08-06 11:39:19", "unserviceable") in found
+    assert ("FX-01", "2026-03-10 10:31:40", "unserviceable") in found
 
 
 def test_counting_a_state_that_does_not_ground_changes_the_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    store = flown_grounded()
     monkeypatch.setattr(
         grounded_module, "GROUNDING", (*GROUNDING, "serviceable with deferred defects")
     )
-    found = seen(all_findings(seeded()))
-    assert found != SEVEN and any(key == "SYN-03" for key, _, _ in found)
+    found = seen(all_findings(store))
+    assert found != FIVE and any(key == "SYN-03" for key, _, _ in found)
 
 
 def test_dropping_a_grounding_state_changes_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
-    for kept in (("unserviceable", "AOG"), ("in maintenance", "AOG")):
-        monkeypatch.setattr(grounded_module, "GROUNDING", kept)
-        assert seen(all_findings(seeded())) != SEVEN
+    store = flown_grounded()
+    for dropped in GROUNDING:
+        monkeypatch.setattr(
+            grounded_module, "GROUNDING", tuple(s for s in GROUNDING if s != dropped)
+        )
+        found = seen(all_findings(store))
+        assert found != FIVE and all(status != dropped for _, _, status in found), dropped
 
 
 def test_treating_not_known_as_grounded_changes_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = flown_grounded()
     monkeypatch.setattr(grounded_module, "grounds", lambda status: status != "serviceable")
-    found = all_findings(seeded())
-    assert seen(found) != SEVEN and any(f.aircraft_key == "SYN-06" for f in found)
+    found = all_findings(store)
+    assert seen(found) != FIVE and any(f.aircraft_key == "SYN-06" for f in found)
 
 
 def test_judging_the_showcase_aircraft_changes_the_answer(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = seeded()
+    store = flown_grounded()
     forced = dataclasses.replace(
         entry(
             ALFA_KEY,
@@ -753,9 +821,34 @@ def test_judging_the_showcase_aircraft_changes_the_answer(monkeypatch: pytest.Mo
         synthetic=False,
     )
     store.append_entry(forced)
-    assert seen(all_findings(store)) == SEVEN
+    assert seen(all_findings(store)) == FIVE
     monkeypatch.setattr(app_module, "showcase_keys", lambda: set())
-    assert seen(all_findings(store)) != SEVEN
+    found = all_findings(store)
+    assert seen(found) != FIVE and any(f.aircraft_key == ALFA_KEY for f in found)
+
+
+def test_a_generator_that_kept_every_log_would_be_reported() -> None:
+    """The seed's rule is not vacuous: the same generation without leaving any log out holds
+    the seven flights the 0.4.0 seed held, less the one that is now the pack's last permitted
+    cycle. The entries are the generator's own; only the flights are put back."""
+    fleet = generate(CONFIG)
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(
+            synthetic_module, "_stop_flying_when_grounded", lambda _c, flights, _e: flights
+        )
+        every_log = generate(CONFIG)
+    assert every_log.entries == fleet.entries
+    assert {k: len(v) for k, v in every_log.flights.items()}["SYN-01"] == 5
+    store = Store(":memory:")
+    store.add_fleet(every_log)
+    assert seen(fleet_grounded(store, CONFIG, NOW).findings) == [
+        ("SYN-01", "2026-08-06 12:09:19", "unserviceable"),
+        ("SYN-05", "2026-08-07 08:41:42", "in maintenance"),
+        ("SYN-05", "2026-08-08 08:54:49", "in maintenance"),
+        ("SYN-01", "2026-08-08 12:24:12", "unserviceable"),
+        ("SYN-05", "2026-08-10 09:18:30", "in maintenance"),
+        ("SYN-05", "2026-08-10 10:02:32", "in maintenance"),
+    ]
 
 
 # ---- mutation: the checker refuses each broken property -----------------------------------------

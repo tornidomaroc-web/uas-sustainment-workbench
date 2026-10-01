@@ -35,7 +35,8 @@ H = 3600.0
 D = timedelta(days=1)
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 BY = "A. Tester, maintenance"
-# SYN-01 flew five times between 2026-08-05 and 2026-08-08; nothing before, nothing after.
+# SYN-01 flew three times, on 2026-08-05 and 2026-08-06; nothing before, nothing after. (Five
+# on the 0.4.0 seed, so the counts below read 304 and 4 where they now read 302 and 2.)
 BEFORE_FLIGHTS = datetime(2026, 8, 1, 9, tzinfo=UTC)
 AFTER_FLIGHTS = datetime(2026, 9, 1, 9, tzinfo=UTC)
 TAIL = "a life-limited part that has reached its life limit is replaced, not fitted again"
@@ -119,7 +120,7 @@ def test_a_part_that_crosses_its_limit_while_fitted_stays_fitted_and_grounds_the
     )
     grounded = status(s, "SYN-01", AFTER_FLIGHTS)
     assert grounded.status == "unserviceable"
-    assert "battery pack BAT-N on aircraft SYN-01 is 4 cycles past its 300-cycle life limit" in (
+    assert "battery pack BAT-N on aircraft SYN-01 is 2 cycles past its 300-cycle life limit" in (
         grounded.reasons
     )
     off = write(s, entry("BAT-N", "component.remove", {"aircraft_key": "SYN-01"}, at=AFTER_FLIGHTS))
@@ -130,7 +131,7 @@ def test_a_part_that_crosses_its_limit_while_fitted_stays_fitted_and_grounds_the
         assert refused(
             s, entry("BAT-N", "component.install", {"aircraft_key": key}, at=AFTER_FLIGHTS + D)
         ) == (
-            f"BAT-N cannot be fitted to {key} at 2026-09-02 09:00 UTC: it has flown 304 cycles, "
+            f"BAT-N cannot be fitted to {key} at 2026-09-02 09:00 UTC: it has flown 302 cycles, "
             f"past its 300-cycle life limit; {TAIL}"
         )
 
@@ -150,12 +151,12 @@ def test_the_install_is_judged_at_its_own_date_so_a_back_dated_install_is_accept
         s, entry("BAT-B", "component.install", {"aircraft_key": "SYN-02"}, at=BEFORE_FLIGHTS + D)
     )
     assert overlap == "BAT-B is installed on SYN-01 since 2026-08-01 09:00 UTC"
-    # Dated after the five flights it is past its limit, whatever aircraft it is meant for.
+    # Dated after the three flights it is past its limit, whatever aircraft it is meant for.
     late = refused(
         s, entry("BAT-B", "component.install", {"aircraft_key": "SYN-02"}, at=AFTER_FLIGHTS + D)
     )
     assert late == (
-        "BAT-B cannot be fitted to SYN-02 at 2026-09-02 09:00 UTC: it has flown 304 cycles, "
+        "BAT-B cannot be fitted to SYN-02 at 2026-09-02 09:00 UTC: it has flown 302 cycles, "
         f"past its 300-cycle life limit; {TAIL}"
     )
 
@@ -205,15 +206,15 @@ def test_a_write_that_would_leave_a_later_install_over_its_limit_is_refused_nami
         entry("BAT-R", "component.install", {"aircraft_key": "SYN-02"}, at=AFTER_FLIGHTS + D)
     )
     assert stray_remove.id is not None and later_install.id is not None
-    # The candidate opens a window on SYN-01 that the stray remove closes; the five flights
-    # inside it would put the part at 304 cycles by the time of the install on SYN-02.
+    # The candidate opens a window on SYN-01 that the stray remove closes; the three flights
+    # inside it would put the part at 302 cycles by the time of the install on SYN-02.
     detail = refused(
         s, entry("BAT-R", "component.install", {"aircraft_key": "SYN-01"}, at=BEFORE_FLIGHTS)
     )
     assert detail == (
         f"this would make entry {later_install.id} impossible (component.install on BAT-R, "
         "2026-09-02 09:00 UTC): BAT-R cannot be fitted to SYN-02 at 2026-09-02 09:00 UTC: it has "
-        f"flown 304 cycles, past its 300-cycle life limit; {TAIL}; retract or correct entry "
+        f"flown 302 cycles, past its 300-cycle life limit; {TAIL}; retract or correct entry "
         f"{later_install.id} first"
     )
 

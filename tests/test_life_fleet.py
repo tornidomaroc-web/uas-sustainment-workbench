@@ -6,10 +6,12 @@ cycles, and the one calendar item passed its date on 2026-08-31, so the demo doe
 its story as the clock runs.
 
 The story the seed tells about its batteries, pinned here to the minute: BAT-04A began on
-SYN-01 two cycles short of its limit, reached it when SYN-01's second log ended on 2026-08-06
-(a cycle counts once its log has ended, and a limit reached grounds), came
-off on 2026-08-13 into storage and is never fitted again, since a part that has reached a
-life limit cannot be fitted (ledger.validate). SYN-01 lends BAT-01B to SYN-04 that morning;
+SYN-01 three cycles short of its limit, so SYN-01's third flight, on 2026-08-06, is the
+pack's 300th cycle and a permitted one; when that flight's log ended the pack had reached
+its limit and SYN-01 was unserviceable, and it did not fly again. The pack came
+off on 2026-08-13, tagged unserviceable and segregated, and is never fitted again, since a
+part that has reached a life limit cannot be (ledger.validate). SYN-05 does not fly after the
+work order on it opens. SYN-01 lends BAT-01B to SYN-04 on the morning of 2026-08-13;
 its cycles from SYN-01 count on SYN-04 (14 CFR 43.10) and stay under the limit. SYN-04 is
 grounded by BAT-04B alone, whose 24-calendar-month life ends on 2026-08-31 while it is fitted.
 """
@@ -27,6 +29,7 @@ from uas_workbench.fleet.synthetic import generate
 from uas_workbench.flight import Unknown, is_known
 from uas_workbench.ledger import Entry, LedgerError, append
 from uas_workbench.life import Board, DueList, board, due_list
+from uas_workbench.life.engine import log_end
 from uas_workbench.service.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -114,7 +117,7 @@ def test_the_lent_battery_keeps_its_cycles_from_the_first_airframe_and_stays_und
                 continue
             if inst.to_utc is None or r.utc_start < inst.to_utc:
                 counted += 1
-    assert counted == 5 + 3  # five flights on SYN-01 before the handover, three on SYN-04 after
+    assert counted == 3 + 3  # three flights on SYN-01 before the handover, three on SYN-04 after
     cycles = next(i for i in due.items if i.component_id == lent.id and i.basis == "cycles")
     assert cycles.used == lent.cycles_before + counted
     assert cycles.state == "ok" and cycles.message not in result.reasons
@@ -123,41 +126,75 @@ def test_the_lent_battery_keeps_its_cycles_from_the_first_airframe_and_stays_und
     assert lent.id not in {i.component_id for i in on_lender.items}
 
 
-def test_syn_01_is_grounded_when_bat_04a_reaches_its_limit_at_the_end_of_its_second_log() -> None:
-    """Until 0.5.0 this test read "crosses the cycle limit on 2026-08-06 between 11:07 and
-    11:08": the engine counted a cycle at take-off and called 300 of 300 due soon, so the board
-    turned as the third flight began. The seed is unchanged; the engine now counts a cycle when
-    its log ends and grounds at the limit, so the same records read: BAT-04A, two cycles short
-    at the start, reaches 300 when the second log ends at 09:07:54, and the flights that follow
-    are flights of an unserviceable aircraft. The seed's story is corrected next (CHANGELOG)."""
+def test_syn_01_is_serviceable_through_its_third_flight_and_unserviceable_from_its_log_end() -> (
+    None
+):
+    """BAT-04A starts three cycles short. SYN-01's third flight, from 11:07:54 on 2026-08-06,
+    is the pack's 300th cycle: the aircraft is serviceable when it starts and all the way
+    through it, the pack reading one cycle left. The log ends at 11:39:19.7; from that instant
+    the pack has reached its limit and the aircraft is unserviceable. It never flies again on
+    that pack: no log of SYN-01 starts after 11:07:54, the pack stays at exactly 300, and the
+    aircraft is serviceable again when the pack comes off on 2026-08-13 at 08:00.
+
+    (0.4.0: the pack started two short, the board turned at 11:07:54 as the flight began, and
+    two more flights followed. The 0.5.0 engine alone, on that seed, grounded SYN-01 at 09:07:54
+    and made the 11:07:54 flight a third flight by a grounded aircraft.)"""
     s = seeded()
-    before = state(s, "SYN-01", datetime(2026, 8, 6, 9, 7, tzinfo=UTC))
-    assert before.status == "serviceable" and before.reasons == ()
+    third = s.flights("SYN-01")[2]
+    start, end = third.utc_start, log_end(third)
+    assert isinstance(start, datetime) and isinstance(end, datetime)
+    assert start == datetime(2026, 8, 6, 11, 7, 54, 400000, tzinfo=UTC)
+    assert end == datetime(2026, 8, 6, 11, 39, 19, 700000, tzinfo=UTC)
+    assert [r.log_ref for r in s.flights("SYN-01")][2:] == [third.log_ref]  # its last log
+    one_left = (
+        "battery pack BAT-04A on aircraft SYN-01 has 1 cycle left of its 300-cycle life limit"
+    )
+    for at in (
+        datetime(2026, 8, 6, 9, 8, tzinfo=UTC),  # the second log has ended: 299 of 300
+        start,
+        datetime(2026, 8, 6, 11, 8, tzinfo=UTC),
+        datetime(2026, 8, 6, 11, 36, 18, tzinfo=UTC),
+        end - timedelta(microseconds=1),
+    ):
+        flying = state(s, "SYN-01", at)
+        assert flying.status == "serviceable" and flying.reasons == (), at
+        due, _ = compute(generate(CONFIG), "SYN-01", at)
+        assert one_left in [i.message for i in due.items], at
     reached = (
         "unserviceable",
         ("battery pack BAT-04A on aircraft SYN-01 has reached its 300-cycle life limit",),
     )
-    after = state(s, "SYN-01", datetime(2026, 8, 6, 9, 8, tzinfo=UTC))
-    assert (after.status, after.reasons) == reached
-    # The third flight starts at 11:07:54 with the limit reached; its own cycle counts when
-    # its log ends at 11:39:19, and only then is the pack one cycle past.
-    for minute in (7, 8, 39):
-        during = state(s, "SYN-01", datetime(2026, 8, 6, 11, minute, tzinfo=UTC))
-        assert (during.status, during.reasons) == reached, minute
-    landed = state(s, "SYN-01", datetime(2026, 8, 6, 11, 40, tzinfo=UTC))
-    assert landed.status == "unserviceable"
-    assert landed.reasons == (
-        "battery pack BAT-04A on aircraft SYN-01 is 1 cycle past its 300-cycle life limit",
-    )
-    # It stays grounded by that pack until the pack comes off on 2026-08-13 at 08:00 UTC.
-    still = state(s, "SYN-01", datetime(2026, 8, 13, 7, 59, tzinfo=UTC))
-    assert still.status == "unserviceable"
-    assert still.reasons == (
-        "battery pack BAT-04A on aircraft SYN-01 is 3 cycles past its 300-cycle life limit",
-    )
+    for at in (
+        end,
+        datetime(2026, 8, 6, 12, 9, 20, tzinfo=UTC),  # when 0.4.0's fourth log began
+        datetime(2026, 8, 8, 12, 25, tzinfo=UTC),  # and its fifth
+        datetime(2026, 8, 13, 7, 59, tzinfo=UTC),
+    ):
+        grounded = state(s, "SYN-01", at)
+        assert (grounded.status, grounded.reasons) == reached, at
     freed = state(s, "SYN-01", datetime(2026, 8, 13, 8, tzinfo=UTC))
     assert freed.status == "serviceable" and freed.reasons == ()
     assert state(s, "SYN-01", AS_OF).status == "serviceable"
+
+
+def test_syn_05_does_not_fly_after_its_work_order_opens() -> None:
+    """The work order follows the low-battery message of SYN-05's second flight and says to
+    inspect before the next flight. There is no next flight: both of its logs had ended the
+    day before the order opened, and the aircraft is in maintenance from then on."""
+    s = seeded()
+    (order,) = [e for e in s.entries("SYN-05") if e.kind == "work_order.open"]
+    assert order.occurred_utc == datetime(2026, 8, 7, 8, 27, 34, 800000, tzinfo=UTC)
+    assert "before the next flight" in order.statement
+    logs = s.flights("SYN-05")
+    assert len(logs) == 2
+    ends = [log_end(r) for r in logs]
+    assert all(isinstance(e, datetime) and e < order.occurred_utc for e in ends)
+    assert ends[-1] == datetime(2026, 8, 6, 8, 41, 42, tzinfo=UTC)
+    assert logs[1].fault_events  # the message the order answers is in the second log
+    before = state(s, "SYN-05", order.occurred_utc - timedelta(seconds=1))
+    assert before.status == "serviceable"
+    for at in (order.occurred_utc, datetime(2026, 8, 10, 12, tzinfo=UTC), AS_OF):
+        assert state(s, "SYN-05", at).status == "in maintenance", at
 
 
 def test_syn_04_is_grounded_on_2026_09_01_by_the_calendar_life_of_bat_04b_alone() -> None:
@@ -186,13 +223,16 @@ def test_syn_04_is_grounded_on_2026_09_01_by_the_calendar_life_of_bat_04b_alone(
     }
 
 
-def test_bat_04a_is_in_storage_after_2026_08_13_and_cannot_be_fitted_again() -> None:
+def test_bat_04a_is_segregated_after_2026_08_13_and_cannot_be_fitted_again() -> None:
+    """It came off at exactly its limit, 300 of 300, and its removal says what is done with a
+    life-expired part: tagged unserviceable and segregated (0.4.0 said placed in storage, and
+    took it off at 303)."""
     fleet = generate(CONFIG)
     (pack,) = [c for c in fleet.components if c.id == "BAT-04A"]
     assert [(i.aircraft_key, i.to_utc) for i in pack.installations] == [
         ("SYN-01", datetime(2026, 8, 13, 8, tzinfo=UTC))
     ]
-    assert pack.cycles_before == 298
+    assert pack.cycles_before == 297
     s = seeded()
     removal = next(
         e
@@ -200,7 +240,7 @@ def test_bat_04a_is_in_storage_after_2026_08_13_and_cannot_be_fitted_again() -> 
         if e.kind == "component.remove" and e.details["aircraft_key"] == "SYN-01"
     )
     assert removal.statement == (
-        "[synthetic] battery pack BAT-04A removed from SYN-01 and placed in storage"
+        "[synthetic] battery pack BAT-04A removed from SYN-01, tagged unserviceable and segregated"
     )
     for key in ("SYN-01", "SYN-04"):
         before = s.entry_count()
@@ -226,9 +266,9 @@ def test_bat_04a_is_in_storage_after_2026_08_13_and_cannot_be_fitted_again() -> 
             )
         assert exc.value.status == 409
         assert exc.value.detail == (
-            f"BAT-04A cannot be fitted to {key} at 2026-09-01 09:00 UTC: it has flown 303 "
-            "cycles, past its 300-cycle life limit; a life-limited part that has reached its "
-            "life limit is replaced, not fitted again"
+            f"BAT-04A cannot be fitted to {key} at 2026-09-01 09:00 UTC: it has flown 300 "
+            "cycles, the whole of its 300-cycle life limit; a life-limited part that has "
+            "reached its life limit is replaced, not fitted again"
         )
         assert s.entry_count() == before
 
