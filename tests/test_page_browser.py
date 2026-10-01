@@ -93,6 +93,24 @@ def test_findings_are_readable_at_the_top(page: Any) -> None:
     assert top is not None and fleet is not None and top["y"] < fleet["y"]
 
 
+def test_flights_logged_while_grounded_are_listed_above_the_fleet(page: Any) -> None:
+    """On the unchanged demo seed: seven, each a full sentence, labelled synthetic, with the
+    count of logs judged and not judged; none about a real aircraft."""
+    lines = page.locator("#grounded li")
+    assert lines.count() == 7
+    texts = lines.all_inner_texts()
+    assert all(t.startswith("a flight of aircraft SYN-0") for t in texts)
+    assert all("while the records show the aircraft" in t for t in texts)
+    assert "2026-08-06 11:07:54 UTC" in texts[0] and "unserviceable" in texts[0]
+    assert page.locator("#grounded li.synthetic").count() == 7
+    sub = page.inner_text("#grounded-sub")
+    assert "32 of 40 logs judged; 8 not judged" in sub
+    assert "no log is refused" in sub
+    top = page.locator("#grounded").bounding_box()
+    fleet = page.locator("#fleet").bounding_box()
+    assert top is not None and fleet is not None and top["y"] < fleet["y"]
+
+
 def test_every_fleet_cell_is_filled_and_status_is_civil(page: Any) -> None:
     rows = page.locator("#fleet tbody tr")
     assert rows.count() == CONFIG.aircraft + 2
