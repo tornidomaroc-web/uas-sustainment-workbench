@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Not a release: no version change, and the code's behaviour is the same.
+
+- `.claude/settings.json` and `.claude/hooks/cloud-guard.js`, for Claude Code cloud sessions on
+  this repository. Before every shell command and file edit, a hook loads the guard only when
+  `CLAUDE_CODE_REMOTE` is `true`, which Claude Code sets in cloud sessions and never locally.
+  In a cloud session the guard refuses merges, releases, tag creation and tag pushes, pushes to
+  main, forced and deleting pushes, writes through `gh api`, docker, ollama, and edits under
+  `.claude/`; it allows the rest, including pushing the session's own branch. In a local
+  session it refuses nothing, and no permission rule is set, because one would bind local
+  sessions too. It reads command text, so it is a convenience in front of the server-side
+  rules (the branch rule on main and the `v*` tag rulesets), not a wall.
+  `tests/test_cloud_guard.py` pins what it refuses and allows, both ways.
+- The `life/cue.py` docstring's example of a grounded-flight cue now uses the hand-built test
+  aircraft (`flown unserviceable 2026-03-11 10:00`), since the 0.5.0 demo fleet holds no such
+  flight; it used a flight of the 0.4.0 seed.
+
 ## 0.5.0
 
 One rule, stated once and applied everywhere: **a limit counted in completed units is reached
