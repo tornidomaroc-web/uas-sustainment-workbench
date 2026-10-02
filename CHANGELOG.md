@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0
 
 One rule, stated once and applied everywhere: **a limit counted in completed units is reached
 when its last unit completes.** A cycle completes when its flight is over, an hour when it
@@ -8,7 +8,7 @@ has been flown, a calendar day at midnight. Three changes to the rules follow fr
 the tool reports a flight logged while the records show the aircraft grounded; then the
 synthetic fleet is generated so that its aircraft do not make such flights. The order
 matters and is kept below: the first two were measured on the 0.4.0 seed, unchanged, and
-the third changes that seed. The version string stays 0.4.0 until the release.
+the third changes that seed. The version string became 0.5.0 with the release.
 
 **What the released 0.4.0 seed recorded, stated plainly.** One take-off on a battery pack
 already at its life limit, which 0.4.0's own board called serviceable (SYN-01, 2026-08-06
@@ -121,17 +121,20 @@ board said. Until now nothing compared the two. `life/grounded.py` compares ever
 start with the board state the records give at that instant, and a flight that began while
 that state was a known unserviceable, in maintenance or AOG is reported:
 
-- "a flight of aircraft SYN-01 was logged from 2026-08-06 12:09:19 UTC while the records
-  show the aircraft unserviceable at that time: battery pack BAT-04A on aircraft SYN-01 is 1
-  cycle past its 300-cycle life limit"
+- "a flight of aircraft FX-01 was logged from 2026-03-11 10:00:00 UTC while the records
+  show the aircraft unserviceable at that time: battery pack BAT-FX on aircraft FX-01 has
+  reached its 300-cycle life limit"
 
 One sentence per flight: the aircraft, the log's start, the state, and every cause that
 grounded it at that instant, worst first, in the board's own sentences. With `?cues=true`,
-`cue` ("flown unserviceable 2026-08-06 12:09", "flown in maintenance 2026-08-07 08:41",
-"flown AOG ...") and `cause_cues`, the existing cues of those causes ("BAT-04A 1 cycle past
-300-cycle limit"). The sentence says the records and the log disagree; it does not say
-which is right, and LIMITS.md lists what it cannot know: an entry dated back, a time typed
-to the day, a log filed under the wrong airframe, a check flight the operator permitted.
+`cue` ("flown unserviceable 2026-03-11 10:00", "flown in maintenance 2026-03-10 10:00",
+"flown AOG 2026-03-10 12:00") and `cause_cues`, the existing cues of those causes ("BAT-FX
+reached 300-cycle limit"). These examples, and the sentence above, are what the hand-built
+test aircraft FX-01, FX-02 and FX-03 give (`flown_grounded()` in
+`tests/test_grounded_flights.py`); the demo fleet generated since 0.5.0 holds no such
+flight. The sentence says the records and the log disagree; it does not say which is
+right, and LIMITS.md lists what it cannot know: an entry dated back, a time typed to the
+day, a log filed under the wrong airframe, a check flight the operator permitted.
 
 What is judged. The instant is the log's start itself, on everything dated up to and
 including it, the log's own flight excluded (a log counts from its end): the answer the
@@ -261,7 +264,9 @@ calendar boundary of the fit refusal), `service/app.py` (`flights_until`, the tw
 the usage section of the evidence pack, the static export (one new key) and the demo page
 (two captions, one new section), `fleet/synthetic.py` (the generation), recorded runs 02 and
 07. Not changed: the ledger's file format, the shape of every response that existed, the
-seven other recorded runs, the evidence sample's hash, the version string.
+seven other recorded runs, the evidence sample's hash. The release commit changes the
+version string to 0.5.0 and the examples of a finding in this file and README.md, and no
+code.
 
 ## 0.4.0
 
