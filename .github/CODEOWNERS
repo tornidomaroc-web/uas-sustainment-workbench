@@ -1,0 +1,4 @@
+# Every path is owned by the repository owner. Merging into main needs a code owner's approving
+# review (ruleset "main: one owner approval, owner bypasses by PR"), so an approval from an app
+# or another account never counts; the owner merges through the ruleset's admin bypass.
+* @tornidomaroc-web
