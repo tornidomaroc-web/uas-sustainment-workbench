@@ -29,7 +29,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
   annual insp 12 days overdue              100 h insp: time in service not known
   AOG awaiting parts since 2026-08-14      in maintenance since 2026-08-07
   deferred defect since 2026-08-07         not known: no maintenance record
-  flown unserviceable 2026-08-06 12:09     flown in maintenance 2026-08-07 08:41
+  flown unserviceable 2026-03-11 10:00     flown in maintenance 2026-03-10 10:00
 """
 
 from __future__ import annotations
