@@ -30,6 +30,8 @@ Not a release: no version change, and the code's behaviour is the same.
   deprecation warning on every test run. `tests/test_test_client.py` fails if it comes back.
 - `read_ulog` opens the log itself and hands pyulog the handle, so a log that fails to parse no
   longer leaves its file open on the ingest path; `tests/test_flight_px4.py` fails if it does.
+- A `.bin` upload with no DataFlash message at all is refused with 422 and nothing is stored,
+  as a junk `.ulg` already was; an empty `.bin` no longer leaves its file open.
 
 ## 0.5.0
 
