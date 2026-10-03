@@ -35,6 +35,9 @@ Not a release: no version change, and the code's behaviour is the same.
 - A `.bin` or `.ulg` with definitions, metadata or parameters but no recorded data message is
   refused with 422 and nothing is stored, where it was a 0.0 s flight; one data message of any
   type, read by the tool or not, still makes a flight, and every fixture's record is unchanged.
+- `uasw ingest` no longer stops with a traceback at a log it cannot read: it prints one
+  `refused (422)` line naming the file, with the reason `POST /ingest` gives, stores nothing for
+  it, reads the files after it, and exits 1 once all are read if any was refused.
 
 ## 0.5.0
 
