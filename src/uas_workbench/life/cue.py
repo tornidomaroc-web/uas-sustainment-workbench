@@ -28,7 +28,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
   100 h insp due in 82.5 h                 annual insp due by 2027-04-30
   annual insp 12 days overdue              100 h insp: time in service not known
   AOG awaiting parts since 2026-08-14      in maintenance since 2026-08-07
-  deferred defect since 2026-08-07         not known: no maintenance record
+  not known: time in service               not known: no maintenance record
   flown unserviceable 2026-03-11 10:00     flown in maintenance 2026-03-10 10:00
 """
 
