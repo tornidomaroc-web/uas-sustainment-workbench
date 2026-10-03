@@ -21,6 +21,10 @@ Not a release: no version change, and the code's behaviour is the same.
 - The `life/cue.py` docstring's example of a grounded-flight cue now uses the hand-built test
   aircraft (`flown unserviceable 2026-03-11 10:00`), since the 0.5.0 demo fleet holds no such
   flight; it used a flight of the 0.4.0 seed.
+- Two more cue examples now show what the 0.5.0 demo gives: the README's past-limit example is
+  `BAT-04B past calendar limit 2026-08-31`, where it showed BAT-04A one cycle past, which 0.5.0
+  never reaches; the `life/cue.py` grammar table shows `not known: time in service` where it
+  showed a deferred defect, which no record holds.
 
 ## 0.5.0
 
