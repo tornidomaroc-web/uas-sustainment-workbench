@@ -79,9 +79,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     store = open_store(args.db)
     refused = 0
     for path in args.logs:
-        reader = READERS.get(path.suffix.lower())
+        suffix = path.suffix.lower()
+        reader = READERS.get(suffix)
         if reader is None:
-            log.error("unsupported file type", extra={"path": str(path)})
+            # The refusal POST /ingest gives a file it has no reader for.
+            detail = f"unsupported file type {suffix!r}; expected .ulg or .bin"
+            print(f"refused (422): {path}: {detail}", file=sys.stderr)
+            refused += 1
             continue
         try:
             record = reader(path, licence=args.licence, attribution=args.attribution)

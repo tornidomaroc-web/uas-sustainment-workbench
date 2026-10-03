@@ -38,6 +38,9 @@ Not a release: no version change, and the code's behaviour is the same.
 - `uasw ingest` no longer stops with a traceback at a log it cannot read: it prints one
   `refused (422)` line naming the file, with the reason `POST /ingest` gives, stores nothing for
   it, reads the files after it, and exits 1 once all are read if any was refused.
+- `uasw ingest` refuses a file whose type it has no reader for in the same way, with the
+  `unsupported file type` text `POST /ingest` gives, and counts it toward exit status 1; it
+  logged a line and exited 0.
 
 ## 0.5.0
 
