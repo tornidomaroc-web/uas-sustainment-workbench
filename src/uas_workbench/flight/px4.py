@@ -181,7 +181,10 @@ def _lifetime(ulog: ULog) -> Maybe[LifetimeCounter]:
 
 
 def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
-    ulog = ULog(str(path), message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+    # Given a path, pyulog opens the file itself and leaves it open when parsing fails; given
+    # a handle, it reads from it, and this block closes it either way.
+    with path.open("rb") as handle:
+        ulog = ULog(handle, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
     flight_s, landings = _flight_and_landings(ulog)
     battery_mah, battery_wh = _battery(ulog)
     return FlightRecord(

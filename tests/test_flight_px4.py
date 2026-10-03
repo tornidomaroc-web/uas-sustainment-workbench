@@ -1,3 +1,4 @@
+import gc
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -100,3 +101,16 @@ def test_a_log_that_opens_armed_is_one_arm_cycle(tmp_path: Path) -> None:
         b.data(status, {"timestamp": t * S, "arming_state": armed})
     r = read_ulog(b.write(tmp_path / "armed.ulg"), **ATTR)
     assert r.arm_cycles == 1
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+def test_a_log_that_fails_to_parse_leaves_no_file_open(tmp_path: Path) -> None:
+    """The ingest path removes the upload as soon as the reader returns; a handle left open
+    by a failed parse is a ResourceWarning, an error under this test only. It is raised where
+    the handle is collected, so pytest reports it as unraisable; both are errors here."""
+    junk = tmp_path / "junk.ulg"
+    junk.write_bytes(b"not a log at all")
+    with pytest.raises(TypeError, match="Invalid file format"):
+        read_ulog(junk, **ATTR)
+    gc.collect()

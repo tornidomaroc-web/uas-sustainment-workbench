@@ -28,6 +28,8 @@ Not a release: no version change, and the code's behaviour is the same.
 - The `dev` extra installs `httpx2` instead of `httpx`, and asks for Starlette 1.3 or later, the
   first release whose test client runs on `httpx2`. With plain `httpx` that test client raised a
   deprecation warning on every test run. `tests/test_test_client.py` fails if it comes back.
+- `read_ulog` opens the log itself and hands pyulog the handle, so a log that fails to parse no
+  longer leaves its file open on the ingest path; `tests/test_flight_px4.py` fails if it does.
 
 ## 0.5.0
 
