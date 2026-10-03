@@ -20,11 +20,24 @@ Where the examples are found, and which property each must keep:
                          names a record, and keeps the provenance too.
   README.md              every quoted cue: wording and provenance, because the README tells a
                          reader what the tool says about the demo they can open.
-  CHANGELOG.md           only the Unreleased section, which describes the code as it is now:
-                         wording and provenance. A released section is history: it may quote
-                         what an earlier version or seed gave ("1 cycle past" where 0.5.0 says
-                         "reached", the 0.4.0 seed's flights), and holding it to today's output
-                         would force history to be rewritten.
+  CHANGELOG.md           the Unreleased section, which describes the code as it is now, and
+                         the newest released section, which describes the code as released,
+                         so a release that renames Unreleased keeps its examples checked:
+                         wording and provenance. An older released section is history: it may
+                         quote what an earlier version or seed gave ("1 cycle past" where
+                         0.5.0 says "reached", the 0.4.0 seed's flights), and holding it to
+                         today's output would force history to be rewritten.
+
+A quotation in a checked section is a claim about the code; history is told in prose, as 0.5.1
+tells of "BAT-04A one cycle past" without quoting a cue. The text cannot show whether a quoted
+cue that no longer holds is history or a stale example, so a section that must quote an old cue
+whole names it in HISTORICAL, which holds it to being in that section and stale, so it can
+neither hide a cue that holds nor outlive its text.
+
+A checked section that yields no cue must say so: the newest released section's cue count is
+pinned in RELEASED_CUES, so the next release, which makes a new section the newest, fails here
+until its count is written down, 0 included. Unreleased has no count, since it often quotes no
+cue; if its heading is there, the section must be found.
 
 The plan times are fixed, never the wall clock: an example true only today would be stale
 tomorrow. A cue is found in the README and the CHANGELOG by how it begins (a part id, an
@@ -94,11 +107,43 @@ def readme_examples() -> list[str]:
     return quoted_cues((ROOT / "README.md").read_text(encoding="utf-8"))
 
 
-def unreleased_examples() -> list[str]:
-    """The cues quoted in the CHANGELOG's Unreleased section only; none if there is none."""
+# The newest released section and the number of cues it quotes. A release that makes a new
+# section the newest adds it here, with its count, 0 if it quotes none.
+RELEASED_CUES = {"0.5.1": 3}
+# A checked section's whole quotation of a cue the code no longer gives, kept on purpose to say
+# what changed: section heading -> the quoted cues. None today.
+HISTORICAL: dict[str, frozenset[str]] = {}
+
+
+def changelog_sections() -> list[tuple[str, str]]:
+    """Every `## ` section of the CHANGELOG, newest first, as (heading, text)."""
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    m = re.search(r"^## Unreleased\n(.*?)(?=^## )", text, re.S | re.M)
-    return quoted_cues(m.group(1)) if m else []
+    return [
+        (m[1].strip(), m[2])
+        for m in re.finditer(r"^## ([^\n]+)\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    ]
+
+
+def checked_sections() -> list[tuple[str, str]]:
+    """The Unreleased section if there is one, and the newest released section."""
+    sections = changelog_sections()
+    unreleased = [s for s in sections[:1] if s[0] == "Unreleased"]
+    released = [s for s in sections if s[0] != "Unreleased"]
+    return unreleased + released[:1]
+
+
+def section_examples(heading: str, text: str, historical: dict[str, frozenset[str]]) -> list[str]:
+    """The cues quoted in one section, less the ones it names as history."""
+    return [c for c in quoted_cues(text) if c not in historical.get(heading, frozenset())]
+
+
+def changelog_examples() -> list[tuple[str, str]]:
+    """(heading, cue) for every cue quoted in a checked section, less the historical ones."""
+    return [
+        (heading, c)
+        for heading, text in checked_sections()
+        for c in section_examples(heading, text, HISTORICAL)
+    ]
 
 
 def test_the_examples_are_found() -> None:
@@ -106,6 +151,18 @@ def test_the_examples_are_found() -> None:
     cells = docstring_examples()
     assert len(cells) >= 20 and any(c.startswith("flown ") for c in cells), cells
     assert len(readme_examples()) >= 5, readme_examples()
+    sections = changelog_sections()
+    headings = [h for h, _ in sections]
+    assert "Unreleased" not in headings[1:], "Unreleased is not the first CHANGELOG section"
+    released = [(h, t) for h, t in sections if h != "Unreleased"]
+    assert released, "the CHANGELOG has no released section"
+    newest, section = released[0]
+    assert newest in RELEASED_CUES, (
+        f"{newest} is the newest released section: add it to RELEASED_CUES with the number of "
+        "cues it quotes, 0 if none"
+    )
+    found = section_examples(newest, section, HISTORICAL)
+    assert len(found) == RELEASED_CUES[newest], (newest, found)
     text = '"PROP-01 1 h left", `annual insp due by 2027-04-30`, "AOG\nawaiting parts since'
     assert quoted_cues(text + ' 2026-08-14" and "AOG" alone') == [
         "PROP-01 1 h left",
@@ -276,12 +333,12 @@ def produced() -> frozenset[str]:
 WORDING = [
     *(pytest.param(c, id=f"cue.py: {c}") for c in docstring_examples()),
     *(pytest.param(c, id=f"README: {c}") for c in readme_examples()),
-    *(pytest.param(c, id=f"CHANGELOG Unreleased: {c}") for c in unreleased_examples()),
+    *(pytest.param(c, id=f"CHANGELOG {h}: {c}") for h, c in changelog_examples()),
 ]
 PROVENANCE = [
     *(pytest.param(c, id=f"cue.py: {c}") for c in docstring_examples() if DATED.search(c)),
     *(pytest.param(c, id=f"README: {c}") for c in readme_examples()),
-    *(pytest.param(c, id=f"CHANGELOG Unreleased: {c}") for c in unreleased_examples()),
+    *(pytest.param(c, id=f"CHANGELOG {h}: {c}") for h, c in changelog_examples()),
 ]
 
 
@@ -311,3 +368,18 @@ def test_the_wording_check_refuses_a_stale_example() -> None:
     assert grammar_gives("PROP-01 102.9 h remaining of 300 h") is None
     assert grammar_gives("100 h insp 12 h overdue") == "100 h insp 12.0 h overdue"
     assert "flown unserviceable 2026-08-06 12:09" not in produced()  # the 0.4.0 seed's flight
+
+
+def test_a_historical_quote_is_stale_and_in_its_section() -> None:
+    """HISTORICAL exempts only a quotation that is there and no longer holds, in a checked
+    section; and the exemption itself drops that quotation and nothing else."""
+    checked = dict(checked_sections())
+    for heading, cues in HISTORICAL.items():
+        assert heading in checked, f"{heading} is not a checked section; HISTORICAL is not needed"
+        for c in cues:
+            assert c in quoted_cues(checked[heading]), f"{c!r} is not quoted in {heading}"
+            assert grammar_gives(c) != c or c not in produced(), f"{c!r} still holds; check it"
+    text = "`BAT-04A 1 cycles past 300-cycle limit` became `BAT-04A reached 300-cycle limit`"
+    old = frozenset({"BAT-04A 1 cycles past 300-cycle limit"})
+    assert section_examples("9.9.9", text, {"9.9.9": old}) == ["BAT-04A reached 300-cycle limit"]
+    assert section_examples("9.9.8", text, {"9.9.9": old}) == quoted_cues(text)
