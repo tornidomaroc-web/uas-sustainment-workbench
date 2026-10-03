@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `tests/test_cue_examples.py` checks the cues quoted in the newest released section of this
+  file as well as in Unreleased, so a release no longer takes its examples out of the check, as
+  0.5.1 took its three. The newest released section's cue count is pinned, so the next release
+  fails the test until its count is written down, 0 included; an older section stays history. A
+  checked section that must quote an old cue whole names it in the test's `HISTORICAL`, which
+  holds it to being quoted there and stale.
+
 ## 0.5.1
 
 What changed in behaviour is ingest. A `.bin` that is not a DataFlash log, and a `.bin` or
