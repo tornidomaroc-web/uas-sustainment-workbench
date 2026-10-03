@@ -35,6 +35,19 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **Fault events** are what the autopilot chose to report: PX4 ERROR-level messages and
   failure-detector flags (15 of 40 logs have at least one), ArduPilot `ERR` messages and
   crash flags. Absence of a reported fault is not absence of a fault.
+- **A log's span is measured over the messages the tool reads.** For a ULog, from the start
+  in its header to the last timestamp of the topics it reads; for a DataFlash log, from the
+  first to the last timestamp of the message types it reads (PARM, MSG, STAT, GPS, EV, ARM,
+  BAT, CURR, ERR). A log whose other messages run longer, or that holds only messages the
+  tool does not read, reports a shorter span, down to 0.0 s, and since a log counts from its
+  start plus that span, its usage counts that much earlier.
+- **A log is a flight only if it holds recorded data, and that costs a second read in one
+  case.** Definitions, parameters and boot text alone are refused. A ULog with data only in
+  topics the tool does not read is parsed a second time, with every topic, to find that data;
+  a large log of that kind is read in full twice.
+- **A corrupt DataFlash file is loud before it is refused.** pymavlink prints one `bad header`
+  line on standard error for every byte it cannot frame, so a large corrupt `.bin` writes that
+  many lines to the service's or the command's stderr before the 422.
 
 ## Limits of reconcile()
 

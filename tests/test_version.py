@@ -6,7 +6,7 @@ from pathlib import Path
 from uas_workbench import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE = "0.5.0"
+RELEASE = "0.5.1"
 
 
 def test_code_and_package_declare_the_same_version() -> None:
