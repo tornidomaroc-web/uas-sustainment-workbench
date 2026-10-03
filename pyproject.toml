@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uas-sustainment-workbench"
-version = "0.5.0"
+version = "0.5.1"
 description = "Open-source maintenance and readiness tooling for small unmanned aircraft fleets, driven by PX4 and ArduPilot flight logs."
 readme = "README.md"
 license = "Apache-2.0"

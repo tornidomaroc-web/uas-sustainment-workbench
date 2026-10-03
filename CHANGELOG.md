@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
 
-Not a release: no version change, and the code's behaviour is the same.
+What changed in behaviour is ingest. A `.bin` that is not a DataFlash log, and a `.bin` or
+`.ulg` that holds definitions but no recorded data, were stored as a 0.0 s flight; they are now
+refused with 422 and nothing is stored. A ULog that fails to parse and an empty `.bin` were
+already refused, but left their file open; they no longer do. `uasw ingest` now refuses as the
+API does and reads past a refused file, where it stopped with a traceback at the first one (or,
+for an unsupported file type, exited 0). The records of every readable log are unchanged. The
+rest is repository tooling, test dependencies and corrected documentation examples.
 
 - `.claude/settings.json` and `.claude/hooks/cloud-guard.js`, for Claude Code cloud sessions on
   this repository. Before every shell command and file edit, a hook loads the guard only when
