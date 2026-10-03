@@ -74,13 +74,23 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
+    import sys
+
     store = open_store(args.db)
+    refused = 0
     for path in args.logs:
         reader = READERS.get(path.suffix.lower())
         if reader is None:
             log.error("unsupported file type", extra={"path": str(path)})
             continue
-        record = reader(path, licence=args.licence, attribution=args.attribution)
+        try:
+            record = reader(path, licence=args.licence, attribution=args.attribution)
+        except Exception as exc:
+            # The refusal POST /ingest gives the same file; the next file is still read.
+            detail = f"not a readable PX4 ULog or ArduPilot DataFlash log: {exc}"
+            print(f"refused (422): {path}: {detail}", file=sys.stderr)
+            refused += 1
+            continue
         store.ensure_aircraft(args.aircraft, record)
         try:
             store.add_flight(args.aircraft, record)
@@ -88,6 +98,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             log.warning(str(exc))
             continue
         log.info("ingested", extra={"aircraft_key": args.aircraft, "log_ref": record.log_ref})
+    if refused:
+        sys.exit(1)
 
 
 def cmd_export_static(args: argparse.Namespace) -> None:
