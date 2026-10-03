@@ -90,7 +90,7 @@ list with the board state and its reasons, computed now or at `?as_of=`, and `/a
 the same `?as_of=`. Both, and `/fleet/due`, take `?cues=true`, which adds a short cue beside
 every sentence: at most 40 characters, built from the same fields by one grammar in
 [`life/cue.py`](src/uas_workbench/life/cue.py) ("BAT-04A reached 300-cycle limit",
-"BAT-04A 1 cycle past 300-cycle limit", "100 h insp 3.6 h overdue, in tolerance", "100 h insp: time in service not known", "AOG
+"BAT-04B past calendar limit 2026-08-31", "100 h insp 3.6 h overdue, in tolerance", "100 h insp: time in service not known", "AOG
 awaiting parts since 2026-08-14"), for a wall board that cannot carry a paragraph. A cue keeps
 the part or inspection, the number, the unit and the direction, and says exactly what its
 state says; the sentence stays as it is, and without the option the response is byte for byte
