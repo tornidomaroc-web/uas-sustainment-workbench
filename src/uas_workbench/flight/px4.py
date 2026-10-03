@@ -33,6 +33,15 @@ TOPICS = (
 FAILURE_FLAGS = ("fd_motor", "fd_imbalanced_prop", "fd_battery", "fd_roll", "fd_pitch", "fd_alt")
 
 
+def _has_data(path: Path) -> bool:
+    """Whether the log holds a data message of any topic. Definitions, info, parameters and
+    logged text with no data are a logger started and stopped before its first sample, no
+    evidence of a flight. pyulog keeps data only of the topics it is asked for, so a log with
+    none of TOPICS is read again whole; the topics it holds then are the answer."""
+    with path.open("rb") as handle:
+        return bool(ULog(handle, disable_str_exceptions=True).data_list)
+
+
 def _dataset(ulog: ULog, name: str) -> ULog.Data | None:
     for dataset in ulog.data_list:
         if dataset.name == name and dataset.multi_id == 0:
@@ -185,6 +194,8 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
     # a handle, it reads from it, and this block closes it either way.
     with path.open("rb") as handle:
         ulog = ULog(handle, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+    if not ulog.data_list and not _has_data(path):
+        raise ValueError("holds a header but no recorded data")
     flight_s, landings = _flight_and_landings(ulog)
     battery_mah, battery_wh = _battery(ulog)
     return FlightRecord(

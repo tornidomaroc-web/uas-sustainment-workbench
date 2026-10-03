@@ -242,6 +242,47 @@ def test_ingest_refuses_a_bin_with_no_dataflash_messages(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_ingest_refuses_a_log_with_no_recorded_data(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A logger that starts and stops before its first sample leaves definitions and no
+    data: a 422 with the reason, nothing stored, no aircraft registered, no upload kept."""
+    from builders.dataflash import DataFlashBuilder
+    from builders.ulog import ULogBuilder
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    bin_log = DataFlashBuilder().define("ATT", "Qff", "TimeUS,Roll,Pitch")
+    bin_log.define("ARM", "QBH", "TimeUS,ArmState,ArmChecks")
+    ulog = ULogBuilder().format("vehicle_status", ["uint64_t timestamp", "uint8_t arming_state"])
+    uploads = [
+        ("started.bin", bin_log.write(tmp_path / "b").read_bytes(), "format definitions"),
+        ("started.ulg", ulog.write(tmp_path / "u").read_bytes(), "a header"),
+    ]
+    for path in tmp_path.iterdir():
+        path.unlink()
+    assert [len(content) for _, content, _ in uploads] == [178, 117]
+
+    def flights() -> dict[str, int]:
+        return {a["key"]: a["flights"] for a in client.get("/aircraft").json()}
+
+    before = flights()
+    for name, content, holds in uploads:
+        for key in ("started-01", ALFA_KEY, PX4_KEY):
+            response = client.post(
+                "/ingest",
+                data={"aircraft_key": key},
+                files={"log": (name, content, "application/octet-stream")},
+            )
+            assert response.status_code == 422, (name, key, response.text)
+            assert response.json() == {
+                "detail": "not a readable PX4 ULog or ArduPilot DataFlash log: "
+                f"holds {holds} but no recorded data"
+            }
+    assert flights() == before
+    assert client.get("/aircraft/started-01/flights").status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_metrics_and_request_ids(client: TestClient) -> None:
     response = client.get("/aircraft")
     assert response.headers["x-request-id"]

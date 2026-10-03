@@ -70,6 +70,8 @@ def test_flown_log_record(tmp_path: Path) -> None:
 
 def test_every_unknown_names_its_reason(tmp_path: Path) -> None:
     b = _formats(ULogBuilder(start_us=S)).info("sys_uuid", "0000000000000000")
+    b.format("vehicle_attitude", ["uint64_t timestamp", "float[4] q"])
+    b.data(b.subscribe("vehicle_attitude"), {"timestamp": 2 * S})  # data, none the reader uses
     r = read_ulog(b.write(tmp_path / "bare.ulg"), **ATTR)
 
     assert r.aircraft_key == Unknown("sys_uuid missing or all zeros")
@@ -114,3 +116,24 @@ def test_a_log_that_fails_to_parse_leaves_no_file_open(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="Invalid file format"):
         read_ulog(junk, **ATTR)
     gc.collect()
+
+
+def test_a_log_with_no_recorded_data_is_refused(tmp_path: Path) -> None:
+    """A header, definitions, info, parameters, subscriptions and logged text are what PX4
+    writes before its first sample; with no data message, no flight is evidenced."""
+    one_definition = ULogBuilder(start_us=S).format(
+        "vehicle_status", ["uint64_t timestamp", "uint8_t arming_state"]
+    )
+    assert len(one_definition.write(tmp_path / "one.ulg").read_bytes()) == 117
+    everything_but_data = _formats(ULogBuilder(start_us=S)).info("sys_uuid", "synthetic-0001")
+    everything_but_data.param("LND_FLIGHT_T_HI", 1)
+    everything_but_data.subscribe("vehicle_status")
+    everything_but_data.log(3, "Battery low", 2 * S)
+    for name, log in [
+        ("header", ULogBuilder(start_us=S)),
+        ("one", one_definition),
+        ("all", everything_but_data),
+    ]:
+        with pytest.raises(ValueError) as refused:
+            read_ulog(log.write(tmp_path / f"{name}.ulg"), **ATTR)
+        assert str(refused.value) == "holds a header but no recorded data", name

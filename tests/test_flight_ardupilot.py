@@ -120,12 +120,24 @@ def test_an_empty_log_is_refused_and_leaves_no_file_open(tmp_path: Path) -> None
     gc.collect()
 
 
-def test_a_log_of_messages_it_does_not_read_is_still_a_log(tmp_path: Path) -> None:
-    """The refusal is for files with no DataFlash message at all, not for logs with nothing
-    this reader uses: format definitions alone, or only messages outside READ_TYPES."""
+def test_data_it_does_not_read_is_a_log_but_definitions_alone_are_not(tmp_path: Path) -> None:
+    """A recorded data message of any type makes a log, even one outside READ_TYPES. Format
+    definitions, parameters and boot text with no data are what a logger leaves when it starts
+    and stops before its first sample; that is no evidence a flight happened, so it is refused
+    rather than stored as a 0.0 s flight (this test once pinned it as accepted)."""
     b = DataFlashBuilder().define("ATT", "Qff", "TimeUS,Roll,Pitch")
     b.msg("ATT", S, 0.0, 0.0)
     assert read_dataflash(b.write(tmp_path / "att.bin"), **ATTR).arm_cycles == Unknown(
         "no ARM or EV messages"
     )
-    assert read_dataflash(_formats().write(tmp_path / "fmt.bin"), **ATTR).log_span_s == 0.0
+
+    two_formats = DataFlashBuilder().define("ATT", "Qff", "TimeUS,Roll,Pitch")
+    two_formats.define("ARM", "QBH", "TimeUS,ArmState,ArmChecks")
+    assert len(two_formats.write(tmp_path / "two.bin").read_bytes()) == 178
+    with_params = _formats()
+    with_params.msg("MSG", S, "ArduPlane V4.5.7 (1234abcd)")
+    with_params.msg("PARM", S, "STAT_BOOTCNT", 12.0)
+    for name, log in [("fmt", _formats()), ("two", two_formats), ("parm", with_params)]:
+        with pytest.raises(ValueError) as refused:
+            read_dataflash(log.write(tmp_path / f"{name}.bin"), **ATTR)
+        assert str(refused.value) == "holds format definitions but no recorded data", name

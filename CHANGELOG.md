@@ -32,6 +32,9 @@ Not a release: no version change, and the code's behaviour is the same.
   longer leaves its file open on the ingest path; `tests/test_flight_px4.py` fails if it does.
 - A `.bin` upload with no DataFlash message at all is refused with 422 and nothing is stored,
   as a junk `.ulg` already was; an empty `.bin` no longer leaves its file open.
+- A `.bin` or `.ulg` with definitions, metadata or parameters but no recorded data message is
+  refused with 422 and nothing is stored, where it was a 0.0 s flight; one data message of any
+  type, read by the tool or not, still makes a flight, and every fixture's record is unchanged.
 
 ## 0.5.0
 
