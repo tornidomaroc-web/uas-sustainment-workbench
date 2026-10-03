@@ -110,3 +110,22 @@ def test_readable_files_and_duplicates_exit_zero_as_before(
     err = capsys.readouterr().err
     assert f"{KEY}/first is already stored" in err
     assert "refused" not in err
+
+
+def test_an_unsupported_file_type_is_refused_as_the_api_refuses_it(
+    tmp_path: Path, logs: list[Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """POST /ingest answers 422 for a suffix it has no reader for; the command line refuses it
+    in the same words, stores nothing for it, reads on, and exits 1, not 0."""
+    notes = tmp_path / "notes.TXT"
+    notes.write_text("a shopping list\n", encoding="utf-8")
+    db = tmp_path / "fleet.sqlite"
+    with pytest.raises(SystemExit) as exit_:
+        main(["--db", str(db), "ingest", KEY, str(logs[0]), str(notes), str(logs[3])])
+    assert exit_.value.code == 1
+    assert stored(db) == ["first", "second"]
+    err = capsys.readouterr().err
+    assert [line for line in err.splitlines() if line.startswith("refused")] == [
+        f"refused (422): {notes}: {api_detail(notes)}"
+    ]
+    assert api_detail(notes) == "unsupported file type '.txt'; expected .ulg or .bin"
