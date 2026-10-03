@@ -1,3 +1,4 @@
+import gc
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,3 +92,40 @@ def test_crash_flag_becomes_a_fault_event(tmp_path: Path) -> None:
         FaultEvent(2.0, "crash", "STAT.Crash set"),
         FaultEvent(2.0, "hit", "STAT.Hit set"),
     )
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+@pytest.mark.parametrize(
+    "content", [b"not a log at all", bytes(range(256)) * 16], ids=["text", "every-byte"]
+)
+def test_a_file_with_no_dataflash_messages_is_refused(tmp_path: Path, content: bytes) -> None:
+    """Not a 0.0 s flight with every field unknown: the ingest path turns this into a 422."""
+    junk = tmp_path / "junk.bin"
+    junk.write_bytes(content)
+    with pytest.raises(ValueError, match="no DataFlash messages"):
+        read_dataflash(junk, **ATTR)
+    gc.collect()
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+def test_an_empty_log_is_refused_and_leaves_no_file_open(tmp_path: Path) -> None:
+    """pymavlink opens the file before it finds it empty and never closes it; a handle left
+    open is a ResourceWarning, an error under this test only, as for the ULog reader."""
+    empty = tmp_path / "empty.bin"
+    empty.touch()
+    with pytest.raises(ValueError, match="cannot mmap an empty file"):
+        read_dataflash(empty, **ATTR)
+    gc.collect()
+
+
+def test_a_log_of_messages_it_does_not_read_is_still_a_log(tmp_path: Path) -> None:
+    """The refusal is for files with no DataFlash message at all, not for logs with nothing
+    this reader uses: format definitions alone, or only messages outside READ_TYPES."""
+    b = DataFlashBuilder().define("ATT", "Qff", "TimeUS,Roll,Pitch")
+    b.msg("ATT", S, 0.0, 0.0)
+    assert read_dataflash(b.write(tmp_path / "att.bin"), **ATTR).arm_cycles == Unknown(
+        "no ARM or EV messages"
+    )
+    assert read_dataflash(_formats().write(tmp_path / "fmt.bin"), **ATTR).log_span_s == 0.0

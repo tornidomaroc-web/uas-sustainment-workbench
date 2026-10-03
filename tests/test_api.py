@@ -2,13 +2,14 @@
 
 import json
 import logging
+import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from uas_workbench.fleet import load_config
-from uas_workbench.fleet.showcase import ALFA_KEY, PX4_KEY, showcase
+from uas_workbench.fleet.showcase import ALFA_ATTRIBUTION, ALFA_KEY, PX4_KEY, showcase
 from uas_workbench.fleet.synthetic import generate
 from uas_workbench.service.app import create_app
 from uas_workbench.service.observability import JsonFormatter
@@ -195,6 +196,50 @@ def test_ingest_parses_a_real_log_and_keeps_no_raw_copy(client: TestClient) -> N
     )
     assert bad.status_code == 422
     assert "not a readable" in bad.json()["detail"].lower()
+
+
+def test_ingest_refuses_a_bin_with_no_dataflash_messages(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A .bin meets the .ulg contract: no DataFlash message, a 422 and nothing stored, not a
+    0.0 s flight that raises a flight count or registers an aircraft. No upload is kept."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def flights() -> dict[str, int]:
+        return {a["key"]: a["flights"] for a in client.get("/aircraft").json()}
+
+    before = flights()
+    for name, content in [("junk.bin", b"not a log at all"), ("empty.bin", b"")]:
+        for key in ("junk-bin-01", ALFA_KEY):
+            response = client.post(
+                "/ingest",
+                data={"aircraft_key": key},
+                files={"log": (name, content, "application/octet-stream")},
+            )
+            assert response.status_code == 422, (name, key, response.text)
+            assert response.json()["detail"].startswith(
+                "not a readable PX4 ULog or ArduPilot DataFlash log: "
+            )
+    assert flights() == before
+    assert client.get("/aircraft/junk-bin-01/flights").status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
+    # Every real .bin is still accepted, as the record the showcase reads from the same file.
+    for path in sorted((FIXTURES / "alfa").glob("*.bin")):
+        with path.open("rb") as f:
+            response = client.post(
+                "/ingest",
+                data={
+                    "aircraft_key": "ingested-bin-01",
+                    "licence": "CC BY 4.0",
+                    "attribution": ALFA_ATTRIBUTION,
+                },
+                files={"log": (path.name, f, "application/octet-stream")},
+            )
+        assert response.status_code == 201, response.text
+    ingested = client.get("/aircraft/ingested-bin-01/flights").json()
+    assert ingested == client.get(f"/aircraft/{ALFA_KEY}/flights").json()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_metrics_and_request_ids(client: TestClient) -> None:

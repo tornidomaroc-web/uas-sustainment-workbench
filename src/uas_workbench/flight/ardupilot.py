@@ -45,9 +45,18 @@ class _Log:
 
 
 def _read(path: Path) -> _Log:
+    # pymavlink opens the file before it maps it, and leaves it open when an empty file cannot
+    # be mapped; this refuses it first, in pymavlink's own words, so the ingest 422 is unchanged.
+    if path.stat().st_size == 0:
+        raise ValueError("cannot mmap an empty file")
     reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
     log = _Log()
     try:
+        # A file of no DataFlash message at all reads as an empty log, a flight of 0.0 s with
+        # every field unknown; it is not a log. Format definitions alone are messages.
+        if reader.recv_msg() is None:
+            raise ValueError("no DataFlash messages found")
+        reader.rewind()
         while (m := reader.recv_match(type=list(READ_TYPES))) is not None:
             _collect(m, log)
     finally:
