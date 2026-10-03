@@ -25,6 +25,9 @@ Not a release: no version change, and the code's behaviour is the same.
   `BAT-04B past calendar limit 2026-08-31`, where it showed BAT-04A one cycle past, which 0.5.0
   never reaches; the `life/cue.py` grammar table shows `not known: time in service` where it
   showed a deferred defect, which no record holds.
+- The `dev` extra installs `httpx2` instead of `httpx`, and asks for Starlette 1.3 or later, the
+  first release whose test client runs on `httpx2`. With plain `httpx` that test client raised a
+  deprecation warning on every test run. `tests/test_test_client.py` fails if it comes back.
 
 ## 0.5.0
 

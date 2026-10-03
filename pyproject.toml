@@ -26,7 +26,10 @@ dev = [
     "pytest>=8",
     "mypy>=1.11",
     "ruff>=0.6",
-    "httpx>=0.27",
+    # FastAPI's TestClient is Starlette's, which runs on httpx2 from Starlette 1.3 and warns
+    # on plain httpx.
+    "httpx2>=2.0",
+    "starlette>=1.3",
 ]
 # The browser check renders the generated page in headless Chromium.
 browser = ["playwright>=1.47"]
