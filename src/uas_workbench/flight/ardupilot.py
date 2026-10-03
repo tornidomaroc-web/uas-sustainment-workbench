@@ -22,6 +22,9 @@ READ_TYPES = ("PARM", "MSG", "STAT", "GPS", "EV", "ARM", "BAT", "CURR", "ERR")
 GPS_EPOCH = datetime(1980, 1, 6, tzinfo=UTC)
 GPS_MINUS_UTC = timedelta(seconds=18)  # leap seconds since 2017-01-01; ArduPilot uses the same
 GPS_FIX_3D = 3
+# Written before the first sample: format, unit and multiplier definitions, parameters, and
+# the version and boot text. Every other message type is recorded data, read here or not.
+NOT_DATA = frozenset({"FMT", "FMTU", "UNIT", "MULT", "PARM", "MSG", "VER"})
 
 Sample = tuple[int, float]  # (TimeUS, value)
 
@@ -56,6 +59,13 @@ def _read(path: Path) -> _Log:
         # every field unknown; it is not a log. Format definitions alone are messages.
         if reader.recv_msg() is None:
             raise ValueError("no DataFlash messages found")
+        # Definitions with no data are a logger started and stopped before its first sample,
+        # no evidence of a flight. The reader's index counts every message type it defines.
+        if not any(
+            count and reader.id_to_name.get(type_id, "FMT") not in NOT_DATA
+            for type_id, count in enumerate(reader.counts)
+        ):
+            raise ValueError("holds format definitions but no recorded data")
         reader.rewind()
         while (m := reader.recv_match(type=list(READ_TYPES))) is not None:
             _collect(m, log)
