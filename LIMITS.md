@@ -56,8 +56,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   whose chance headers stop the indexer early). A file that begins with a definition and runs
   into bytes pymavlink cannot frame, a damaged log or a crafted file, still gets one line per
   such byte before its 422 (1 048 049 for one definition and 1 MiB of zeros, as on 0.5.1), and
-  a log behind k bytes of noise still parses and still gets k lines. `POST /ingest` takes the
-  write token or loopback, so the file is an operator's own or a trusted writer's.
+  a log behind k bytes of noise still parses and still gets k `bad header` lines and two
+  `Skipped k bad bytes` lines (602 for 600 bytes of zeros before a fixture log). `POST /ingest`
+  takes the write token or loopback, so the file is an operator's own or a trusted writer's.
 
 ## Limits of reconcile()
 
