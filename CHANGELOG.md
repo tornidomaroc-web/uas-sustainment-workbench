@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.5.2
+
+What changed in behaviour is the cost of one refusal. A `.bin` that holds no DataFlash format
+definition is refused before pymavlink opens it, so a file that is not a log writes nothing to
+standard error whatever its size, where 0.5.1 let pymavlink print one line per byte. The
+refusal, what is stored (nothing) and the record of every readable log are unchanged. The rest
+is a test that keeps this file's quoted examples checked after a release.
 
 - `POST /ingest` and `uasw ingest` refuse a `.bin` that holds no plausible DataFlash format
   definition before pymavlink opens it, so a file that is not a log writes nothing to stderr
