@@ -45,9 +45,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   case.** Definitions, parameters and boot text alone are refused. A ULog with data only in
   topics the tool does not read is parsed a second time, with every topic, to find that data;
   a large log of that kind is read in full twice.
-- **A corrupt DataFlash file is loud before it is refused.** pymavlink prints one `bad header`
-  line on standard error for every byte it cannot frame, so a large corrupt `.bin` writes that
-  many lines to the service's or the command's stderr before the 422.
+- **A damaged DataFlash file is loud before it is refused; a file that is no log is not.**
+  pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
+  frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
+  Python's stderr sees them. A `.bin` with no plausible format definition anywhere (a printable
+  name, format characters pymavlink knows, printable labels) is refused before pymavlink opens
+  it, whatever its size: 0 lines for 16 B to 16 MiB of zeros, text, every byte value or random
+  bytes, measured 2026-10-04 through the reader, `POST /ingest` and `uasw ingest`, where 0.5.1
+  wrote one line per byte (13 for 16 B, 16 776 689 for 16 MiB of zeros; fewer for random bytes,
+  whose chance headers stop the indexer early). A file that begins with a definition and runs
+  into bytes pymavlink cannot frame, a damaged log or a crafted file, still gets one line per
+  such byte before its 422 (1 048 049 for one definition and 1 MiB of zeros, as on 0.5.1), and
+  a log behind k bytes of noise still parses and still gets k lines. `POST /ingest` takes the
+  write token or loopback, so the file is an operator's own or a trusted writer's.
 
 ## Limits of reconcile()
 
