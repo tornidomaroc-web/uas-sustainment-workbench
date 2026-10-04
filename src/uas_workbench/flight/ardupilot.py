@@ -6,6 +6,8 @@ or the aircraft was configured not to produce it, the field is Unknown with that
 
 from __future__ import annotations
 
+import mmap
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -25,6 +27,30 @@ GPS_FIX_3D = 3
 # Written before the first sample: format, unit and multiplier definitions, parameters, and
 # the version and boot text. Every other message type is recorded data, read here or not.
 NOT_DATA = frozenset({"FMT", "FMTU", "UNIT", "MULT", "PARM", "MSG", "VER"})
+# A format definition (FMT) on the wire: the two header bytes and its type, the type it
+# defines, that type's length, then a 4-byte name, a 16-byte format and 64 bytes of column
+# labels, each a text to its first NUL. A definition pymavlink could read a message from has a
+# printable name, at least one field, format characters it knows and printable labels; an
+# autopilot writes nothing else, and bytes that are not a log hold one by chance about never.
+PRINTABLE = rb"[\x20-\x7e]"
+FORMAT_CHAR = b"[" + re.escape("".join(sorted(DFReader.FORMAT_TO_STRUCT)).encode()) + b"]"
+
+
+def _text_field(char: bytes, size: int, least: int) -> bytes:
+    """A regex for `size` bytes holding `least` to `size` characters of the class, NUL-terminated
+    when fewer than `size`: the text is asserted by a lookahead, the field consumed whole."""
+    return (
+        rb"(?=" + char + rb"{%d}|" % size + char + rb"{%d,%d}\x00).{%d}" % (least, size - 1, size)
+    )
+
+
+DEFINITION = re.compile(
+    rb"\xa3\x95\x80.{2}"
+    + _text_field(PRINTABLE, 4, 1)
+    + _text_field(FORMAT_CHAR, 16, 1)
+    + _text_field(PRINTABLE, 64, 0),
+    re.DOTALL,
+)
 
 Sample = tuple[int, float]  # (TimeUS, value)
 
@@ -47,11 +73,25 @@ class _Log:
     last_us: int | None = None
 
 
+def _holds_a_definition(path: Path) -> bool:
+    """Whether the file holds a plausible format definition anywhere: one regex search over the
+    mapped file, at the speed of the engine, so a file of megabytes that is not a log costs
+    milliseconds and never reaches pymavlink."""
+    with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        return DEFINITION.search(data) is not None
+
+
 def _read(path: Path) -> _Log:
     # pymavlink opens the file before it maps it, and leaves it open when an empty file cannot
     # be mapped; this refuses it first, in pymavlink's own words, so the ingest 422 is unchanged.
     if path.stat().st_size == 0:
         raise ValueError("cannot mmap an empty file")
+    # pymavlink's indexer prints one line on stderr for every byte it cannot frame, from C in
+    # the published wheels, so a file of megabytes that is not a log would write that many
+    # lines before the 422. Without a definition pymavlink can decode, it can decode no message
+    # either: the file is refused here, in the words that case has always had, unopened.
+    if not _holds_a_definition(path):
+        raise ValueError("no DataFlash messages found")
     reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
     log = _Log()
     try:

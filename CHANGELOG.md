@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `POST /ingest` and `uasw ingest` refuse a `.bin` that holds no plausible DataFlash format
+  definition before pymavlink opens it, so a file that is not a log writes nothing to stderr
+  whatever its size, where 0.5.1 let pymavlink's indexer print one `bad header` line per byte
+  (13 for 16 bytes, 16.7 million for 16 MiB); the 422, its wording, what is stored (nothing)
+  and the record of every readable log are unchanged, and `LIMITS.md` has the measurements and
+  what still prints.
 - `tests/test_cue_examples.py` checks the cues quoted in the newest released section of this
   file as well as in Unreleased, so a release no longer takes its examples out of the check, as
   0.5.1 took its three. The newest released section's cue count is pinned, so the next release
