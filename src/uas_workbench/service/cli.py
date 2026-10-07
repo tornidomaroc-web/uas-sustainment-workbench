@@ -7,6 +7,7 @@
     uasw ask "QUESTION"  # a local model answers through the service's read-only endpoints
     uasw record ...      # append a maintenance entry: work orders, components, inspections
     uasw evidence KEY --out pack.html   # the draft evidence pack for OSO #03 of one aircraft
+    uasw verify [--head H]  # the write journal: unchanged since a head, or the first bad link
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
 (showcase excerpts, default tests/fixtures).
@@ -192,6 +193,28 @@ def cmd_evidence(args: argparse.Namespace) -> None:
         written.append(str(path))
     log.info("evidence", extra={"aircraft_key": args.aircraft, "out": written})
     print(f"{pack['title']}: written to {', '.join(written)}. {pack['statement'][1]}")
+
+
+def cmd_verify(args: argparse.Namespace) -> None:
+    """Verify the write journal; exit 1 on a break or when the given head is not in it."""
+    import re
+    import sys
+
+    if args.head is not None and not re.fullmatch(r"[0-9a-f]{64}", args.head):
+        print(
+            "refused (422): --head must be a head as verify reports it, 64 hex digits",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    result = open_store(args.db).verify_journal(args.head)
+    if result.migration is not None:
+        m = result.migration
+        print(f"link {m.seq}, recorded {m.recorded_utc}: {m.note}")
+    if result.ok:
+        print(result.line)
+        return
+    print(result.line, file=sys.stderr)
+    sys.exit(1)
 
 
 def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details: object) -> None:
@@ -406,6 +429,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="also write the pack as JSON next to it")
     p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
     p.set_defaults(func=cmd_evidence)
+
+    p = sub.add_parser(
+        "verify",
+        help="verify the write journal: every entry and flight record against its hash chain",
+    )
+    p.add_argument(
+        "--head",
+        help="a head reported earlier; the result says whether the records are unchanged "
+        "since it, which a truncated or recomputed chain fails",
+    )
+    p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("ask", help="ask the local model a question through the running service")
     p.add_argument("question")

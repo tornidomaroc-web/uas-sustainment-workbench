@@ -295,6 +295,39 @@ class ReconcileOut(BaseModel):
     unchecked: dict[str, str]
 
 
+class JournalBreakOut(BaseModel):
+    seq: int  # the first bad sequence number
+    kind: str  # sequence, duplicate, previous_hash, missing_row, content, link_hash, unjournaled
+    detail: str
+
+
+class JournalMigrationOut(BaseModel):
+    """The note a store written by 0.5.x was journaled with when first opened by this version:
+    the rows before it are linked as found, so the history before it is not tamper-evident."""
+
+    seq: int
+    recorded_utc: str
+    flights: int
+    entries: int
+    note: str
+
+
+class JournalVerifyOut(BaseModel):
+    """The write journal walked from its first link, every hash recomputed from the rows as
+    they are now. `ok` says the records are unchanged since the head, never that they are
+    true. With `head`, also whether that earlier head is in the chain: a truncated or
+    recomputed chain verifies alone and fails there."""
+
+    ok: bool
+    head: str
+    length: int
+    broken: JournalBreakOut | None
+    given: str | None
+    given_at: int | None
+    migration: JournalMigrationOut | None
+    line: str
+
+
 # ---- views shared with the static export -----------------------------------------------
 
 
@@ -938,6 +971,38 @@ def create_app(
         refresh_gauges(store, cfg)
         logger.info("ingested", extra={"aircraft_key": aircraft_key, "log_ref": record.log_ref})
         return flight_view(record)
+
+    @app.get("/journal/verify", tags=["ledger"], response_model=JournalVerifyOut)
+    def verify_journal(
+        head: Annotated[
+            str | None,
+            Query(
+                pattern=r"^[0-9a-f]{64}$",
+                description="A head reported earlier. The answer says whether the records are "
+                "unchanged since it: a chain truncated or recomputed below it fails here and "
+                "nowhere else.",
+            ),
+        ] = None,
+    ) -> JournalVerifyOut:
+        """Verify the write journal: every entry and flight record against the hash chain
+        written with it. Reports the head, the length and, on a break, the first bad link and
+        what kind of break it is. Unchanged since a head is all it says; it does not say that
+        the records are correct."""
+        result = store.verify_journal(head)
+        return JournalVerifyOut(
+            ok=result.ok,
+            head=result.head,
+            length=result.length,
+            broken=JournalBreakOut(**dataclasses.asdict(result.broken)) if result.broken else None,
+            given=result.given,
+            given_at=result.given_at,
+            migration=(
+                JournalMigrationOut(**dataclasses.asdict(result.migration))
+                if result.migration
+                else None
+            ),
+            line=result.line,
+        )
 
     @app.get("/metrics", tags=["service"], response_class=PlainTextResponse)
     def metrics() -> Response:

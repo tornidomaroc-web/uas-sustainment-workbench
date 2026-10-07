@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Every ledger entry and flight record is linked into a write journal in the transaction that
+  writes it (`service/journal.py`, hashlib only): a sequence number, a SHA-256 over the row's
+  canonical content, the previous link's hash and the link's own hash, one chain for both
+  tables. `uasw verify [--head H]` and `GET /journal/verify?head=H` walk it from the first link
+  and report the head, the length and, on a break, the first bad sequence number and its kind
+  (`sequence`, `duplicate`, `previous_hash`, `missing_row`, `content`, `link_hash`,
+  `unjournaled`); so an entry edited, a flight deleted, a link inserted mid-chain or a row
+  inserted with no link, each done directly in the SQLite file, is reported. A truncated tail
+  and a chain recomputed from the file verify alone and fail only against an earlier head given
+  back, and an append made in the file with its link computed as the store would is not told
+  from one made through the store; `LIMITS.md` says so. A store written by 0.5.x is journaled
+  when first opened, after a link holding the note that what came before it is not
+  tamper-evident. A fresh seeded store verifies with one pinned head. Every existing response,
+  every stored record and the evidence pack's hash are byte for byte what they were; the result
+  line says unchanged since a head, never that the records are correct.
+
 ## 0.5.2
 
 What changed in behaviour is the cost of one refusal. A `.bin` that holds no DataFlash format

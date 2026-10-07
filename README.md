@@ -185,6 +185,23 @@ append; `GET /entries` and `GET /components` read the history with superseded en
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
 set; what that does not protect against is in [LIMITS.md](LIMITS.md).
 
+**A write journal that makes a change to the file visible.** Append-only in the application
+is not append-only in the file: anyone with the SQLite file can edit it. So every entry and
+every flight record is linked, in the transaction that writes it, into one hash chain
+([`service/journal.py`](src/uas_workbench/service/journal.py), hashlib only): a sequence
+number, a SHA-256 over the row's content in one canonical form, the hash of the link before it
+and the hash of the link itself. The head is the last link's hash. `uasw verify` and
+`GET /journal/verify` walk the chain from its first link, recomputing every hash from the rows
+as they are now, and report the head, the length and, on a break, the first bad link and what
+kind of break it is: an entry edited, a flight deleted, a link inserted mid-chain, a row
+inserted with no link, each done directly in SQLite, is named by sequence number. What the
+chain cannot tell on its own, because it has no secret and nothing outside the file: a tail cut
+off with its rows, and a chain recomputed from the start by someone with the file and this
+code, both verify alone; `uasw verify --head H`, given a head written down earlier, reports
+whether the records are unchanged since it, and fails on both. That is all the line says:
+unchanged since a head, never that the records are correct. A store written by 0.5.x is
+journaled when first opened, after a note that what came before it is not tamper-evident.
+
 **The assistant reads the ledger, and only reads it.** A sixth tool, over `GET /entries`,
 gives it who recorded what, when, and what superseded what; superseded entries always come
 back flagged, and the model is told never to present one as current. The grounding check
@@ -293,6 +310,8 @@ uasw record history my-aircraft --all              # superseded entries too, wit
 uasw record time-in-service my-aircraft 42.5 --supersedes 9 --by "..." --reason "misread" \
     --statement "..."                             # a correction; it keeps entry 9's date
 uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
+uasw verify                                        # the journal: intact or the first bad link
+uasw verify --head <head from an earlier run>      # unchanged since that head, or not
 ```
 
 The assistant needs a running service and a local [Ollama](https://ollama.com) with the

@@ -5,6 +5,11 @@ alongside. One file, no server, and the same code runs in tests, in CI and in th
 The ledger is append-only: entries are inserted and never updated or deleted. Nothing about
 maintenance is stored as a snapshot; the records the engine reads are projected from the
 entries on read, and no board state is stored either.
+
+Every entry and every flight record is linked into the write journal (journal.py) in the
+transaction that writes it, so a change made to either directly in the SQLite file is
+reported by `verify_journal`. A store written by 0.5.x is journaled when first opened, after
+a note saying that what came before is not tamper-evident.
 """
 
 from __future__ import annotations
@@ -23,7 +28,11 @@ from uas_workbench.ledger.model import Entry, Projection
 from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
 
-SCHEMA = """
+from . import journal
+from .journal import Verification
+
+SCHEMA = (
+    """
 CREATE TABLE IF NOT EXISTS aircraft (
     key TEXT PRIMARY KEY,
     label TEXT NOT NULL,
@@ -52,6 +61,8 @@ CREATE TABLE IF NOT EXISTS entries (
     record TEXT NOT NULL
 );
 """
+    + journal.SCHEMA
+)
 AIRCRAFT_COLUMNS = "key, label, source, synthetic, licence, attribution"
 
 
@@ -66,6 +77,8 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(SCHEMA)
+            with self._db:
+                journal.migrate(self._db)
         self._projection: Projection | None = None
 
     def close(self) -> None:
@@ -125,7 +138,7 @@ class Store:
         utc = record.utc_start.isoformat() if is_known(record.utc_start) else None
         try:
             with self._lock, self._db:
-                self._db.execute(
+                cursor = self._db.execute(
                     "INSERT INTO flights (aircraft_key, log_ref, synthetic, utc_start, record) "
                     "VALUES (?, ?, ?, ?, ?)",
                     (
@@ -136,6 +149,8 @@ class Store:
                         json.dumps(record_to_json(record)),
                     ),
                 )
+                assert cursor.lastrowid is not None
+                journal.append_link(self._db, "flight", int(cursor.lastrowid))
         except sqlite3.IntegrityError as exc:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
 
@@ -163,6 +178,7 @@ class Store:
                 "UPDATE entries SET record = ? WHERE id = ?",
                 (json.dumps(entry_to_json(stored), ensure_ascii=False), stored.id),
             )
+            journal.append_link(self._db, "entry", int(stored.id or 0))
             self._projection = None
         return stored
 
@@ -187,6 +203,15 @@ class Store:
     def entry_count(self) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
         return int(row[0])
+
+    # ---- the write journal -----------------------------------------------------------
+
+    def verify_journal(self, head: str | None = None) -> Verification:
+        """Walk the journal and recompute every hash from the rows as they are now; with
+        `head`, also whether that head is in the chain, which a truncated or recomputed
+        chain fails. Holds the write lock, so the result describes one state of the file."""
+        with self._lock:
+            return journal.verify(self._db, head)
 
     def projection(self, as_of: datetime | None = None) -> Projection:
         """The live entries folded into records, at `as_of` or as of every entry.
