@@ -224,9 +224,45 @@ field-level tables. This file is about what that means for a maintenance tool.
   and the CI container job generates a random one per run. Neither protects against a
   process on the same machine, a reverse proxy that hides the client address, a leaked
   token, or reading, which needs nothing. Nothing is encrypted in transit.
-- **The ledger is append-only in the application, not in the file.** Anyone with the
-  SQLite file can alter it. An audit that must survive that needs a store this tool does
-  not provide.
+- **The ledger is append-only in the application; in the file, a change is visible, not
+  prevented.** Anyone with the SQLite file can still alter it. Every entry and every
+  flight record is linked into a write journal in the transaction that writes it: one hash
+  chain over both tables, a SHA-256 of each row's content in a canonical form (the columns the
+  queries filter on and the record JSON parsed, so re-serialising a record changes nothing and
+  moving an entry to another subject does), the previous link's hash and the link's own.
+  `uasw verify` and `GET /journal/verify` recompute every hash from the rows as they are and
+  name the first bad link and its kind. Measured on the seeded store (94 links), each done
+  directly in SQLite with no store open: an entry's record edited is reported at its link as
+  `content`, and so is an edit to its subject column alone; a flight deleted is `missing_row`
+  at its link; a link inserted at position k with every hash computed correctly is
+  `previous_hash` at k+1, and with wrong hashes at k; a row inserted with no link is
+  `unjournaled` at the position after the last link; a link whose stored hash was edited is
+  `link_hash`; a link removed is `sequence`; the journal emptied is `unjournaled` at 1, and the
+  store does not rebuild it on open, because a rebuilt chain would verify as if nothing had
+  happened. What is not detected, each measured to verify alone:
+  - *A truncated tail.* The last links removed together with their rows is a shorter chain that
+    is intact as far as it goes.
+  - *A chain recomputed from the start.* Someone with the file and this code can edit a row and
+    recompute every link after it, as the store would have. The chain has no secret and nothing
+    outside the file, so the file cannot tell.
+  - *An append made in the file.* A row inserted directly with its link computed as the store
+    would is not told from one appended through the service: the journal has no key and the
+    service has no identity to sign with.
+  - *The aircraft rows and the file as a whole.* Aircraft keys, labels, licences and attributions
+    are not journaled (the row is replaceable by design), and the file replaced by an earlier
+    copy is a truncated tail.
+  - *Before the migration.* A store written by 0.5.x is journaled when this version first opens
+    it, each row linked as found after a note that says so, with the counts and the time; a
+    change made to it before that is linked as found.
+
+  Only a head kept outside the file tells the first two from an untouched store:
+  `uasw verify --head H` reports whether H is in the chain, which a truncated or recomputed
+  chain fails, and nothing in this tool keeps a head anywhere. Writing the head down after each
+  session, where the file cannot reach it, is the operator's, and so is deciding who may hold
+  the file. The line is "unchanged since head H", and that is all it says: a false statement
+  linked at entry is linked false, and what the ledger refuses or accepts is unchanged. Verifying
+  reads every row and holds the store's write lock meanwhile, so a write waits for it; measured
+  at 3 ms for the seeded store (94 links, median of 50 runs on 2026-10-07), and not tried on a large fleet.
 - **Validation is against the projection, not the world.** A well-formed false statement
   (an inspection that never happened, a part that is not really on the aircraft) is
   accepted. Only impossible transitions are refused.
