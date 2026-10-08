@@ -201,6 +201,10 @@ code, both verify alone; `uasw verify --head H`, given a head written down earli
 whether the records are unchanged since it, and fails on both. That is all the line says:
 unchanged since a head, never that the records are correct. A store written by 0.5.x is
 journaled when first opened, after a note that what came before it is not tamper-evident.
+Whatever the file holds, verifying reports a break and never crashes. `GET /journal/verify`
+needs the write token, or comes from this machine when none is set, as the writes do: it
+writes nothing, but it holds the store's write lock while it reads every row, and
+[LIMITS.md](LIMITS.md) gives the measured cost.
 
 **The assistant reads the ledger, and only reads it.** A sixth tool, over `GET /entries`,
 gives it who recorded what, when, and what superseded what; superseded entries always come
