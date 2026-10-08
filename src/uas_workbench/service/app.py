@@ -755,6 +755,7 @@ def create_app(
         license_info={"name": "Apache-2.0"},
     )
     refresh_gauges(store, cfg)
+    store.readable()  # read the whole store once now, so /health never does on a call
 
     async def unreadable(request: Request, exc: Exception) -> JSONResponse:
         """A read that depends on a stored record the store cannot read: 503 with the record
@@ -815,8 +816,11 @@ def create_app(
     @app.get("/health", tags=["service"])
     def health() -> dict[str, object]:
         # `ok` when every stored record reads; `degraded`, with the first record that cannot
-        # be read named under `unreadable`, when one does not. Reads every record, as any
-        # board read does. A comment, not a docstring: the OpenAPI document stays as it was.
+        # be read named under `unreadable`, when one does not. Answered from what the store
+        # knows: it reads every record at startup and again only after another connection
+        # has changed the file, never because /health was called again (the container checks
+        # it every 10 s with a 3 s timeout, and it needs no token). A comment, not a
+        # docstring: the OpenAPI document stays as it was.
         problem = store.readable()
         body: dict[str, object] = {
             "status": "ok" if problem is None else "degraded",
