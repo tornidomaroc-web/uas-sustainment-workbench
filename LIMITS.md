@@ -297,7 +297,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   call does not repeat it. Every read that depends on the record is 503 with the same
   sentence, a write judged against the projection is refused the same way with nothing
   written, `uasw`
-  prints `refused (503)` and exits 1, and the evidence pack is written with the dependent
+  prints `refused (503)` and exits 1 (`uasw ask` too, before the model is asked
+  again; issue #46), and the evidence pack is written with the dependent
   values unknown and the items they supported not evidenced. Nothing here repairs the record:
   `uasw verify` names its link, and restoring the file from a copy or fixing the row is the
   operator's. A record that reads but is false is not told from a true one, as above.

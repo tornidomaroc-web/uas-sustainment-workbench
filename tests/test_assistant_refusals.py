@@ -19,7 +19,10 @@ store, with the caller `uasw ask` builds, so the path is the one the issue descr
 from __future__ import annotations
 
 import json
+import os
 import socket
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -36,7 +39,7 @@ from test_unreadable_records import craft_nested_entry, named
 from uas_workbench.assistant import RefusedCall, ReplayBackend, ToolCall, Turn, ask
 from uas_workbench.assistant.agent import service_caller
 from uas_workbench.service.app import create_app
-from uas_workbench.service.cli import main
+from uas_workbench.service.cli import seed
 from uas_workbench.service.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -59,7 +62,9 @@ UNKNOWN_KEY_THEN_ANSWERS = [
 @pytest.fixture
 def db(tmp_path: Path) -> str:
     path = str(tmp_path / "fleet.sqlite")
-    main(["--db", path, "seed", "--fixtures", str(FIXTURES)])
+    store = Store(path)
+    seed(store, FIXTURES)
+    store.close()
     return path
 
 
@@ -233,59 +238,74 @@ def test_a_model_error_is_still_reported_to_the_model_not_the_operator(
 
 # ---- the command line -------------------------------------------------------------------
 
+# `uasw ask` in a real process, as a user at a shell sees it, with the recorded turns in place
+# of Ollama and nothing else of the command changed; the service it talks to is the one the
+# test serves on loopback.
+DRIVER = """
+import json, sys
+import uas_workbench.assistant as assistant
+from uas_workbench.assistant import ReplayBackend, ToolCall, Turn
+turns = [
+    Turn(t["content"], tuple(ToolCall(c["name"], c["arguments"]) for c in t["tool_calls"]))
+    for t in json.loads(sys.argv[1])
+]
+assistant.OllamaBackend = lambda model, host: ReplayBackend(turns)
+from uas_workbench.service.cli import main
+main(sys.argv[2:])
+"""
 
-def _replaying(monkeypatch: pytest.MonkeyPatch, turns: list[Turn]) -> ReplayBackend:
-    """`uasw ask` with the recorded turns in place of Ollama; nothing else of cmd_ask changes."""
-    import uas_workbench.assistant as assistant
 
-    backend = ReplayBackend(turns)
-    monkeypatch.setattr(assistant, "OllamaBackend", lambda model, host: backend)
-    return backend
+def uasw_ask(turns: list[Turn], *args: str) -> subprocess.CompletedProcess[str]:
+    recorded = json.dumps(
+        [
+            {
+                "content": t.content,
+                "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in t.tool_calls],
+            }
+            for t in turns
+        ]
+    )
+    return subprocess.run(
+        [sys.executable, "-c", DRIVER, recorded, "ask", *args],
+        capture_output=True,
+        text=True,
+        env=os.environ | {"PYTHONWARNINGS": "ignore"},
+        timeout=120,
+    )
 
 
 def test_uasw_ask_prints_the_refusal_and_exits_1_never_a_traceback(
-    crafted_service: tuple[str, tuple[str, ...]],
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
+    crafted_service: tuple[str, tuple[str, ...]], tmp_path: Path
 ) -> None:
     url, words = crafted_service
     _, detail = service_detail(url, f"/aircraft?as_of={AS_OF_TEXT}")
-    backend = _replaying(monkeypatch, LISTS_THEN_ANSWERS)
     recording = tmp_path / "run.json"
-    with pytest.raises(SystemExit) as exit_:
-        main(["ask", "How many aircraft?", "--url", url, "--as-of", AS_OF_TEXT,
-              "--record", str(recording), "--json"])  # fmt: skip
-    assert exit_.value.code == 1
-    out, err = capsys.readouterr()
-    assert err == f"refused (503): {detail}\n"  # the line every other command prints
-    named(err, words)
-    assert "Traceback" not in err and "HTTPError" not in err
-    assert out == ""  # no answer, no call list, no "Grounded:" line, no records
+    done = uasw_ask(LISTS_THEN_ANSWERS, "How many aircraft?", "--url", url, "--as-of", AS_OF_TEXT,
+                    "--record", str(recording), "--json")  # fmt: skip
+    assert done.returncode == 1, done.stderr
+    assert done.stderr == f"refused (503): {detail}\n"  # the line every other command prints
+    named(done.stderr, words)
+    assert "Traceback" not in done.stderr and "HTTPError" not in done.stderr
+    assert done.stdout == ""  # no answer, no call list, no "Grounded:" line, no records
     assert not recording.exists()  # nothing to replay was recorded
-    assert len(backend.seen) == 1
 
 
-def test_uasw_ask_prints_a_404_the_same_way(
-    clean_service: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _replaying(monkeypatch, UNKNOWN_KEY_THEN_ANSWERS)
-    with pytest.raises(SystemExit) as exit_:
-        main(["ask", "Is SYN-99 due?", "--url", clean_service, "--as-of", AS_OF_TEXT])
-    assert exit_.value.code == 1
-    out, err = capsys.readouterr()
-    assert err == "refused (404): aircraft 'SYN-99' is not in the store\n"
-    assert out == ""
+def test_uasw_ask_prints_a_404_the_same_way(clean_service: str) -> None:
+    done = uasw_ask(UNKNOWN_KEY_THEN_ANSWERS, "Is SYN-99 due?", "--url", clean_service,
+                    "--as-of", AS_OF_TEXT)  # fmt: skip
+    assert done.returncode == 1, done.stderr
+    assert done.stderr == "refused (404): aircraft 'SYN-99' is not in the store\n"
+    assert done.stdout == ""
 
 
-def test_uasw_ask_still_answers_on_a_readable_store(
-    clean_service: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_uasw_ask_still_answers_on_a_readable_store(clean_service: str) -> None:
     """The same command, the same caller, a store that reads: the answer as before."""
-    _replaying(monkeypatch, [Turn("", (ToolCall("aircraft_due", {"key": "SYN-04"}),)),
-                             Turn("SYN-04 is unserviceable.", ())])  # fmt: skip
-    main(["ask", "SYN-04?", "--url", clean_service, "--as-of", AS_OF_TEXT])
-    out, err = capsys.readouterr()
-    assert err == ""
-    assert out.startswith("SYN-04 is unserviceable.\n\nCalls (1): GET /aircraft/SYN-04/due\n")
-    assert "Grounded: yes" in out
+    turns = [Turn("", (ToolCall("aircraft_due", {"key": "SYN-04"}),)),
+             Turn("SYN-04 is unserviceable.", ())]  # fmt: skip
+    done = uasw_ask(turns, "SYN-04?", "--url", clean_service, "--as-of", AS_OF_TEXT)
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == ""
+    assert done.stdout.startswith(
+        "SYN-04 is unserviceable.\n\nCalls (1): GET /aircraft/SYN-04/due\n"
+    )
+    assert "Grounded: yes" in done.stdout

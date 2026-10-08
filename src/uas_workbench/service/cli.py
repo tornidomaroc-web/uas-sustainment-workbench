@@ -21,6 +21,7 @@ import os
 import sys
 from pathlib import Path
 
+from uas_workbench.assistant.agent import RefusedCall
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
@@ -120,17 +121,11 @@ def cmd_ask(args: argparse.Namespace) -> None:
     """Ask the local model one question through the service's read-only endpoints."""
     import json
     from datetime import UTC, datetime
-    from urllib.parse import urlencode
 
-    from uas_workbench.assistant import OllamaBackend, ask
-    from uas_workbench.assistant.backends import json_http
+    from uas_workbench.assistant import OllamaBackend, ask, service_caller
     from uas_workbench.assistant.recording import from_answer, save
 
-    base = args.url.rstrip("/")
-
-    def caller(path: str, query: dict[str, str]) -> object:
-        return json_http(f"{base}{path}?{urlencode(query)}" if query else f"{base}{path}", None)
-
+    caller = service_caller(args.url)
     as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
     if as_of.tzinfo is None:
         as_of = as_of.replace(tzinfo=UTC)
@@ -464,6 +459,11 @@ def main(argv: list[str] | None = None) -> None:
         # A stored record the store cannot read: the same refusal the service answers (503),
         # with the record named; never a traceback. `uasw verify` reports the same row.
         print(f"refused (503): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    except RefusedCall as exc:
+        # The service refused a tool call of `uasw ask` (issue #46): the service's own
+        # sentence, the status it answered, exit 1; the model was not asked again.
+        print(exc, file=sys.stderr)
         sys.exit(1)
 
 

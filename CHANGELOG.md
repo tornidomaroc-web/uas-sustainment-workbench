@@ -43,6 +43,18 @@
   made before it. `uasw verify` keeps reporting the row as a `content` break at its link.
   Every response on a readable store, the OpenAPI document, the seeded journal head and the
   pack hash are byte for byte what they were.
+- `uasw ask` no longer ends in a traceback when the service refuses a tool call (issue #46).
+  A read the model asked for that answers an error status, a 503 naming a stored record the
+  store cannot read, or a 404 for an aircraft key the model made up, ends the run: the model
+  is not asked again, so it never holds the refusal as a tool result it could phrase as a
+  value or ground an answer on, and no answer, grounding check or recording carries the
+  call. `uasw ask` prints `refused (503): <the service's own sentence>` (or the status it
+  answered) and exits 1, as every other command does; 401, 403, 422 and a reply with no usable
+  body take the same line, with the status line's reason when the body holds no `detail`.
+  `ask()` raises `RefusedCall` with the status, the sentence, the tool and the path, and
+  `service_caller()` is the caller `uasw ask` builds. An unknown tool or a bad argument is
+  still shown to the model, since that is its own mistake to correct. No response, record,
+  recording or hash changes.
 
 ## 0.5.2
 

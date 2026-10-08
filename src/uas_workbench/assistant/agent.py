@@ -14,8 +14,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.error import HTTPError
+from urllib.parse import urlencode
 
-from .backends import Backend, ToolCall
+from .backends import Backend, Http, ToolCall, json_http
 from .tools import UnknownTool, as_ollama_tools, resolve
 
 Caller = Callable[[str, dict[str, str]], Any]
@@ -64,6 +66,50 @@ FREE_COUNT = 10  # small integers may be counts the model made while phrasing
 
 class StepLimit(Exception):
     pass
+
+
+class RefusedCall(Exception):
+    """The service answered a tool call with an error status (issue #46): the run ends here.
+
+    The model is not asked again, so it never holds a refusal it could phrase as a value or
+    build an answer on, and no answer, grounding or recording can carry the call. `detail` is
+    the service's own sentence (a 503 names the stored record that cannot be read and points
+    to `uasw verify`; a 404 names the aircraft the model asked for), whole; `str()` is the
+    line every `uasw` command prints for a refusal."""
+
+    def __init__(self, status: int, detail: str, tool: str = "", path: str = "") -> None:
+        super().__init__(f"refused ({status}): {detail}")
+        self.status = status
+        self.detail = detail
+        self.tool = tool
+        self.path = path
+
+
+def service_caller(base_url: str, http: Http = json_http) -> Caller:
+    """GET the service's read-only endpoints at `base_url`, as `uasw ask` does. An error
+    status is raised as RefusedCall with the `detail` sentence the service sent."""
+    base = base_url.rstrip("/")
+
+    def call(path: str, query: dict[str, str]) -> Any:
+        try:
+            return http(f"{base}{path}?{urlencode(query)}" if query else f"{base}{path}", None)
+        except HTTPError as exc:
+            raise RefusedCall(exc.code, _refusal_detail(exc)) from None
+
+    return call
+
+
+def _refusal_detail(exc: HTTPError) -> str:
+    """The `detail` the service sent (FastAPI's shape: a sentence, or validation's list of
+    objects as JSON), else the status line's reason when the body is not that."""
+    try:
+        data = json.loads(exc.read())
+    except (OSError, AttributeError, ValueError):
+        return str(exc.reason)
+    if isinstance(data, dict) and "detail" in data:
+        detail = data["detail"]
+        return detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+    return str(exc.reason)
 
 
 @dataclass(frozen=True)
@@ -236,12 +282,20 @@ def ask(
 
 
 def _execute(c: ToolCall, caller: Caller, as_of: datetime, calls: list[Call]) -> str:
+    """The tool message for one call. The model's own mistakes, an unknown tool or a bad
+    argument, go back to it as text so it can correct itself; a refusal by the service ends
+    the run (RefusedCall), whether the caller raises it or urllib's HTTPError."""
     try:
         path, query = resolve(c.name, c.arguments, as_of)
     except UnknownTool as exc:
         return f"unknown tool: {exc}"
     except ValueError as exc:
         return f"invalid arguments: {exc}"
-    result = caller(path, query)
+    try:
+        result = caller(path, query)
+    except RefusedCall as exc:
+        raise RefusedCall(exc.status, exc.detail, exc.tool or c.name, exc.path or path) from None
+    except HTTPError as exc:
+        raise RefusedCall(exc.code, _refusal_detail(exc), c.name, path) from None
     calls.append(Call(c.name, dict(c.arguments), path, query, result))
     return json.dumps(result, ensure_ascii=False)

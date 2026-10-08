@@ -1,6 +1,16 @@
 """A read-only assistant over the workbench's own API: the model phrases, the engine computes."""
 
-from .agent import SYSTEM_PROMPT, Answer, Call, Grounding, StepLimit, ask, ground
+from .agent import (
+    SYSTEM_PROMPT,
+    Answer,
+    Call,
+    Grounding,
+    RefusedCall,
+    StepLimit,
+    ask,
+    ground,
+    service_caller,
+)
 from .backends import OllamaBackend, ReplayBackend, ToolCall, Turn
 from .recording import Recording, load_recordings, replay
 from .tools import TOOLS, UnknownTool, resolve
@@ -13,6 +23,7 @@ __all__ = [
     "Grounding",
     "OllamaBackend",
     "Recording",
+    "RefusedCall",
     "ReplayBackend",
     "StepLimit",
     "ToolCall",
@@ -23,4 +34,5 @@ __all__ = [
     "load_recordings",
     "replay",
     "resolve",
+    "service_caller",
 ]
