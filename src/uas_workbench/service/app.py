@@ -26,7 +26,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,7 +38,7 @@ from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.codec import record_to_json
 from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.flight.record import FlightRecord
-from uas_workbench.ledger import NOTE, Entry, LedgerError, append, entry_to_json
+from uas_workbench.ledger import NOTE, Entry, LedgerError, UnreadableRecord, append, entry_to_json
 from uas_workbench.life import Board, Component, DueList, board, due_list
 from uas_workbench.life.cue import item_cue, reason_cues, status_cue
 from uas_workbench.life.engine import counted
@@ -653,23 +653,52 @@ def fleet_grounded(
     )
 
 
+NOT_KNOWN = float("nan")  # a gauge that cannot be computed, never 0
+
+
 def refresh_gauges(store: Store, config: FleetConfig) -> None:
+    """Recompute every gauge from the store. A record the store cannot read (issue #43) is
+    named in the log, once per record; the aircraft whose state it leaves unknown count as
+    unknown, and a count no aircraft can be left out of (findings by kind, due items by
+    state) is NaN rather than a number computed without the record."""
     FLIGHTS_STORED.set(store.flight_count())
     kinds: Counter[str] = Counter()
     statuses: Counter[str] = Counter()
     states: Counter[str] = Counter()
+    problems: dict[str, UnreadableRecord] = {}
+    findings_known = due_known = True
     for aircraft in store.aircraft():
-        result, _ = reconcile_view(store, aircraft, config)
-        kinds.update(f.kind for f in result.findings)
-        due, state, _ = due_view(store, aircraft, config)
-        statuses[state.status if is_known(state.status) else "unknown"] += 1
-        states.update(i.state for i in due.items)
+        try:
+            result, _ = reconcile_view(store, aircraft, config)
+            kinds.update(f.kind for f in result.findings)
+        except UnreadableRecord as exc:
+            problems[exc.detail] = exc
+            findings_known = False
+        try:
+            due, state, _ = due_view(store, aircraft, config)
+            statuses[state.status if is_known(state.status) else "unknown"] += 1
+            states.update(i.state for i in due.items)
+        except UnreadableRecord as exc:
+            problems[exc.detail] = exc
+            statuses["unknown"] += 1
+            due_known = False
     for kind in ("unlogged_flight", "counter_mismatch"):
-        FINDINGS.labels(kind=kind).set(kinds.get(kind, 0))
+        FINDINGS.labels(kind=kind).set(kinds.get(kind, 0) if findings_known else NOT_KNOWN)
     for status in (*config.states, "unknown"):
         AIRCRAFT_BY_STATUS.labels(status=status).set(statuses.get(status, 0))
     for state_name in DUE_ORDER:
-        DUE_ITEMS.labels(state=state_name).set(states.get(state_name, 0))
+        count = states.get(state_name, 0) if due_known else NOT_KNOWN
+        DUE_ITEMS.labels(state=state_name).set(count)
+    for problem in problems.values():
+        logger.warning(
+            "stored record cannot be read",
+            extra={
+                "table": problem.table,
+                "row_id": problem.row_id,
+                "subject": problem.subject,
+                "detail": problem.detail,
+            },
+        )
 
 
 # ---- the application -------------------------------------------------------------------
@@ -727,6 +756,14 @@ def create_app(
     )
     refresh_gauges(store, cfg)
 
+    async def unreadable(request: Request, exc: Exception) -> JSONResponse:
+        """A read that depends on a stored record the store cannot read: 503 with the record
+        named, never a bare 500. The store is unavailable for that read until it is repaired."""
+        assert isinstance(exc, UnreadableRecord)
+        return JSONResponse(status_code=503, content={"detail": exc.detail})
+
+    app.add_exception_handler(UnreadableRecord, unreadable)
+
     def writer(request: Request) -> None:
         """Every write goes through here, POST /entries and POST /ingest, and so does
         GET /journal/verify, which holds the write lock while it reads every row."""
@@ -777,12 +814,19 @@ def create_app(
 
     @app.get("/health", tags=["service"])
     def health() -> dict[str, object]:
-        return {
-            "status": "ok",
+        # `ok` when every stored record reads; `degraded`, with the first record that cannot
+        # be read named under `unreadable`, when one does not. Reads every record, as any
+        # board read does. A comment, not a docstring: the OpenAPI document stays as it was.
+        problem = store.readable()
+        body: dict[str, object] = {
+            "status": "ok" if problem is None else "degraded",
             "version": __version__,
             "aircraft": len(store.aircraft()),
             "flights": store.flight_count(),
         }
+        if problem is not None:
+            body["unreadable"] = problem.detail
+        return body
 
     @app.get("/aircraft", tags=["fleet"], response_model=list[AircraftCueOut | AircraftOut])
     def list_aircraft(as_of: AsOf = None, cues: Cues = False) -> list[AircraftOut]:

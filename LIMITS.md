@@ -279,6 +279,21 @@ field-level tables. This file is about what that means for a maintenance tool.
   while a writer commits (measured: 0 ms). Switching the file to WAL is a change to what is on
   disk (two sidecar files beside `fleet.sqlite`, which a copy of the file alone leaves behind)
   and is not made here.
+- **A record the store cannot read leaves every projected record unknown, not one.** Liveness
+  is decided over the whole ledger and a component move names another aircraft, so one entry
+  that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
+  wrong type, a time with no UTC offset, details the fold cannot use) leaves no projected
+  record of any aircraft known, and one flight record that cannot be read leaves the usage of
+  its aircraft, and of every component that has been on it, unknown. The reads say so rather
+  than answer without it: `GET /health` is `degraded` with the record named, and reads every
+  record to know (9.6 ms on the seeded store, median of 50 runs; 3.1 s with 111,440 entries,
+  median of 5, where a due read of that store takes 6.5 s; measured on 2026-10-08 in the
+  container above); every read that depends on the record is 503 with the same sentence, a
+  write judged against the projection is refused the same way with nothing written, `uasw`
+  prints `refused (503)` and exits 1, and the evidence pack is written with the dependent
+  values unknown and the items they supported not evidenced. Nothing here repairs the record:
+  `uasw verify` names its link, and restoring the file from a copy or fixing the row is the
+  operator's. A record that reads but is false is not told from a true one, as above.
 - **Validation is against the projection, not the world.** A well-formed false statement
   (an inspection that never happened, a part that is not really on the aircraft) is
   accepted. Only impossible transitions are refused.

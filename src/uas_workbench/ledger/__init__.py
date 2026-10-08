@@ -10,6 +10,7 @@ from .model import (
     Entry,
     LedgerError,
     Projection,
+    UnreadableRecord,
     WorkOrderState,
 )
 from .project import project
@@ -24,6 +25,7 @@ __all__ = [
     "Entry",
     "LedgerError",
     "Projection",
+    "UnreadableRecord",
     "WorkOrderState",
     "append",
     "entry_from_json",

@@ -22,6 +22,26 @@
   tamper-evident. A fresh seeded store verifies with one pinned head. Every existing response,
   every stored record and the evidence pack's hash are byte for byte what they were; the result
   line says unchanged since a head, never that the records are correct.
+- A stored record the store cannot read (issue #43: an entry nested 100,000 deep, a record
+  that is not JSON, a field missing or of the wrong type, a time with no UTC offset, each
+  edited directly in the SQLite file) no longer stops the service at startup or turns every
+  ledger read into a 500, and is never skipped either. Every record is read through one path
+  in `service/store.py`, which raises `UnreadableRecord` naming the table, the row, the
+  aircraft or component and why; the projection raises the same for an entry whose details
+  cannot be used. The service starts and logs the record once as a warning; the aircraft it
+  leaves unknown count as `unknown` and a gauge it leaves uncomputable is NaN, never 0;
+  `GET /health` answers `degraded` with the record named under `unreadable`, and reads every
+  record to say so (9.6 ms on the seeded store, 3.1 s with 111,440 entries, in `LIMITS.md`);
+  every read that depends on the record answers 503 with the same sentence, as does a write
+  judged against the projection, with nothing written; `uasw` prints `refused (503): ...` and
+  exits 1; and the evidence pack is still written, since part 2 of 0.6.0 puts the verify
+  result in it, with every value that depended on the record as `{"unknown": ...}`, every
+  item it would have supported `not evidenced` for that reason, and the label saying so. The
+  whole-ledger projection cache is keyed on SQLite's `data_version`, so an edit committed by
+  another connection while the service runs is met on the next read, not hidden by a copy
+  made before it. `uasw verify` keeps reporting the row as a `content` break at its link.
+  Every response on a readable store, the OpenAPI document, the seeded journal head and the
+  pack hash are byte for byte what they were.
 
 ## 0.5.2
 

@@ -56,6 +56,13 @@ def _val(value: Any, digits: int = 1) -> str:
     return _e(value)
 
 
+def _not_known(value: Any) -> str | None:
+    """The reason a value is `{"unknown": ...}`, or None when it is a value."""
+    if isinstance(value, dict) and set(value) == {"unknown"}:
+        return str(value["unknown"])
+    return None
+
+
 def _hours(seconds: Any) -> str:
     if isinstance(seconds, int | float):
         return f"{seconds / 3600:.1f} h ({seconds:.0f} s)"
@@ -79,9 +86,12 @@ def render_html(pack: dict[str, Any]) -> str:
     out.append('<html lang="en"><head><meta charset="utf-8">')
     out.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
     out.append(f"<title>{_e(p['title'])}</title><style>{CSS}</style></head><body>")
+    hash_short = (
+        "unknown" if _not_known(p["ledger_hash"]) is not None else _e(p["ledger_hash"][:16])
+    )
     out.append(
         f'<div class="print-header">{_e(p["label"])}. {_e(p["title"])}, generated '
-        f"{_e(p['generated_utc'])}, ledger hash {_e(p['ledger_hash'][:16])}. Draft: shows no "
+        f"{_e(p['generated_utc'])}, ledger hash {hash_short}. Draft: shows no "
         "compliance, claims no robustness level, certifies nothing.</div>"
     )
     out.append(f"<h1>{_e(p['title'])}</h1>")
@@ -91,7 +101,7 @@ def render_html(pack: dict[str, Any]) -> str:
     out.append(
         f'<p class="meta">{_e(p["label"])}. Generated {_e(p["generated_utc"])} from commit '
         f"{_e(p['commit'])}, workbench version {_e(p['version'])}; computed as of "
-        f"{_e(p['as_of'])}; ledger hash {_e(p['ledger_hash'])}.</p>"
+        f"{_e(p['as_of'])}; ledger hash {_val(p['ledger_hash'])}.</p>"
     )
 
     out.append(f"<h2>2. {_e(s[2])}</h2>")
@@ -181,6 +191,8 @@ def render_html(pack: dict[str, Any]) -> str:
             ],
         )
     )
+    if (why := _not_known(u["flights"])) is not None:
+        out.append(f'<p class="muted">Flight records: unknown: {_e(why)}.</p>')
     out.append(
         _table(
             ["Log", "UTC start", "Flight s", "Arm cycles", "Landings", "Faults reported", "Data"],
@@ -201,11 +213,13 @@ def render_html(pack: dict[str, Any]) -> str:
                     ),
                     "synthetic" if f["synthetic"] else "real",
                 ]
-                for f in u["flights"]
+                for f in (u["flights"] if _not_known(u["flights"]) is None else [])
             ],
         )
     )
-    if u["findings"]:
+    if (why := _not_known(u["findings"])) is not None:
+        out.append(f'<p class="muted">Findings from reconciling the logs: unknown: {_e(why)}.</p>')
+    elif u["findings"]:
         out.append("<p>Findings from reconciling the logs against the autopilot's counter:</p><ul>")
         out.extend(f"<li>{_e(f['message'])}</li>" for f in u["findings"])
         out.append("</ul>")
@@ -216,7 +230,9 @@ def render_html(pack: dict[str, Any]) -> str:
         "line here says that the records and a log disagree, not which is right, and no log "
         "is refused.</p>"
     )
-    if g["findings"]:
+    if (why := _not_known(g)) is not None:
+        out.append(f'<p class="muted">Unknown: {_e(why)}.</p>')
+    elif g["findings"]:
         out.append(
             "<ul>" + "".join(f"<li>{_e(f['message'])}</li>" for f in g["findings"]) + "</ul>"
         )
@@ -228,13 +244,15 @@ def render_html(pack: dict[str, Any]) -> str:
         )
     else:
         out.append("<p>No log of this aircraft could be judged; the reasons follow.</p>")
-    if g["not_judged"]:
+    if _not_known(g) is None and g["not_judged"]:
         out.append(
             '<p class="muted">Not judged: '
             + "; ".join(_e(n["why"]) for n in g["not_judged"])
             + "</p>"
         )
-    if u["unchecked"]:
+    if (why := _not_known(u["unchecked"])) is not None:
+        out.append(f'<p class="muted">Not checked: unknown: {_e(why)}.</p>')
+    elif u["unchecked"]:
         out.append(
             '<p class="muted">Not checked: '
             + "; ".join(f"{_e(k)} ({_e(v)})" for k, v in u["unchecked"].items())
@@ -367,10 +385,14 @@ def render_html(pack: dict[str, Any]) -> str:
                     _e(p["as_of"]),
                     _e(p["commit"]),
                     _e(p["version"]),
-                    f"<code>{_e(p['ledger_hash'])}</code>",
-                    _e(c["entries"]),
-                    _e(c["flights"]),
-                    _e(c["due_items"]),
+                    (
+                        _val(p["ledger_hash"])
+                        if _not_known(p["ledger_hash"]) is not None
+                        else f"<code>{_e(p['ledger_hash'])}</code>"
+                    ),
+                    _val(c["entries"]),
+                    _val(c["flights"]),
+                    _val(c["due_items"]),
                 ]
             ],
         )

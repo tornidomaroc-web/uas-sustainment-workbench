@@ -10,6 +10,13 @@ Every entry and every flight record is linked into the write journal (journal.py
 transaction that writes it, so a change made to either directly in the SQLite file is
 reported by `verify_journal`. A store written by 0.5.x is journaled when first opened, after
 a note saying that what came before is not tamper-evident.
+
+Every record is read through one path (`_entry`, `_flight`), and a record that cannot be
+read there (not JSON, nested too deep for the parser, a field missing or of the wrong type,
+a time with no UTC offset) raises `UnreadableRecord` naming the table, the row, its aircraft
+or component and why, instead of a parser's exception; so does the projection when an
+entry's details cannot be used. No read skips such a record and goes on: whatever depended
+on it is not known, and the service, the command line and the evidence pack say so.
 """
 
 from __future__ import annotations
@@ -19,12 +26,13 @@ import sqlite3
 import threading
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from uas_workbench.fleet.model import Aircraft, Fleet
 from uas_workbench.flight.codec import record_from_json, record_to_json
 from uas_workbench.flight.record import FlightRecord, Source, is_known
 from uas_workbench.ledger.codec import entry_from_json, entry_to_json
-from uas_workbench.ledger.model import Entry, Projection
+from uas_workbench.ledger.model import Entry, Projection, UnreadableRecord
 from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
 
@@ -80,6 +88,7 @@ class Store:
             with self._db:
                 journal.migrate(self._db)
         self._projection: Projection | None = None
+        self._projection_version = -1
 
     def close(self) -> None:
         self._db.close()
@@ -189,16 +198,20 @@ class Store:
     def entries(self, subject: str | None = None) -> Sequence[Entry]:
         """Every entry, superseded ones included, in the order they were entered."""
         if subject is None:
-            rows = self._db.execute("SELECT record FROM entries ORDER BY id").fetchall()
+            rows = self._db.execute(
+                "SELECT id, subject, record FROM entries ORDER BY id"
+            ).fetchall()
         else:
             rows = self._db.execute(
-                "SELECT record FROM entries WHERE subject = ? ORDER BY id", (subject,)
+                "SELECT id, subject, record FROM entries WHERE subject = ? ORDER BY id", (subject,)
             ).fetchall()
-        return [entry_from_json(json.loads(r[0])) for r in rows]
+        return [self._entry(r) for r in rows]
 
     def entry(self, entry_id: int) -> Entry | None:
-        row = self._db.execute("SELECT record FROM entries WHERE id = ?", (entry_id,)).fetchone()
-        return entry_from_json(json.loads(row[0])) if row else None
+        row = self._db.execute(
+            "SELECT id, subject, record FROM entries WHERE id = ?", (entry_id,)
+        ).fetchone()
+        return self._entry(row) if row else None
 
     def entry_count(self) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
@@ -213,6 +226,21 @@ class Store:
         with self._lock:
             return journal.verify(self._db, head)
 
+    def readable(self) -> UnreadableRecord | None:
+        """The first stored record that cannot be read, or None when every entry reads and
+        projects and every flight record reads. Reads the whole store, as any board read
+        does; /health reports what it returns."""
+        try:
+            project(self.entries())
+            rows = self._db.execute(
+                "SELECT id, aircraft_key, log_ref, record FROM flights ORDER BY id"
+            ).fetchall()
+            for row in rows:
+                self._flight(row)
+        except UnreadableRecord as exc:
+            return exc
+        return None
+
     def projection(self, as_of: datetime | None = None) -> Projection:
         """The live entries folded into records, at `as_of` or as of every entry.
 
@@ -221,8 +249,13 @@ class Store:
         """
         if as_of is not None:
             return project(self.entries(), as_of)
-        if self._projection is None:
+        # Another connection committing to the file (an edit made with sqlite3 while the
+        # service runs) bumps SQLite's data_version; the cache is not served past it, so a
+        # record that can no longer be read is met on the next read, never hidden by a copy.
+        version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
+        if self._projection is None or version != self._projection_version:
             self._projection = project(self.entries())
+            self._projection_version = version
         return self._projection
 
     def components(self, as_of: datetime | None = None) -> Sequence[Component]:
@@ -260,15 +293,62 @@ class Store:
 
     def flights(self, aircraft_key: str) -> Sequence[FlightRecord]:
         rows = self._db.execute(
-            "SELECT record FROM flights WHERE aircraft_key = ? "
+            "SELECT id, aircraft_key, log_ref, record FROM flights WHERE aircraft_key = ? "
             "ORDER BY utc_start IS NULL, utc_start, log_ref",
             (aircraft_key,),
         ).fetchall()
-        return [record_from_json(json.loads(r[0])) for r in rows]
+        return [self._flight(r) for r in rows]
 
     def flight_count(self) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM flights").fetchone()
         return int(row[0])
+
+    # ---- the one read path for stored records ----------------------------------------
+
+    def _entry(self, row: tuple[object, ...]) -> Entry:
+        row_id, subject, text = row
+        try:
+            entry = entry_from_json(_loads(text))
+            if entry.occurred_utc.tzinfo is None or entry.recorded_utc.tzinfo is None:
+                raise ValueError("its time carries no UTC offset")
+            return entry
+        except _CANNOT_READ as exc:
+            raise UnreadableRecord("entries", int(str(row_id)), str(subject), _why(exc)) from exc
+
+    def _flight(self, row: tuple[object, ...]) -> FlightRecord:
+        row_id, aircraft_key, log_ref, text = row
+        try:
+            record = record_from_json(_loads(text))
+            if is_known(record.utc_start) and record.utc_start.tzinfo is None:
+                raise ValueError("its UTC start carries no UTC offset")
+            return record
+        except _CANNOT_READ as exc:
+            raise UnreadableRecord(
+                "flights", int(str(row_id)), str(aircraft_key), _why(exc), str(log_ref)
+            ) from exc
+
+
+# What reading a record can raise: the parser on text that is not JSON or is nested too deep
+# (RecursionError), the codecs on a field missing (KeyError) or of the wrong type (TypeError,
+# ValueError; AttributeError when the record is not an object at all), and the shape checks
+# above. Each is the record being unreadable, never a traceback for the caller.
+_CANNOT_READ = (RecursionError, KeyError, ValueError, TypeError, AttributeError)
+
+
+def _loads(text: object) -> Any:
+    if not isinstance(text, str | bytes):
+        raise TypeError(f"the record column holds {type(text).__name__}, not JSON text")
+    return json.loads(text)
+
+
+def _why(exc: BaseException) -> str:
+    if isinstance(exc, RecursionError):
+        return "nested too deep to parse"
+    if isinstance(exc, json.JSONDecodeError):
+        return f"not JSON ({exc})"
+    if isinstance(exc, KeyError):
+        return f"field {exc} is missing"
+    return str(exc) or type(exc).__name__
 
 
 def _source(value: str) -> Source:

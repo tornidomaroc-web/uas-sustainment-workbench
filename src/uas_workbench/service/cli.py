@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 
 from uas_workbench.fleet import load_config
@@ -25,6 +26,7 @@ from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
 from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.px4 import read_ulog
+from uas_workbench.ledger import UnreadableRecord
 
 from .observability import configure_logging
 from .store import DuplicateFlight, Store
@@ -456,7 +458,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     configure_logging()
     args = build_parser().parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except UnreadableRecord as exc:
+        # A stored record the store cannot read: the same refusal the service answers (503),
+        # with the record named; never a traceback. `uasw verify` reports the same row.
+        print(f"refused (503): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
