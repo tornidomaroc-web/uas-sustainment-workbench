@@ -260,9 +260,25 @@ field-level tables. This file is about what that means for a maintenance tool.
   chain fails, and nothing in this tool keeps a head anywhere. Writing the head down after each
   session, where the file cannot reach it, is the operator's, and so is deciding who may hold
   the file. The line is "unchanged since head H", and that is all it says: a false statement
-  linked at entry is linked false, and what the ledger refuses or accepts is unchanged. Verifying
-  reads every row and holds the store's write lock meanwhile, so a write waits for it; measured
-  at 3 ms for the seeded store (94 links, median of 50 runs on 2026-10-07), and not tried on a large fleet.
+  linked at entry is linked false, and what the ledger refuses or accepts is unchanged. Whatever
+  the file holds, verifying reports and never raises: a record that cannot be parsed or hashed
+  (not JSON, nested too deep for the parser, a column turned into a BLOB), a note that is not
+  the migration note, and a note on an entry or flight link, where the column is NULL and no
+  hash covers it, are each a `content` break at that link. Verifying reads every row and holds
+  the store's write lock meanwhile, so a write waits for it: 3 ms for the seeded store (94
+  links, median of 50 runs on 2026-10-07), and 3.9 s for a store of 100,000 links (the seeded
+  store plus copies of its entries, 78 MB; median of 5 runs on 2026-10-08, a 4-vCPU Intel Xeon
+  2.80 GHz cloud container, Python 3.13; 4.6 s as `uasw verify` from the shell, process start
+  included), during which a write issued into the walk waited 3.86 s where it takes 2 ms
+  alone. So `GET /journal/verify` is guarded exactly as the writes are, token or loopback,
+  though it writes nothing: whoever may make writes wait is whoever may write. The store has
+  one connection and the lock is the store's, so a read-only verify on a second connection
+  would not help as the file is: in SQLite's default rollback-journal mode a reader holding a
+  read transaction makes a writer's commit wait for it too (measured: the commit waited the
+  whole 2.5 s the reader held its transaction), and only WAL mode lets a reader keep a snapshot
+  while a writer commits (measured: 0 ms). Switching the file to WAL is a change to what is on
+  disk (two sidecar files beside `fleet.sqlite`, which a copy of the file alone leaves behind)
+  and is not made here.
 - **Validation is against the projection, not the world.** A well-formed false statement
   (an inspection that never happened, a part that is not really on the aircraft) is
   accepted. Only impossible transitions are refused.

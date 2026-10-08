@@ -728,7 +728,8 @@ def create_app(
     refresh_gauges(store, cfg)
 
     def writer(request: Request) -> None:
-        """Every write goes through here: POST /entries and POST /ingest."""
+        """Every write goes through here, POST /entries and POST /ingest, and so does
+        GET /journal/verify, which holds the write lock while it reads every row."""
         if token:
             if request.headers.get("authorization") != f"Bearer {token}":
                 raise HTTPException(
@@ -972,7 +973,12 @@ def create_app(
         logger.info("ingested", extra={"aircraft_key": aircraft_key, "log_ref": record.log_ref})
         return flight_view(record)
 
-    @app.get("/journal/verify", tags=["ledger"], response_model=JournalVerifyOut)
+    @app.get(
+        "/journal/verify",
+        tags=["ledger"],
+        response_model=JournalVerifyOut,
+        dependencies=[Depends(writer)],
+    )
     def verify_journal(
         head: Annotated[
             str | None,
@@ -987,7 +993,11 @@ def create_app(
         """Verify the write journal: every entry and flight record against the hash chain
         written with it. Reports the head, the length and, on a break, the first bad link and
         what kind of break it is. Unchanged since a head is all it says; it does not say that
-        the records are correct."""
+        the records are correct.
+
+        Guarded like a write, though it writes nothing: it reads every row and holds the
+        store's write lock meanwhile, so writes wait for as long as the walk takes (LIMITS.md
+        gives the measured cost), and only who may write may make them wait."""
         result = store.verify_journal(head)
         return JournalVerifyOut(
             ok=result.ok,
