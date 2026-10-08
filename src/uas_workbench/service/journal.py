@@ -5,7 +5,12 @@ the row's content, the hash of the link before it, and the hash of the link itse
 is the last link's hash. Verifying walks the chain from the first link and recomputes every
 hash from the rows as they are now, so a row edited or deleted directly in the SQLite file,
 a link moved or inserted, or a row inserted with no link, is reported with the first bad
-sequence number and what kind of break it is.
+sequence number and what kind of break it is. Whatever the file holds, verifying reports and
+never raises: a record that cannot be parsed or hashed (not JSON, nested too deep, a column
+turned into a BLOB), a note that is not the migration note, and a note on a link that is not
+a note link are each a `content` break at that link. Every stored journal column is covered:
+the sequence, kind, reference and hashes by the link hash, a note link's note by its content
+hash, and the note column of any other link by being NULL or a break.
 
 What is hashed is the content the store reads, in one canonical form (JSON with sorted keys,
 no spaces, ASCII only), never the bytes on disk: the columns the queries filter on and the
@@ -170,7 +175,7 @@ def migrate(db: sqlite3.Connection, now: datetime | None = None) -> None:
 class Break:
     seq: int  # the first bad sequence number
     kind: str  # sequence, duplicate, previous_hash, missing_row, content, link_hash, unjournaled
-    detail: str
+    detail: str  # `content` also covers what cannot be read at all, and a note where none belongs
 
 
 @dataclass(frozen=True)
@@ -224,32 +229,20 @@ def verify(db: sqlite3.Connection, head: str | None = None) -> Verification:
         if phash != prev:
             broken = Break(seq, "previous_hash", f"link {seq} does not name link {seq - 1}")
             break
-        what = "the note" if kind == "note" else f"{kind} {ref}"
-        try:
-            if kind == "note":
-                content: Any = json.loads(note) if note is not None else None
-            else:
-                content = row_content(db, kind, ref)
-        except ValueError:
-            broken = Break(seq, "content", f"{what} of link {seq} is no longer readable JSON")
+        if kind != "note" and note is not None:
+            broken = Break(seq, "content", f"link {seq} holds a note, which only a note link does")
             break
-        if content is None:
-            broken = Break(seq, "missing_row", f"{what} of link {seq} is not in the store")
-            break
-        if content_hash(content) != chash:
-            broken = Break(seq, "content", f"{what} is not what link {seq} recorded")
+        broken, found = _check_content(db, seq, kind, ref, note, chash)
+        if broken is not None:
             break
         if link_hash(seq, kind, ref, chash, phash) != lhash:
             broken = Break(seq, "link_hash", f"link {seq} is not the hash of what it holds")
             break
-        if kind == "note" and migration is None and isinstance(content, dict):
-            migration = Migration(
-                seq=seq,
-                recorded_utc=str(content.get("recorded_utc", "")),
-                flights=int(content.get("flights", 0)),
-                entries=int(content.get("entries", 0)),
-                note=str(content.get("note", "")),
-            )
+        if kind == "note":
+            if migration is not None:
+                broken = Break(seq, "content", f"link {seq} is a second migration note")
+                break
+            migration = found
         if head is not None and lhash == head:
             given_at = seq
         prev = lhash
@@ -269,6 +262,65 @@ def verify(db: sqlite3.Connection, head: str | None = None) -> Verification:
         migration=migration,
         line=_line(chain_ok, prev, length, broken, head, given_at),
     )
+
+
+class _NotMigration(ValueError):
+    """A note that is not the one `migrate` writes."""
+
+
+def _migration(seq: int, content: Any) -> Migration:
+    """The migration note's fields, each checked for its type. A chain recomputed from the
+    file can hold any JSON in a note, so a count is taken only when it is a whole number as
+    `migrate` wrote it, never as int() of whatever is there."""
+    if not isinstance(content, dict):
+        raise _NotMigration("it is not a JSON object")
+    counts: dict[str, int] = {}
+    for name in ("flights", "entries"):
+        value = content.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise _NotMigration(f"its {name} count is not a whole number")
+        counts[name] = value
+    recorded_utc, note = content.get("recorded_utc"), content.get("note")
+    if not isinstance(recorded_utc, str) or not isinstance(note, str):
+        raise _NotMigration("its time or its text is not a string")
+    return Migration(
+        seq=seq,
+        recorded_utc=recorded_utc,
+        flights=counts["flights"],
+        entries=counts["entries"],
+        note=note,
+    )
+
+
+def _check_content(
+    db: sqlite3.Connection, seq: int, kind: str, ref: int | None, note: Any, chash: Any
+) -> tuple[Break | None, Migration | None]:
+    """Read what link `seq` refers to and check it against the content hash recorded; for a
+    note, also take it as the migration note. Whatever the file holds, the answer is a break
+    or none: a record that is not JSON, one nested too deep for the parser (RecursionError), a
+    column that cannot be hashed (TypeError from json.dumps on a BLOB) and a note that is not
+    a migration note (ValueError) are each the content of that link being unreadable, reported
+    at the link with the same shape as every other break, so the command, the endpoint and the
+    evidence pack that embeds this result never crash on a crafted store."""
+    what = "the note" if kind == "note" else f"{kind} {ref}"
+    try:
+        if kind == "note":
+            content: Any = json.loads(note) if note is not None else None
+        else:
+            content = row_content(db, kind, ref)
+        if content is None:
+            return Break(seq, "missing_row", f"{what} of link {seq} is not in the store"), None
+        if content_hash(content) != chash:
+            return Break(seq, "content", f"{what} is not what link {seq} recorded"), None
+        return None, _migration(seq, content) if kind == "note" else None
+    except _NotMigration as exc:
+        return Break(seq, "content", f"{what} of link {seq} is not a migration note: {exc}"), None
+    except json.JSONDecodeError:
+        return Break(seq, "content", f"{what} of link {seq} is no longer readable JSON"), None
+    except RecursionError:
+        return Break(seq, "content", f"{what} of link {seq} is nested too deep to read"), None
+    except (ValueError, TypeError) as exc:
+        return Break(seq, "content", f"{what} of link {seq} cannot be read: {exc}"), None
 
 
 def _unjournaled(

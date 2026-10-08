@@ -574,6 +574,7 @@ def test_a_crafted_store_is_a_content_break_at_its_link_never_a_crash(
     result shape as every other break, from the library, the command and the endpoint. Part 2
     embeds this result in the evidence pack, which must not crash on a crafted store either."""
     store = Store(db)
+    client = TestClient(create_app(store, write_token="t"))  # running when the file is edited
     assert store.verify_journal().ok
     seq, what = craft(db)
     result = store.verify_journal()
@@ -586,7 +587,6 @@ def test_a_crafted_store_is_a_content_break_at_its_link_never_a_crash(
         main(["--db", db, "verify"])
     assert exit_.value.code == 1
     assert capsys.readouterr().err.startswith(f"journal broken at link {seq}: content:")
-    client = TestClient(create_app(store, write_token="t"))
     r = client.get("/journal/verify", headers=AUTH)
     assert r.status_code == 200, r.text
     assert r.json()["broken"] == {"seq": seq, "kind": "content", "detail": result.broken.detail}
