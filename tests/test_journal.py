@@ -16,6 +16,7 @@ import json
 import re
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from uas_workbench.service.store import DuplicateFlight, Store
 FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG = load_config()
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+AUTH = {"Authorization": "Bearer t"}  # the write token the test services are given
 # The head of a freshly seeded store (synthetic fleet plus the two showcase aircraft), pinned:
 # it changes only when the seed, the fixtures, the codecs or the journal's canonical form
 # change, each of which CHANGELOG.md must say.
@@ -477,6 +479,140 @@ def test_an_empty_0_5_store_starts_a_journal_with_no_note(tmp_path: Path) -> Non
     store.close()
 
 
+# ---- a crafted store: verify reports, never crashes --------------------------------------
+
+
+def recompute_chain(c: sqlite3.Connection) -> None:
+    """Every link's hashes recomputed from the rows as they are, as the store would have
+    written them: what someone with the file and this code does after an edit."""
+    from uas_workbench.service import journal
+
+    prev = journal.GENESIS
+    for seq, kind, ref, note in c.execute(
+        "SELECT seq, kind, ref, note FROM journal ORDER BY seq"
+    ).fetchall():
+        content = journal.content_hash(
+            json.loads(note) if kind == "note" else journal.row_content(c, kind, ref)
+        )
+        link = journal.link_hash(seq, kind, ref, content, prev)
+        c.execute(
+            "UPDATE journal SET content_hash = ?, prev_hash = ?, link_hash = ? WHERE seq = ?",
+            (content, prev, link, seq),
+        )
+        prev = link
+
+
+def craft_nested_record(path: str) -> tuple[int, str]:
+    """An entry's record replaced by JSON nested 100,000 deep: json.loads raises
+    RecursionError on it."""
+    with raw(path) as c:
+        c.execute("UPDATE entries SET record = ? WHERE id = 3", ("[" * 100_000 + "]" * 100_000,))
+    return seq_of(path, "entry", 3), "entry 3"
+
+
+def craft_bytes_column(path: str) -> tuple[int, str]:
+    """A flight's query column replaced by a BLOB: the row reads, and json.dumps raises
+    TypeError on it."""
+    with raw(path) as c:
+        c.execute("UPDATE flights SET aircraft_key = X'00ff' WHERE id = 4")
+    return seq_of(path, "flight", 4), "flight 4"
+
+
+def craft_note_counts(path: str) -> tuple[int, str]:
+    """The chain recomputed from the file behind a note whose counts are words, not numbers:
+    int('many') raises ValueError."""
+    with raw(path) as c:
+        links = c.execute("SELECT seq, kind, ref FROM journal ORDER BY seq").fetchall()
+        c.execute("DELETE FROM journal")
+        note = {"note": "x", "flights": "many", "entries": "some", "recorded_utc": "2026"}
+        c.execute(
+            "INSERT INTO journal (seq, kind, ref, note, content_hash, prev_hash, link_hash) "
+            "VALUES (1, 'note', NULL, ?, '', '', '')",
+            (json.dumps(note),),
+        )
+        for seq, kind, ref in links:
+            c.execute(
+                "INSERT INTO journal (seq, kind, ref, note, content_hash, prev_hash, link_hash) "
+                "VALUES (?, ?, ?, NULL, '', '', '')",
+                (seq + 1, kind, ref),
+            )
+        recompute_chain(c)
+    return 1, "the note"
+
+
+def craft_note_counts_wrong_type(path: str) -> tuple[int, str]:
+    """As above with counts that int() would accept: a list, a bool and a float are not
+    counts either, and the note must not be trusted."""
+    with raw(path) as c:
+        links = c.execute("SELECT seq, kind, ref FROM journal ORDER BY seq").fetchall()
+        c.execute("DELETE FROM journal")
+        note = {"note": "x", "flights": [1], "entries": True, "recorded_utc": 2026}
+        c.execute(
+            "INSERT INTO journal (seq, kind, ref, note, content_hash, prev_hash, link_hash) "
+            "VALUES (1, 'note', NULL, ?, '', '', '')",
+            (json.dumps(note),),
+        )
+        for seq, kind, ref in links:
+            c.execute(
+                "INSERT INTO journal (seq, kind, ref, note, content_hash, prev_hash, link_hash) "
+                "VALUES (?, ?, ?, NULL, '', '', '')",
+                (seq + 1, kind, ref),
+            )
+        recompute_chain(c)
+    return 1, "the note"
+
+
+CRAFTS = [craft_nested_record, craft_bytes_column, craft_note_counts, craft_note_counts_wrong_type]
+
+
+@pytest.mark.parametrize("craft", CRAFTS, ids=[c.__name__ for c in CRAFTS])
+def test_a_crafted_store_is_a_content_break_at_its_link_never_a_crash(
+    db: str, craft: Callable[[str], tuple[int, str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ValueError, TypeError and RecursionError raised while reading or hashing what a link
+    refers to are the store's content being unreadable, and are reported as such: the same
+    result shape as every other break, from the library, the command and the endpoint. Part 2
+    embeds this result in the evidence pack, which must not crash on a crafted store either."""
+    store = Store(db)
+    assert store.verify_journal().ok
+    seq, what = craft(db)
+    result = store.verify_journal()
+    assert not result.ok and result.broken is not None
+    assert (result.broken.seq, result.broken.kind) == (seq, "content")
+    assert what in result.broken.detail
+    assert result.line.startswith(f"journal broken at link {seq}: content:")
+    assert result.migration is None  # a note that cannot be read is not a migration
+    with pytest.raises(SystemExit) as exit_:
+        main(["--db", db, "verify"])
+    assert exit_.value.code == 1
+    assert capsys.readouterr().err.startswith(f"journal broken at link {seq}: content:")
+    client = TestClient(create_app(store, write_token="t"))
+    r = client.get("/journal/verify", headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert r.json()["broken"] == {"seq": seq, "kind": "content", "detail": result.broken.detail}
+    store.close()
+
+
+def test_a_note_on_a_link_that_is_not_a_note_is_a_break(db: str) -> None:
+    """Every stored journal column is hashed or refused. A note link's note is its hashed
+    content; on an entry or flight link the column is NULL, and any value put there is a
+    break at that link, since nothing in the chain covers it."""
+    store = Store(db)
+    assert store.verify_journal().ok
+    with raw(db) as c:
+        c.execute("UPDATE journal SET note = 'anything at all' WHERE seq = 5")
+    result = store.verify_journal()
+    assert not result.ok and result.broken is not None
+    assert (result.broken.seq, result.broken.kind) == (5, "content")
+    assert "note" in result.broken.detail
+    with raw(db) as c:
+        c.execute("UPDATE journal SET note = NULL WHERE seq = 5")
+        c.execute("UPDATE journal SET note = '' WHERE seq = 9")  # empty is still a value
+    result = store.verify_journal()
+    assert not result.ok and result.broken is not None and result.broken.seq == 9
+    store.close()
+
+
 # ---- the endpoint and the command -----------------------------------------------------
 
 
@@ -486,21 +622,41 @@ def client() -> TestClient:
 
 
 def test_the_endpoint_reports_head_length_and_the_result(client: TestClient) -> None:
-    r = client.get("/journal/verify")
+    r = client.get("/journal/verify", headers=AUTH)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True and body["broken"] is None and body["migration"] is None
     assert HEX64.match(body["head"]) and body["length"] > 0
     assert body["given"] is None and body["given_at"] is None
     assert "unchanged" not in body["line"] or "head" in body["line"]
-    same = client.get("/journal/verify", params={"head": body["head"]}).json()
+    same = client.get("/journal/verify", params={"head": body["head"]}, headers=AUTH).json()
     assert same["ok"] is True and same["given_at"] == body["length"]
     assert f"unchanged since head {body['head']}" in same["line"]
-    other = client.get("/journal/verify", params={"head": "f" * 64}).json()
+    other = client.get("/journal/verify", params={"head": "f" * 64}, headers=AUTH).json()
     assert other["ok"] is False and other["given_at"] is None and other["broken"] is None
     assert "not in this journal" in other["line"]
-    assert client.get("/journal/verify", params={"head": "zz"}).status_code == 422
+    assert client.get("/journal/verify", params={"head": "zz"}, headers=AUTH).status_code == 422
     assert "/journal/verify" in client.get("/openapi.json").json()["paths"]
+
+
+def test_the_endpoint_is_guarded_like_a_write() -> None:
+    """Verifying reads every row and holds the store's write lock meanwhile, so a caller who
+    can reach it can stall writes for as long as the walk takes; with a token set it needs the
+    token, and with none set it answers this machine only, exactly as POST /entries does."""
+    with_token = TestClient(create_app(seeded_memory(), write_token="t"))
+    assert with_token.get("/journal/verify").status_code == 401
+    assert (
+        with_token.get("/journal/verify", headers={"Authorization": "Bearer wrong"}).status_code
+        == 401
+    )
+    assert with_token.get("/journal/verify", headers=AUTH).status_code == 200
+    assert with_token.get("/entries").status_code == 200  # reads stay open
+    app = create_app(seeded_memory(), write_token=None)
+    remote = TestClient(app, client=("172.17.0.1", 40000))
+    r = remote.get("/journal/verify")
+    assert r.status_code == 403 and "UASW_WRITE_TOKEN" in r.json()["detail"]
+    local = TestClient(app, client=("127.0.0.1", 40000))
+    assert local.get("/journal/verify").status_code == 200
 
 
 def test_the_endpoint_reads_the_store_as_it_is_and_never_claims_truth(tmp_path: Path) -> None:
@@ -508,13 +664,13 @@ def test_the_endpoint_reads_the_store_as_it_is_and_never_claims_truth(tmp_path: 
     main(["--db", path, "seed", "--fixtures", str(FIXTURES)])
     store = Store(path)
     client = TestClient(create_app(store, write_token="t"))
-    ok = client.get("/journal/verify").json()
+    ok = client.get("/journal/verify", headers=AUTH).json()
     assert ok["ok"] is True
     assert "not that they are true" in ok["line"]
     assert not re.search(r"\b(correct|proves?|proof)\b", ok["line"])
     with raw(path) as c:
         c.execute("DELETE FROM flights WHERE id = 2")
-    broken = client.get("/journal/verify").json()
+    broken = client.get("/journal/verify", headers=AUTH).json()
     assert broken["ok"] is False
     assert broken["broken"] == {
         "seq": seq_of(path, "flight", 2),
