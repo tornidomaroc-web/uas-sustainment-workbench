@@ -151,7 +151,10 @@ fleet changed (CHANGELOG.md says which and why). The live demo shows them under
 "recorded runs, not live" with the model tag, the digest of its weights, the recording date,
 the fixed computation date, and every record the answer rests on. A test replays each
 recording against the current code on every CI run, so a change to the engine fails CI
-instead of leaving a stale answer on the page. No model runs in CI or on the page.
+instead of leaving a stale answer on the page. No model runs in CI or on the page. A tool
+call the service refuses, a 503 naming a record the store cannot read or a 404 for a key
+the model made up, ends the run before the model is asked again: `uasw ask` prints the
+service's own refusal line and exits 1, and no answer is grounded on a read that failed.
 
 **A maintenance ledger that is only ever appended.** Everything an operator records goes in
 as an entry: what happened, when it happened, when it was entered, by whom, and in what
