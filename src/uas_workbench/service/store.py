@@ -89,6 +89,9 @@ class Store:
                 journal.migrate(self._db)
         self._projection: Projection | None = None
         self._projection_version = -1
+        self._readable_lock = threading.Lock()
+        self._unreadable: UnreadableRecord | None = None
+        self._readable_version = -1
 
     def close(self) -> None:
         self._db.close()
@@ -228,8 +231,21 @@ class Store:
 
     def readable(self) -> UnreadableRecord | None:
         """The first stored record that cannot be read, or None when every entry reads and
-        projects and every flight record reads. Reads the whole store, as any board read
-        does; /health reports what it returns."""
+        projects and every flight record reads; /health reports what it returns.
+
+        The whole store is read once, and again only after another connection has committed
+        to the file (SQLite's data_version moves; an edit made with sqlite3, or a repair). A
+        record this store writes is one it wrote readable and leaves the answer as it was, so
+        asking again, which anyone who can reach /health may do, never reads the store again.
+        """
+        with self._readable_lock:
+            version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
+            if version != self._readable_version:
+                self._unreadable = self._first_unreadable()
+                self._readable_version = version
+            return self._unreadable
+
+    def _first_unreadable(self) -> UnreadableRecord | None:
         try:
             project(self.entries())
             rows = self._db.execute(

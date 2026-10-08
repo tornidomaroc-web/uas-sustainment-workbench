@@ -285,11 +285,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   wrong type, a time with no UTC offset, details the fold cannot use) leaves no projected
   record of any aircraft known, and one flight record that cannot be read leaves the usage of
   its aircraft, and of every component that has been on it, unknown. The reads say so rather
-  than answer without it: `GET /health` is `degraded` with the record named, and reads every
-  record to know (9.6 ms on the seeded store, median of 50 runs; 3.1 s with 111,440 entries,
-  median of 5, where a due read of that store takes 6.5 s; measured on 2026-10-08 in the
-  container above); every read that depends on the record is 503 with the same sentence, a
-  write judged against the projection is refused the same way with nothing written, `uasw`
+  than answer without it: `GET /health` is `degraded` with the record named. It answers from
+  what the store already knows and reads no record on a call: the whole store is read once at
+  startup and again only on the first call after another connection has committed a change to
+  the file (an edit made with sqlite3, or the repair); a write through the store is readable
+  by construction and changes nothing there. Measured on 2026-10-08 on an 8-core desktop,
+  Python 3.12, a store of 128,718 entries: 4.1 ms per call, median of 5 (4.3 ms before this
+  change, when /health read no record either); 1.3 s for the one call after an outside
+  commit, median of 5; startup 25 s, as before. The container above took 3.1 s for that whole
+  read at 111,440 entries, past the 3 s timeout of the image's health check, which is why a
+  call does not repeat it. Every read that depends on the record is 503 with the same
+  sentence, a write judged against the projection is refused the same way with nothing
+  written, `uasw`
   prints `refused (503)` and exits 1, and the evidence pack is written with the dependent
   values unknown and the items they supported not evidenced. Nothing here repairs the record:
   `uasw verify` names its link, and restoring the file from a copy or fixing the row is the

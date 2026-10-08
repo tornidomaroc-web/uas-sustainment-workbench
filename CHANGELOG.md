@@ -30,8 +30,9 @@
   aircraft or component and why; the projection raises the same for an entry whose details
   cannot be used. The service starts and logs the record once as a warning; the aircraft it
   leaves unknown count as `unknown` and a gauge it leaves uncomputable is NaN, never 0;
-  `GET /health` answers `degraded` with the record named under `unreadable`, and reads every
-  record to say so (9.6 ms on the seeded store, 3.1 s with 111,440 entries, in `LIMITS.md`);
+  `GET /health` answers `degraded` with the record named under `unreadable`, from what the
+  store read at startup or after another connection last changed the file, never by reading
+  every record on a call (4.1 ms with 128,718 entries, in `LIMITS.md`);
   every read that depends on the record answers 503 with the same sentence, as does a write
   judged against the projection, with nothing written; `uasw` prints `refused (503): ...` and
   exits 1; and the evidence pack is still written, since part 2 of 0.6.0 puts the verify
