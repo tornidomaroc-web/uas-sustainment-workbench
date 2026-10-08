@@ -358,3 +358,86 @@ def test_a_readable_store_answers_exactly_as_before(db: str) -> None:
     for path in (*LEDGER_READS, *FLIGHT_READS):
         assert client.get(path).status_code == 200, path
     store.close()
+
+
+# ---- /health stays cheap ---------------------------------------------------------------
+
+
+def count_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every stored record the store reads from now on, by table: its one read path counted."""
+    seen: list[str] = []
+    entry, flight = Store._entry, Store._flight
+
+    def counted_entry(self: Store, row: tuple[object, ...]) -> object:
+        seen.append("entries")
+        return entry(self, row)
+
+    def counted_flight(self: Store, row: tuple[object, ...]) -> object:
+        seen.append("flights")
+        return flight(self, row)
+
+    monkeypatch.setattr(Store, "_entry", counted_entry)
+    monkeypatch.setattr(Store, "_flight", counted_flight)
+    return seen
+
+
+def test_health_reads_no_record_when_the_file_has_not_changed(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The container's health check calls /health every 10 s with a 3 s timeout, and anyone
+    who can reach the service may call it: it answers from what the store already knows. The
+    whole store is read at startup and again only when another connection has changed the
+    file, never because /health was asked again."""
+    store = Store(db)
+    client = TestClient(create_app(store, write_token="t"))
+    seen = count_reads(monkeypatch)
+    for _ in range(3):
+        assert client.get("/health").json()["status"] == "ok"
+    assert seen == [], f"/health read {len(seen)} records"
+    store.close()
+
+
+def test_a_write_through_the_store_does_not_make_health_read_the_store(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record the store writes is one it wrote readable; it changes nothing /health reports."""
+    store = Store(db)
+    client = TestClient(create_app(store, write_token="t"))
+    assert client.get("/health").json()["status"] == "ok"
+    r = client.post(
+        "/entries",
+        json={
+            "subject": "SYN-02",
+            "kind": "work_order.open",
+            "occurred_utc": "2026-09-20T09:00:00Z",
+            "entered_by": "A. Tester, maintenance",
+            "statement": "a write made through the store",
+            "details": {"state": "in_work"},
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 201, r.text
+    seen = count_reads(monkeypatch)
+    assert client.get("/health").json()["status"] == "ok"
+    assert seen == [], f"/health read {len(seen)} records after a write through the store"
+    store.close()
+
+
+def test_health_meets_an_edit_and_a_repair_made_in_the_file(db: str) -> None:
+    """What /health knows is never older than the file: an edit made with another connection
+    is met on the next call, and so is putting the record back."""
+    store = Store(db)
+    client = TestClient(create_app(store, write_token="t"))
+    assert client.get("/health").json()["status"] == "ok"
+    with raw(db) as c:
+        (text,) = c.execute("SELECT record FROM entries WHERE id = 4").fetchone()
+    words = craft_nested_entry(db)
+    health = client.get("/health").json()
+    assert health["status"] == "degraded"
+    named(health["unreadable"], words)
+    assert client.get("/health").json()["status"] == "degraded"  # known, and still so
+    with raw(db) as c:
+        c.execute("UPDATE entries SET record = ? WHERE id = 4", (text,))
+    health = client.get("/health").json()
+    assert health["status"] == "ok" and "unreadable" not in health
+    store.close()
