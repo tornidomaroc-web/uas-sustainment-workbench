@@ -81,3 +81,38 @@ class LedgerError(Exception):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+
+
+class UnreadableRecord(Exception):
+    """A stored record the store cannot read: an entry, or a flight record the store holds,
+    whose row is there but whose content cannot be parsed, decoded or projected (edited in
+    the SQLite file, by hand or by a crafted tool). Named so a person can act on it: the
+    table and row, the aircraft or component it is about, and why. Nothing is computed
+    without it: every read that depends on it reports this instead of a value, and `uasw
+    verify` reports the same row as a content break at its link.
+
+    `detail` is the sentence every surface shows; it ends without a full stop so a renderer
+    may add one. `name` is the short form ("entry 5 of SYN-01")."""
+
+    def __init__(
+        self, table: str, row_id: int, subject: str, why: str, log_ref: str | None = None
+    ) -> None:
+        self.table = table
+        self.row_id = row_id
+        self.subject = subject
+        self.why = why
+        self.log_ref = log_ref
+        if table == "flights":
+            self.name = f"flight {row_id} of aircraft {subject}"
+            where = f"{self.name} (log {log_ref})" if log_ref else self.name
+            depends = f"the flight records of aircraft {subject}"
+        else:
+            self.name = f"entry {row_id} of {subject}"
+            where = self.name
+            depends = "the maintenance ledger"
+        self.detail = (
+            f"{where} cannot be read: {why}. Nothing computed from {depends} is known until "
+            "the record is repaired or the store is restored from a copy; uasw verify "
+            "reports it as a content break at its journal link"
+        )
+        super().__init__(self.detail)

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import date, datetime
-from typing import cast
+from typing import Any, cast
 
 from uas_workbench.life.model import (
     Component,
@@ -32,7 +32,9 @@ from uas_workbench.life.model import (
     WorkState,
 )
 
-from .model import AIRCRAFT_KINDS, Entry, Projection, WorkOrderState
+from .model import AIRCRAFT_KINDS, Entry, Projection, UnreadableRecord, WorkOrderState
+
+_REQUIRED = object()
 
 
 def fold_key(entries: Iterable[Entry]) -> Callable[[Entry], tuple[datetime, int]]:
@@ -68,6 +70,18 @@ def liveness(entries: Iterable[Entry]) -> tuple[list[Entry], dict[int, int]]:
     return live, superseded_by
 
 
+def _detail[T](
+    p: dict[str, Any], name: str, convert: Callable[[Any], T], default: Any = _REQUIRED
+) -> T:
+    """A detail the fold reads, converted; a wrong type raises ValueError naming the detail
+    and a missing one KeyError naming it, so the store can say which entry and which field."""
+    value = p[name] if default is _REQUIRED else p.get(name, default)
+    try:
+        return convert(value)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError(f"detail {name!r}: {exc}") from exc
+
+
 class _Aircraft:
     def __init__(self) -> None:
         self.before_s = 0.0
@@ -81,12 +95,64 @@ class _Component:
     def __init__(self, e: Entry) -> None:
         p = e.details
         self.kind = str(p["kind"])
-        self.in_service_since = date.fromisoformat(str(p["in_service_since"]))
-        self.hours_s_before = float(p["hours_s_before"])
-        self.cycles_before = int(p["cycles_before"])
+        self.in_service_since = _detail(p, "in_service_since", lambda v: date.fromisoformat(str(v)))
+        self.hours_s_before = _detail(p, "hours_s_before", float)
+        self.cycles_before = _detail(p, "cycles_before", int)
         self.installations: list[Installation] = []
         self.synthetic = e.synthetic
         self.registered_at = e.occurred_utc
+
+
+def _fold(e: Entry, aircraft: dict[str, _Aircraft], components: dict[str, _Component]) -> None:
+    """Fold one live entry into the records; the details it reads are typed here."""
+    p = e.details
+    if e.kind in AIRCRAFT_KINDS:
+        a = aircraft.setdefault(e.subject, _Aircraft())
+        a.entries += 1
+        a.synthetic = a.synthetic and e.synthetic
+        if e.kind == "time_in_service.set":
+            a.before_s = _detail(p, "before_s", float)
+        elif e.kind == "inspection.done":
+            a.inspections.append(
+                InspectionDone(
+                    str(p["name"]),
+                    e.occurred_utc,
+                    _detail(p, "at_hours_s", float),
+                    _detail(p, "carried_over_s", float, default=0.0),
+                )
+            )
+        elif e.kind == "work_order.open":
+            a.orders[str(p["work_id"])] = WorkOrderState(
+                str(p["work_id"]),
+                e.subject,
+                e.occurred_utc,
+                cast(WorkState, str(p["state"])),
+                e.statement,
+                None,
+                e.synthetic,
+            )
+        elif e.kind == "work_order.state":
+            w = a.orders.get(str(p["work_id"]))
+            if w is not None:
+                a.orders[w.work_id] = _with(w, state=cast(WorkState, str(p["state"])))
+        elif e.kind == "work_order.close":
+            w = a.orders.get(str(p["work_id"]))
+            if w is not None:
+                a.orders[w.work_id] = _with(w, closed_utc=e.occurred_utc)
+    elif e.kind == "component.register":
+        components[e.subject] = _Component(e)
+    elif e.kind in ("component.install", "component.remove"):
+        c = components.get(e.subject)
+        if c is None:
+            return
+        key = str(p["aircraft_key"])
+        if e.kind == "component.install":
+            c.installations.append(Installation(key, e.occurred_utc, None))
+        else:
+            for n, inst in enumerate(c.installations):
+                if inst.aircraft_key == key and inst.to_utc is None:
+                    c.installations[n] = Installation(key, inst.from_utc, e.occurred_utc)
+                    break
 
 
 def project(
@@ -107,54 +173,18 @@ def project(
     aircraft: dict[str, _Aircraft] = {}
     components: dict[str, _Component] = {}
     for e in live:
-        p = e.details
-        if e.kind in AIRCRAFT_KINDS:
-            a = aircraft.setdefault(e.subject, _Aircraft())
-            a.entries += 1
-            a.synthetic = a.synthetic and e.synthetic
-            if e.kind == "time_in_service.set":
-                a.before_s = float(p["before_s"])
-            elif e.kind == "inspection.done":
-                a.inspections.append(
-                    InspectionDone(
-                        str(p["name"]),
-                        e.occurred_utc,
-                        float(p["at_hours_s"]),
-                        float(p.get("carried_over_s", 0.0)),
-                    )
-                )
-            elif e.kind == "work_order.open":
-                a.orders[str(p["work_id"])] = WorkOrderState(
-                    str(p["work_id"]),
-                    e.subject,
-                    e.occurred_utc,
-                    cast(WorkState, str(p["state"])),
-                    e.statement,
-                    None,
-                    e.synthetic,
-                )
-            elif e.kind == "work_order.state":
-                w = a.orders.get(str(p["work_id"]))
-                if w is not None:
-                    a.orders[w.work_id] = _with(w, state=cast(WorkState, str(p["state"])))
-            elif e.kind == "work_order.close":
-                w = a.orders.get(str(p["work_id"]))
-                if w is not None:
-                    a.orders[w.work_id] = _with(w, closed_utc=e.occurred_utc)
-        elif e.kind == "component.register":
-            components[e.subject] = _Component(e)
-        elif e.kind in ("component.install", "component.remove"):
-            c = components.get(e.subject)
-            if c is None:
-                continue
-            key = str(p["aircraft_key"])
-            if e.kind == "component.install":
-                c.installations.append(Installation(key, e.occurred_utc, None))
-            else:
-                for n, inst in enumerate(c.installations):
-                    if inst.aircraft_key == key and inst.to_utc is None:
-                        c.installations[n] = Installation(key, inst.from_utc, e.occurred_utc)
-                        break
+        try:
+            _fold(e, aircraft, components)
+        except (KeyError, ValueError, TypeError, AttributeError) as exc:
+            # A detail the fold reads is missing or of the wrong type: the entry was read
+            # from the store but cannot be used, and nothing is projected without it.
+            why = f"field {exc} is missing" if isinstance(exc, KeyError) else str(exc)
+            raise UnreadableRecord(
+                "entries",
+                e.id or 0,
+                e.subject,
+                f"its details cannot be used as {e.kind}: {why}",
+            ) from exc
     maintenance: dict[str, MaintenanceRecord] = {}
     work_orders: dict[str, tuple[WorkOrderState, ...]] = {}
     for key, a in aircraft.items():

@@ -6,6 +6,7 @@ can never mistake a missing value for a zero.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, fields
 from datetime import datetime
 from typing import Any, cast
@@ -38,6 +39,10 @@ def _maybe(value: Any) -> Any:
 
 
 def record_from_json(data: JsonDict) -> FlightRecord:
+    """The flight record a stored record holds. A field missing raises KeyError naming it;
+    one of the wrong type raises ValueError naming it, so the store can say which."""
+    if not isinstance(data, dict):
+        raise TypeError(f"the record is a JSON {type(data).__name__}, not an object")
     utc = _maybe(data["utc_start"])
     lifetime = _maybe(data["lifetime"])
     faults = _maybe(data["fault_events"])
@@ -47,18 +52,31 @@ def record_from_json(data: JsonDict) -> FlightRecord:
         licence=str(data["licence"]),
         attribution=str(data["attribution"]),
         firmware=str(data["firmware"]),
-        log_span_s=float(data["log_span_s"]),
+        log_span_s=_field("log_span_s", float, data["log_span_s"]),
         aircraft_key=_maybe(data["aircraft_key"]),
-        utc_start=datetime.fromisoformat(utc) if isinstance(utc, str) else utc,
+        utc_start=_field("utc_start", datetime.fromisoformat, utc) if isinstance(utc, str) else utc,
         flight_time_s=_maybe(data["flight_time_s"]),
         arm_cycles=_maybe(data["arm_cycles"]),
         landings=_maybe(data["landings"]),
         battery_mah=_maybe(data["battery_mah"]),
         battery_wh=_maybe(data["battery_wh"]),
         fault_events=(
-            tuple(FaultEvent(**e) for e in faults) if isinstance(faults, list) else faults
+            _field("fault_events", lambda v: tuple(FaultEvent(**e) for e in v), faults)
+            if isinstance(faults, list)
+            else faults
         ),
         boot_count=_maybe(data["boot_count"]),
-        lifetime=LifetimeCounter(**lifetime) if isinstance(lifetime, dict) else lifetime,
+        lifetime=(
+            _field("lifetime", lambda v: LifetimeCounter(**v), lifetime)
+            if isinstance(lifetime, dict)
+            else lifetime
+        ),
         synthetic=bool(data.get("synthetic", False)),
     )
+
+
+def _field[T](name: str, convert: Callable[[Any], T], value: Any) -> T:
+    try:
+        return convert(value)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError(f"field {name!r}: {exc}") from exc
