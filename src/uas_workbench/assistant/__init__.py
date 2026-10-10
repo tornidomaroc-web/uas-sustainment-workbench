@@ -5,13 +5,13 @@ from .agent import (
     Answer,
     Call,
     Grounding,
-    RefusedCall,
     StepLimit,
     ask,
     ground,
     service_caller,
 )
 from .backends import OllamaBackend, ReplayBackend, ToolCall, Turn
+from .errors import BackendError, RefusedCall, ServiceUnreachable
 from .recording import Recording, load_recordings, replay
 from .tools import TOOLS, UnknownTool, resolve
 
@@ -19,12 +19,14 @@ __all__ = [
     "SYSTEM_PROMPT",
     "TOOLS",
     "Answer",
+    "BackendError",
     "Call",
     "Grounding",
     "OllamaBackend",
     "Recording",
     "RefusedCall",
     "ReplayBackend",
+    "ServiceUnreachable",
     "StepLimit",
     "ToolCall",
     "Turn",

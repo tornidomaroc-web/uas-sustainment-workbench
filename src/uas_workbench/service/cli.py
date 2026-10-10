@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path
 
-from uas_workbench.assistant.agent import RefusedCall
+from uas_workbench.assistant import RefusedCall
 from uas_workbench.fleet import load_config
 from uas_workbench.fleet.showcase import showcase
 from uas_workbench.fleet.synthetic import generate
@@ -469,8 +469,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f"refused (503): {exc.detail}", file=sys.stderr)
         sys.exit(1)
     except RefusedCall as exc:
-        # The service refused a tool call of `uasw ask` (issue #46): the service's own
-        # sentence, the status it answered, exit 1; the model was not asked again.
+        # The service refused a tool call of `uasw ask` (issue #46), or did not answer, or
+        # the model backend failed (issue #49, the subclasses): one line with the status and
+        # the sentence, exit 1; the model was not asked again and nothing was recorded.
         print(exc, file=sys.stderr)
         sys.exit(1)
     finally:

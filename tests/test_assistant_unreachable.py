@@ -34,7 +34,13 @@ from urllib.error import HTTPError, URLError
 import pytest
 from test_assistant_refusals import AS_OF, AS_OF_TEXT, LISTS_THEN_ANSWERS, uasw_ask
 
-from uas_workbench.assistant import RefusedCall, ReplayBackend, ask
+from uas_workbench.assistant import (
+    BackendError,
+    RefusedCall,
+    ReplayBackend,
+    ServiceUnreachable,
+    ask,
+)
 from uas_workbench.assistant.agent import service_caller
 from uas_workbench.assistant.backends import OllamaBackend, json_http
 
@@ -262,6 +268,48 @@ def test_the_backend_http_error_is_closed() -> None:
     with pytest.raises(RefusedCall):
         OllamaBackend("m:1", host=BACKEND, http=StubHttp(tags=error))
     assert error.closed
+
+
+def test_the_backend_own_error_sentence_is_kept_when_its_reply_carries_one() -> None:
+    """The backend answers errors as JSON with an `error` sentence (not enough memory, a
+    model that cannot be loaded); the operator gets it after the status."""
+    body = BytesIO(b'{"error": "model requires more system memory"}')
+    error = HTTPError(f"{BACKEND}/api/chat", 500, "Internal Server Error", None, body)  # type: ignore[arg-type]
+    backend = OllamaBackend("m:1", host=BACKEND, http=StubHttp(tags=TAGS, chat=error))
+    with pytest.raises(BackendError) as refused:
+        backend.chat([], [])
+    assert refused.value.detail == (
+        f"the model backend at {BACKEND} answered 500 Internal Server Error: "
+        "model requires more system memory"
+    )
+
+
+def test_each_refusal_is_typed_and_is_a_refused_call() -> None:
+    """Callers of the library can tell the three apart; `main` needs only `RefusedCall`."""
+    url = f"http://127.0.0.1:{closed_port()}"
+    exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url))
+    assert isinstance(exc, ServiceUnreachable) and isinstance(exc, RefusedCall)
+    assert exc.base_url == url and exc.detail.endswith(exc.reason)
+    assert exc.tool == "list_aircraft" and exc.path == "/aircraft"  # kept as raised, filled
+    with pytest.raises(BackendError) as refused:
+        OllamaBackend("m:1", host=BACKEND, http=StubHttp(tags=URLError("down")))
+    assert isinstance(refused.value, RefusedCall) and refused.value.status == 502
+    assert refused.value.detail == f"the model backend at {BACKEND} did not answer: down"
+    assert not isinstance(RefusedCall(404, "x"), ServiceUnreachable | BackendError)
+
+
+def test_an_error_that_is_not_the_transport_still_raises() -> None:
+    """Nothing wider is caught: a bug in the code, or a reply that is not the JSON expected,
+    is not dressed as a refusal."""
+    backend = OllamaBackend("m:1", host=BACKEND, http=StubHttp(tags=TAGS, chat=KeyError("k")))
+    with pytest.raises(KeyError):
+        backend.chat([], [])
+
+    def http(url: str, body: dict[str, Any] | None) -> Any:
+        raise ValueError("not json")
+
+    with pytest.raises(ValueError):
+        service_caller("http://127.0.0.1:1", http=http)("/aircraft", {})
 
 
 # ---- the command line -------------------------------------------------------------------

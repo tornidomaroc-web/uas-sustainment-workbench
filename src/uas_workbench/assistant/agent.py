@@ -18,6 +18,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 from .backends import Backend, Http, ToolCall, json_http
+from .errors import TRANSPORT_ERRORS, RefusedCall, ServiceUnreachable, transport_reason
 from .tools import UnknownTool, as_ollama_tools, resolve
 
 Caller = Callable[[str, dict[str, str]], Any]
@@ -68,26 +69,11 @@ class StepLimit(Exception):
     pass
 
 
-class RefusedCall(Exception):
-    """The service answered a tool call with an error status (issue #46): the run ends here.
-
-    The model is not asked again, so it never holds a refusal it could phrase as a value or
-    build an answer on, and no answer, grounding or recording can carry the call. `detail` is
-    the service's own sentence (a 503 names the stored record that cannot be read and points
-    to `uasw verify`; a 404 names the aircraft the model asked for), whole; `str()` is the
-    line every `uasw` command prints for a refusal."""
-
-    def __init__(self, status: int, detail: str, tool: str = "", path: str = "") -> None:
-        super().__init__(f"refused ({status}): {detail}")
-        self.status = status
-        self.detail = detail
-        self.tool = tool
-        self.path = path
-
-
 def service_caller(base_url: str, http: Http = json_http) -> Caller:
     """GET the service's read-only endpoints at `base_url`, as `uasw ask` does. An error
-    status is raised as RefusedCall with the `detail` sentence the service sent."""
+    status is raised as RefusedCall with the `detail` sentence the service sent; a service
+    that does not answer (not running, unresolved, timed out, reset, not HTTP) as
+    ServiceUnreachable, a 503 naming the URL and the reason (issue #49)."""
     base = base_url.rstrip("/")
 
     def call(path: str, query: dict[str, str]) -> Any:
@@ -95,6 +81,8 @@ def service_caller(base_url: str, http: Http = json_http) -> Caller:
             return http(f"{base}{path}?{urlencode(query)}" if query else f"{base}{path}", None)
         except HTTPError as exc:
             raise RefusedCall(exc.code, _refusal_detail(exc)) from None
+        except TRANSPORT_ERRORS as exc:
+            raise ServiceUnreachable(base, transport_reason(exc)) from None
 
     return call
 
@@ -289,7 +277,8 @@ def ask(
 def _execute(c: ToolCall, caller: Caller, as_of: datetime, calls: list[Call]) -> str:
     """The tool message for one call. The model's own mistakes, an unknown tool or a bad
     argument, go back to it as text so it can correct itself; a refusal by the service ends
-    the run (RefusedCall), whether the caller raises it or urllib's HTTPError."""
+    the run (RefusedCall, or a subclass such as ServiceUnreachable, kept as raised with the
+    tool and path filled in), whether the caller raises it or urllib's HTTPError."""
     try:
         path, query = resolve(c.name, c.arguments, as_of)
     except UnknownTool as exc:
@@ -299,7 +288,9 @@ def _execute(c: ToolCall, caller: Caller, as_of: datetime, calls: list[Call]) ->
     try:
         result = caller(path, query)
     except RefusedCall as exc:
-        raise RefusedCall(exc.status, exc.detail, exc.tool or c.name, exc.path or path) from None
+        exc.tool = exc.tool or c.name
+        exc.path = exc.path or path
+        raise
     except HTTPError as exc:
         raise RefusedCall(exc.code, _refusal_detail(exc), c.name, path) from None
     calls.append(Call(c.name, dict(c.arguments), path, query, result))
