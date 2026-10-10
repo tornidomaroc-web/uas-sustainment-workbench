@@ -72,7 +72,9 @@ RESERVED_ALLOWED: dict[str, frozenset[str]] = {
 }
 PRINTABLE = re.compile(rb"[\x20-\x7e]{4,}")
 IDENTIFIER = re.compile(r"[A-Za-z0-9_]+")
-CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+# A capital run followed by a capitalised word splits before that word ('HTTPServer'), but a
+# run ending in a plural s ('ESCs') stays one word, so the plural is screened as its singular.
+CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])(?![A-Z]s$)")
 RAW_SUFFIXES = {".ulg", ".bin", ".tlog", ".gpx", ".kmz", ".mat", ".log", ".param"}
 ALLOWED_EXCERPTS = {
     f"tests/fixtures/alfa/{name}.bin"
@@ -159,6 +161,8 @@ def test_identifier_words_split() -> None:
     assert identifier_words("voltage5v_v") == ["voltage", "5", "v", "v"]
     assert identifier_words("HTTPServerLog") == ["http", "server", "log"]
     assert identifier_words("rail_valid_FLAG") == ["rail", "valid", "flag"]
+    assert identifier_words("ESCs") == ["escs"]
+    assert identifier_words("HTTPServers") == ["http", "servers"]
 
 
 def reserved_word_hits(names: Iterable[str], root: Path) -> list[str]:
@@ -198,18 +202,27 @@ def test_no_reserved_scope_word_is_used() -> None:
     assert reserved_word_hits(tracked_files(), ROOT) == []
 
 
-def reserved_words_in_scope_bullet() -> list[str]:
-    """The single reserved words, read at run time from the README's scope bullet (the one
-    line RESERVED_ALLOWED admits), so no test spells one."""
+def reserved_terms_in_scope_bullet() -> tuple[list[str], list[tuple[str, str]]]:
+    """The reserved single words and two-word terms, read at run time from the README's scope
+    bullet (the one line RESERVED_ALLOWED admits), so no test spells one. Between them they
+    must account for every digest in RESERVED_HASHES: otherwise the planting tests below
+    would pass while exercising fewer words than the check holds."""
     bullet = [
         line
         for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
         if _digest(line.strip()) in RESERVED_ALLOWED["README.md"]
     ]
     assert len(bullet) == 1
-    words = [w for w in identifier_words(bullet[0]) if _digest(w) in RESERVED_HASHES]
-    assert words
-    return words
+    words = identifier_words(bullet[0])
+    singles = [w for w in words if _digest(w) in RESERVED_HASHES]
+    terms = [(a, b) for a, b in pairwise(words) if _digest(a + b) in RESERVED_HASHES]
+    found = {_digest(w) for w in singles} | {_digest(a + b) for a, b in terms}
+    assert found == RESERVED_HASHES, f"{len(RESERVED_HASHES - found)} reserved digests unplanted"
+    return singles, terms
+
+
+def reserved_words_in_scope_bullet() -> list[str]:
+    return reserved_terms_in_scope_bullet()[0]
 
 
 def _files_named(root: Path, names: Iterable[str]) -> list[str]:
@@ -234,6 +247,20 @@ def test_planted_reserved_word_is_caught_singular_and_plural(shape: str, tmp_pat
             assert found == [_digest(expected)], (shape, len(form))
     planted.write_text("value = count\n", encoding="utf-8")
     assert reserved_word_hits(_files_named(tmp_path, ["planted.py"]), tmp_path) == []
+
+
+@pytest.mark.parametrize("shape", ["{a}-{B}", "{a}-{B}s", "{a}-{b}s", "{a}_{b}s_count", "{a} {B}s"])
+def test_planted_reserved_term_is_caught_singular_and_plural(shape: str, tmp_path: Path) -> None:
+    """A two-word reserved term planted outside the allow-list is reported in the singular
+    and the plural, its second word in capitals as the bullet writes it or in lower case;
+    the file is clear once the term is removed. A failure prints no word."""
+    _, terms = reserved_terms_in_scope_bullet()
+    planted = tmp_path / "planted.md"
+    for a, b in terms:
+        planted.write_text(f"{shape.format(a=a, b=b, B=b.upper())}\n", encoding="utf-8")
+        assert reserved_word_hits(_files_named(tmp_path, ["planted.md"]), tmp_path), shape
+    planted.write_text("no such term here\n", encoding="utf-8")
+    assert reserved_word_hits(_files_named(tmp_path, ["planted.md"]), tmp_path) == []
 
 
 def test_reserved_allow_list_is_keyed_by_path_and_exact_text(tmp_path: Path) -> None:
