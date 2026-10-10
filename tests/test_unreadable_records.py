@@ -17,7 +17,8 @@ import logging
 import math
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -82,9 +83,17 @@ def db(tmp_path: Path) -> str:
     return path
 
 
-def raw(path: str) -> sqlite3.Connection:
-    """What anyone with the file has: a plain connection, no store, no rules."""
-    return sqlite3.connect(path)
+@contextmanager
+def raw(path: str) -> Iterator[sqlite3.Connection]:
+    """What anyone with the file has: a plain connection, no store, no rules. Commits on a
+    clean exit as the connection's own context manager does, and closes either way: a
+    connection the context manager leaves open warns on 3.13+ (issue #48)."""
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 # ---- the crafts: each returns the words the operator must be told ------------------------

@@ -106,6 +106,11 @@ def _refusal_detail(exc: HTTPError) -> str:
         data = json.loads(exc.read())
     except (OSError, AttributeError, ValueError):
         return str(exc.reason)
+    finally:
+        # The error holds the response file; closing it here closes it on every path, from
+        # both callers (issue #48). `fp` is None when urllib got no body.
+        if getattr(exc, "fp", None) is not None:
+            exc.close()
     if isinstance(data, dict) and "detail" in data:
         detail = data["detail"]
         return detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
