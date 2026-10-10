@@ -5,12 +5,15 @@
 - `uasw ask` ends with one `refused` line on stderr and exit 1, never a traceback, when the
   service does not answer or the model backend fails (issue #49). A service that is not
   running, a host that does not resolve, a connection that times out, is reset or carries no
-  HTTP reply is `refused (503): the service at <url> did not answer: <reason>`; a backend
+  HTTP reply is `refused (unreachable): the service at <url> did not answer: <reason>`, with
+  no status since none was received (a 503 is the service's own answer for a record it cannot
+  read); a backend
   that answers an error status is `refused (502): the model backend at <host> answered <status>
   <reason>`, with the backend's own `error` sentence when its reply carries one, a backend that
   does not answer is the same line with `did not answer: <reason>`, and a model that is not
   pulled is `refused (502): model '<tag>' is not pulled; the backend has [...]` (it was a bare
-  `LookupError`). The library raises `ServiceUnreachable` and `BackendError`, both
+  `LookupError`). A URL or host is shown without its userinfo, query or fragment, and a
+  reason that repeats them is scrubbed, so no credential reaches the line. The library raises `ServiceUnreachable` and `BackendError`, both
   `RefusedCall`, now in `assistant/errors.py` and re-exported where they were; a refusal a
   tool call raises keeps its type with the tool and path filled in. What is caught is exactly
   `urllib.error.URLError`, `TimeoutError`, `ConnectionError` and `http.client.HTTPException`

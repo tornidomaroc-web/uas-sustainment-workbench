@@ -125,17 +125,18 @@ def _refused(backend: ReplayBackend, caller: Any) -> RefusedCall:
 def test_a_service_that_is_not_running_is_refused_with_the_url_and_the_reason() -> None:
     url = f"http://127.0.0.1:{closed_port()}"
     exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url))
-    assert exc.status == 503
+    assert exc.status == 0  # no HTTP status was received; a 503 is an unreadable record
     assert exc.detail.startswith(f"the service at {url} did not answer: ")
-    assert "Connection refused" in exc.detail
+    assert isinstance(exc, ServiceUnreachable)
+    assert "refused" in exc.reason.lower()  # the OS's own words differ by platform
     assert exc.tool == "list_aircraft" and exc.path == "/aircraft"
-    assert str(exc) == f"refused (503): {exc.detail}"
+    assert str(exc) == f"refused (unreachable): {exc.detail}"
 
 
 def test_a_host_that_does_not_resolve_is_refused_the_same_way() -> None:
     url = "http://no-such-host.invalid:9"
     exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url))
-    assert exc.status == 503
+    assert exc.status == 0
     prefix = f"the service at {url} did not answer: "
     assert exc.detail.startswith(prefix) and len(exc.detail) > len(prefix)
 
@@ -157,7 +158,7 @@ def test_a_service_that_accepts_and_never_answers_is_refused_on_the_timeout(
         exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url, http=http))
     finally:
         gate.set()
-    assert exc.status == 503
+    assert exc.status == 0
     assert exc.detail.startswith(f"the service at {url} did not answer: ")
     assert "timed out" in exc.detail
 
@@ -170,7 +171,7 @@ def test_a_service_that_closes_the_connection_is_refused_on_the_reset(
 
     url = listener(drop)
     exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url))
-    assert exc.status == 503
+    assert exc.status == 0
     assert exc.detail.startswith(f"the service at {url} did not answer: ")
 
 
@@ -183,7 +184,7 @@ def test_a_service_that_answers_something_that_is_not_http_is_refused(
 
     url = listener(babble)
     exc = _refused(ReplayBackend(LISTS_THEN_ANSWERS), service_caller(url))
-    assert exc.status == 503
+    assert exc.status == 0
     assert exc.detail.startswith(f"the service at {url} did not answer: ")
 
 
@@ -192,7 +193,7 @@ def test_the_url_error_is_converted_where_it_is_raised_not_in_the_agent() -> Non
     url = f"http://127.0.0.1:{closed_port()}"
     with pytest.raises(RefusedCall) as refused:
         service_caller(url)("/aircraft", {"as_of": AS_OF_TEXT})
-    assert refused.value.status == 503 and refused.value.tool == "" and refused.value.path == ""
+    assert refused.value.status == 0 and refused.value.tool == "" and refused.value.path == ""
 
 
 # ---- the library path: the model backend fails ------------------------------------------
@@ -338,8 +339,9 @@ def test_uasw_ask_refuses_when_the_service_is_not_running(tmp_path: Path) -> Non
     done = uasw_ask(LISTS_THEN_ANSWERS, "How many aircraft?", "--url", url, "--as-of", AS_OF_TEXT,
                     "--record", str(recording), "--json")  # fmt: skip
     assert done.returncode == 1, done.stderr
-    assert done.stderr.startswith(f"refused (503): the service at {url} did not answer: ")
-    assert "Connection refused" in done.stderr and done.stderr.count("\n") == 1
+    assert done.stderr.startswith(f"refused (unreachable): the service at {url} did not answer: ")
+    assert "refused" in done.stderr.split("did not answer: ", 1)[1].lower()
+    assert done.stderr.count("\n") == 1
     assert "Traceback" not in done.stderr and "URLError" not in done.stderr
     assert done.stdout == ""
     assert not recording.exists()
@@ -363,3 +365,72 @@ def test_uasw_ask_refuses_when_the_model_backend_answers_an_error(tmp_path: Path
     assert "Traceback" not in done.stderr and "HTTPError" not in done.stderr
     assert done.stdout == ""
     assert not recording.exists()
+
+
+# ---- no credential reaches a refused line -----------------------------------------------
+
+# A stand-in credential: a URL given to `uasw ask` can carry userinfo or a token in its query,
+# and the refused line goes to a terminal, a log or a ticket, so neither may appear in it.
+SECRET = "pw-7f3a9c"
+
+
+def test_the_service_url_is_shown_without_its_userinfo() -> None:
+    port = closed_port()
+    exc = _refused(
+        ReplayBackend(LISTS_THEN_ANSWERS), service_caller(f"http://alice:{SECRET}@127.0.0.1:{port}")
+    )
+    assert isinstance(exc, ServiceUnreachable)
+    assert SECRET not in str(exc) and "alice" not in str(exc)
+    assert exc.base_url == f"http://127.0.0.1:{port}"
+    assert str(exc).startswith(f"refused (unreachable): the service at http://127.0.0.1:{port} ")
+
+
+def test_the_service_url_is_shown_without_its_query() -> None:
+    port = closed_port()
+    exc = _refused(
+        ReplayBackend(LISTS_THEN_ANSWERS),
+        service_caller(f"http://127.0.0.1:{port}/?token={SECRET}"),
+    )
+    assert isinstance(exc, ServiceUnreachable)
+    assert SECRET not in str(exc) and exc.base_url == f"http://127.0.0.1:{port}/"
+
+
+def test_a_reason_that_repeats_the_url_is_scrubbed() -> None:
+    """The standard library can quote the URL it was given (http.client's InvalidURL does)."""
+    url = f"http://alice:{SECRET}@127.0.0.1:9"
+    exc = ServiceUnreachable(url, f"nonnumeric port: '{SECRET}@127.0.0.1:9'")
+    assert SECRET not in str(exc) and "<redacted>" in exc.reason
+
+
+def test_the_backend_host_is_shown_without_its_userinfo() -> None:
+    host = f"http://bob:{SECRET}@127.0.0.1:11434"
+    down = URLError(f"cannot reach bob:{SECRET}@127.0.0.1")
+    with pytest.raises(BackendError) as refused:
+        OllamaBackend("m:1", host=host, http=StubHttp(tags=down))
+    assert SECRET not in str(refused.value)
+    assert refused.value.detail.startswith(f"the model backend at {BACKEND} did not answer: ")
+    with pytest.raises(BackendError) as refused:
+        OllamaBackend("m:1", host=host, http=StubHttp(tags=_backend_error(500, "Server Error")))
+    assert refused.value.detail == f"the model backend at {BACKEND} answered 500 Server Error"
+
+
+def test_uasw_ask_prints_no_credential_from_the_url() -> None:
+    port = closed_port()
+    done = uasw_ask(LISTS_THEN_ANSWERS, "How many aircraft?", "--url",
+                    f"http://alice:{SECRET}@127.0.0.1:{port}/?token={SECRET}",
+                    "--as-of", AS_OF_TEXT)  # fmt: skip
+    assert done.returncode == 1, done.stderr
+    assert SECRET not in done.stderr and SECRET not in done.stdout
+    assert done.stderr.startswith(
+        f"refused (unreachable): the service at http://127.0.0.1:{port}/ "
+    )
+
+
+def test_refused_call_is_one_class_at_every_import_path_it_had() -> None:
+    """`uas_workbench.assistant.agent` and `uas_workbench.assistant` both exported it before
+    it moved to `errors`; both still give the same class."""
+    from uas_workbench.assistant import RefusedCall as from_package
+    from uas_workbench.assistant.agent import RefusedCall as from_agent
+    from uas_workbench.assistant.errors import RefusedCall as from_errors
+
+    assert from_package is from_agent is from_errors

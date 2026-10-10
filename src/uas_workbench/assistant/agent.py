@@ -18,7 +18,11 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 from .backends import Backend, Http, ToolCall, json_http
-from .errors import TRANSPORT_ERRORS, RefusedCall, ServiceUnreachable, transport_reason
+from .errors import TRANSPORT_ERRORS, ServiceUnreachable, transport_reason
+
+# Re-exported: RefusedCall was defined here before it moved to errors (issue #49), and
+# `from uas_workbench.assistant.agent import RefusedCall` must keep type-checking.
+from .errors import RefusedCall as RefusedCall
 from .tools import UnknownTool, as_ollama_tools, resolve
 
 Caller = Callable[[str, dict[str, str]], Any]
@@ -73,7 +77,7 @@ def service_caller(base_url: str, http: Http = json_http) -> Caller:
     """GET the service's read-only endpoints at `base_url`, as `uasw ask` does. An error
     status is raised as RefusedCall with the `detail` sentence the service sent; a service
     that does not answer (not running, unresolved, timed out, reset, not HTTP) as
-    ServiceUnreachable, a 503 naming the URL and the reason (issue #49)."""
+    ServiceUnreachable, `refused (unreachable)` naming the URL and the reason (issue #49)."""
     base = base_url.rstrip("/")
 
     def call(path: str, query: dict[str, str]) -> Any:
