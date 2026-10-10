@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .errors import TRANSPORT_ERRORS, BackendError, transport_reason
+from .errors import TRANSPORT_ERRORS, BackendError, scrubbed, shown_url, transport_reason
 
 LOCALHOST = "http://127.0.0.1:11434"
 
@@ -67,17 +67,17 @@ class OllamaBackend:
     def _request(self, endpoint: str, body: dict[str, Any] | None) -> Any:
         """One exchange with the backend; its failure is a BackendError. An error status
         keeps the backend's own `error` sentence when the body is JSON that carries one."""
+        # The host as the line shows it: no userinfo, query or fragment (see shown_url).
+        host = shown_url(self._host)
         try:
             return self._http(f"{self._host}/api/{endpoint}", body)
         except HTTPError as exc:
-            detail = f"the model backend at {self._host} answered {exc.code} {exc.reason}"
-            said = _backend_said(exc)
+            detail = f"the model backend at {host} answered {exc.code} {exc.reason}"
+            said = scrubbed(_backend_said(exc), self._host)
             raise BackendError(f"{detail}: {said}" if said else detail) from None
         except TRANSPORT_ERRORS as exc:
-            reason = transport_reason(exc)
-            raise BackendError(
-                f"the model backend at {self._host} did not answer: {reason}"
-            ) from None
+            reason = scrubbed(transport_reason(exc), self._host)
+            raise BackendError(f"the model backend at {host} did not answer: {reason}") from None
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Turn:
         reply = self._request(
