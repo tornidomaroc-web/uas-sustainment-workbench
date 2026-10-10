@@ -7,7 +7,9 @@
   command opened when the command ends, and the assistant closes the `HTTPError` it converts
   into a refusal (issue #48). The test suite treats a resource left open as an error, as
   Python 3.13+ warns for an unclosed SQLite connection, and its helpers close what they
-  open; the suite is green in any module order and on Python 3.13 and 3.14.
+  open; since `tests/conftest.py` closes every test's stores, `test_cli_closes_its_store.py`
+  checks on any Python that each store a command opened is closed when `main()` returns,
+  before that teardown; the suite is green in any module order and on Python 3.13 and 3.14.
 - Every ledger entry and flight record is linked into a write journal in the transaction that
   writes it (`service/journal.py`, hashlib only): a sequence number, a SHA-256 over the row's
   canonical content, the previous link's hash and the link's own hash, one chain for both
