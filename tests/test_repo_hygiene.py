@@ -106,7 +106,8 @@ def product_name_hits(
     names: Iterable[str], root: Path, hashes: frozenset[str] = PRODUCT_HASHES
 ) -> list[str]:
     """Each file under root, by its name relative to root, that holds a word or two adjacent
-    words whose digest is in hashes; binary files as their printable strings."""
+    words whose digest is in hashes, a plural as its singular; binary files as their
+    printable strings."""
     hits: list[str] = []
     for name in names:
         path = root / name
@@ -114,7 +115,8 @@ def product_name_hits(
             continue
         runs = PRINTABLE.findall(path.read_bytes())
         words = re.findall(r"[a-z0-9]+", " ".join(r.decode("ascii") for r in runs).lower())
-        candidates = set(words) | {a + b for a, b in pairwise(words)}
+        candidates = {f for w in words for f in singular_forms(w)}
+        candidates |= {a + f for a, b in pairwise(words) for f in singular_forms(b)}
         hits.extend(f"{name}: {c}" for c in sorted(candidates) if _digest(c) in hashes)
     return hits
 
@@ -140,6 +142,19 @@ def identifier_words(identifier: str) -> list[str]:
     return re.findall(r"[a-z]+|[0-9]+", CAMEL.sub(" ", identifier).lower())
 
 
+def singular_forms(word: str) -> list[str]:
+    """The word and, when it ends in s, the word without it, so a plural is screened as its
+    singular. Every reserved word and product name ends in a letter that takes a plain s;
+    a word that would take es or ies needs this widened when it is added."""
+    return [word, word[:-1]] if len(word) > 1 and word.endswith("s") else [word]
+
+
+def test_singular_forms() -> None:
+    assert singular_forms("rails") == ["rails", "rail"]
+    assert singular_forms("rail") == ["rail"]
+    assert singular_forms("s") == ["s"]
+
+
 def test_identifier_words_split() -> None:
     assert identifier_words("voltage5v_v") == ["voltage", "5", "v", "v"]
     assert identifier_words("HTTPServerLog") == ["http", "server", "log"]
@@ -148,8 +163,9 @@ def test_identifier_words_split() -> None:
 
 def reserved_word_hits(names: Iterable[str], root: Path) -> list[str]:
     """Each place a file under root, by its name relative to root, uses a reserved word
-    outside RESERVED_ALLOWED: as a word, inside an identifier, or as two adjacent words (a
-    hyphenated term). Binary files are read as their printable strings."""
+    outside RESERVED_ALLOWED: as a word, inside an identifier, as two adjacent words (a
+    hyphenated term), or as the plural of any of these. Binary files are read as their
+    printable strings."""
     hits: dict[str, None] = {}
     for name in names:
         path = root / name
@@ -164,10 +180,10 @@ def reserved_word_hits(names: Iterable[str], root: Path) -> list[str]:
             line = data.count(b"\n", 0, run.start()) + 1
             words = [(w, i) for i in IDENTIFIER.findall(text) for w in identifier_words(i)]
             for j, (word, ident) in enumerate(words):
-                scopes = [(word, [ident])]
+                scopes = [(form, [ident]) for form in singular_forms(word)]
                 if j + 1 < len(words):
                     next_word, next_ident = words[j + 1]
-                    scopes.append((word + next_word, [ident, next_ident]))
+                    scopes += [(word + f, [ident, next_ident]) for f in singular_forms(next_word)]
                 for candidate, idents in scopes:
                     if _digest(candidate) in RESERVED_HASHES and not all(
                         _digest(i) in allowed for i in idents

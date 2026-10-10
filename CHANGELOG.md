@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The repository hygiene guard's reserved-word and product-name checks screen a plural as
+  its singular: each split word, and the second word of each adjacent pair, is compared
+  with a trailing s removed as well as as written, so a plural identifier or a plural in
+  prose is reported like the word itself. The two checks are functions over a directory and
+  a list of names, and the suite plants each reserved word, read at run time from the
+  README's scope bullet so no test spells one, in the singular and the plural, in
+  snake_case, camelCase, alone and hyphenated, and the bullet under its own file name and
+  under another, so the allow-list is shown keyed by path and exact text. Nothing in the
+  tree is newly reported; no response, record, pack or hash changes (issue #53).
 - The repository hygiene guard screens every tracked file, binary fixtures as their printable
   strings and source identifiers split into words, for the words the README's scope bullet
   reserves, held as hashes like the product names; only that bullet and the upstream field
