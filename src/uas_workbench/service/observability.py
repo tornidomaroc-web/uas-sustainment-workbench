@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
+from typing import TextIO
 
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -29,11 +30,31 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class CurrentStderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """A StreamHandler that writes to whatever `sys.stderr` is when a record is emitted.
+
+    `logging.StreamHandler(sys.stderr)` keeps the object it was given, so a handler added once
+    per process keeps writing to the first stderr it saw after `sys.stderr` has been replaced
+    (issue #48: pytest's `capsys` replaces it per test, and `configure_logging` is idempotent).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    @property
+    def stream(self) -> TextIO:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value: TextIO) -> None:
+        pass  # always the current sys.stderr; what StreamHandler's __init__ sets is ignored
+
+
 def configure_logging(level: int = logging.INFO) -> logging.Logger:
-    """JSON lines on stderr for everything under the 'uasw' logger; idempotent."""
+    """JSON lines on the current stderr for everything under the 'uasw' logger; idempotent."""
     logger = logging.getLogger("uasw")
     if not any(isinstance(h.formatter, JsonFormatter) for h in logger.handlers):
-        handler = logging.StreamHandler(sys.stderr)
+        handler = CurrentStderrHandler()
         handler.setFormatter(JsonFormatter())
         logger.addHandler(handler)
     logger.setLevel(level)

@@ -39,10 +39,18 @@ DEFAULT_FIXTURES = Path(os.environ.get("UASW_FIXTURES", "tests/fixtures"))
 READERS = {".ulg": read_ulog, ".bin": read_dataflash}
 
 
+# The stores a command opened, closed by `main` when the command ends however it ends: a
+# command that never closes its store leaves a sqlite3 connection to be collected, which
+# Python 3.13+ reports as a ResourceWarning (issue #48). One process runs one command.
+_opened: list[Store] = []
+
+
 def open_store(path: str) -> Store:
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    return Store(path)
+    store = Store(path)
+    _opened.append(store)
+    return store
 
 
 def seed(store: Store, fixtures: Path) -> None:
@@ -465,6 +473,9 @@ def main(argv: list[str] | None = None) -> None:
         # sentence, the status it answered, exit 1; the model was not asked again.
         print(exc, file=sys.stderr)
         sys.exit(1)
+    finally:
+        while _opened:
+            _opened.pop().close()
 
 
 if __name__ == "__main__":
