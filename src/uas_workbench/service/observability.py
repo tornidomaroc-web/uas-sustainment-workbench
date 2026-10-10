@@ -18,16 +18,16 @@ _STANDARD = set(logging.LogRecord("x", 0, "x", 0, "", None, None).__dict__) | {
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, object] = {
+        fields: dict[str, object] = {
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
-        payload.update({k: v for k, v in record.__dict__.items() if k not in _STANDARD})
+        fields.update({k: v for k, v in record.__dict__.items() if k not in _STANDARD})
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, default=str)
+            fields["exception"] = self.formatException(record.exc_info)
+        return json.dumps(fields, default=str)
 
 
 class CurrentStderrHandler(logging.StreamHandler):  # type: ignore[type-arg]

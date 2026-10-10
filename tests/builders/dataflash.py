@@ -35,10 +35,10 @@ class DataFlashBuilder:
         struct_fmt = "<" + "".join(CODES[c] for c in fmt)
         length = 3 + struct.calcsize(struct_fmt)
         self._types[name] = (type_id, struct_fmt)
-        payload = struct.pack(
+        body = struct.pack(
             "<BB4s16s64s", type_id, length, name.encode(), fmt.encode(), columns.encode()
         )
-        self._out += HEAD + bytes([FMT_TYPE]) + payload
+        self._out += HEAD + bytes([FMT_TYPE]) + body
         return self
 
     def msg(self, name: str, *values: int | float | str) -> DataFlashBuilder:

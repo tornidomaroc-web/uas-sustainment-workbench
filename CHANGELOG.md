@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The repository hygiene guard screens every tracked file, binary fixtures as their printable
+  strings and source identifiers split into words, for the words the README's scope bullet
+  reserves, held as hashes like the product names; only that bullet and the upstream field
+  and parameter names inside the pinned PX4 excerpt are allowed, each by its own text, never
+  by file. The one local name that used a reserved word, in the JSON log formatter and the
+  two synthetic-log test builders, is renamed; no response, record, pack or hash changes
+  (issue #51).
 - The JSON log handler writes to whatever `sys.stderr` is when a record is emitted, not to
   the stream it was when `configure_logging` was first called; `uasw` closes the store a
   command opened when the command ends, and the assistant closes the `HTTPError` it converts
