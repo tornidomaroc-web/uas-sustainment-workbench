@@ -7,6 +7,7 @@ import hashlib
 import re
 import shutil
 import subprocess
+from collections.abc import Iterable
 from itertools import pairwise
 from pathlib import Path
 
@@ -101,19 +102,27 @@ def test_no_raw_flight_log_is_tracked_or_stageable() -> None:
     assert offending == []
 
 
-def test_no_real_aircraft_or_drone_product_is_named() -> None:
-    """The repository names no real platform. PX4 and ArduPilot are open autopilot software
-    and stay. Binary fixtures are searched as their printable strings."""
+def product_name_hits(
+    names: Iterable[str], root: Path, hashes: frozenset[str] = PRODUCT_HASHES
+) -> list[str]:
+    """Each file under root, by its name relative to root, that holds a word or two adjacent
+    words whose digest is in hashes; binary files as their printable strings."""
     hits: list[str] = []
-    for name in tracked_files():
-        path = ROOT / name
+    for name in names:
+        path = root / name
         if not path.is_file():
             continue
         runs = PRINTABLE.findall(path.read_bytes())
         words = re.findall(r"[a-z0-9]+", " ".join(r.decode("ascii") for r in runs).lower())
         candidates = set(words) | {a + b for a, b in pairwise(words)}
-        hits.extend(f"{name}: {c}" for c in sorted(candidates) if _digest(c) in PRODUCT_HASHES)
-    assert hits == []
+        hits.extend(f"{name}: {c}" for c in sorted(candidates) if _digest(c) in hashes)
+    return hits
+
+
+def test_no_real_aircraft_or_drone_product_is_named() -> None:
+    """The repository names no real platform. PX4 and ArduPilot are open autopilot software
+    and stay. Binary fixtures are searched as their printable strings."""
+    assert product_name_hits(tracked_files(), ROOT) == []
 
 
 def _digest(word: str) -> str:
@@ -137,13 +146,13 @@ def test_identifier_words_split() -> None:
     assert identifier_words("rail_valid_FLAG") == ["rail", "valid", "flag"]
 
 
-def test_no_reserved_scope_word_is_used() -> None:
-    """Every tracked file, binary fixtures as their printable strings, uses none of the
-    reserved words outside RESERVED_ALLOWED: as a word, inside an identifier, or as two
-    adjacent words (a hyphenated term)."""
+def reserved_word_hits(names: Iterable[str], root: Path) -> list[str]:
+    """Each place a file under root, by its name relative to root, uses a reserved word
+    outside RESERVED_ALLOWED: as a word, inside an identifier, or as two adjacent words (a
+    hyphenated term). Binary files are read as their printable strings."""
     hits: dict[str, None] = {}
-    for name in tracked_files():
-        path = ROOT / name
+    for name in names:
+        path = root / name
         if not path.is_file():
             continue
         allowed = RESERVED_ALLOWED.get(name, frozenset())
@@ -164,4 +173,82 @@ def test_no_reserved_scope_word_is_used() -> None:
                         _digest(i) in allowed for i in idents
                     ):
                         hits[f"{name}:{line}: {' '.join(dict.fromkeys(idents))}"] = None
-    assert list(hits) == []
+    return list(hits)
+
+
+def test_no_reserved_scope_word_is_used() -> None:
+    """Every tracked file, binary fixtures as their printable strings, uses none of the
+    reserved words outside RESERVED_ALLOWED."""
+    assert reserved_word_hits(tracked_files(), ROOT) == []
+
+
+def reserved_words_in_scope_bullet() -> list[str]:
+    """The single reserved words, read at run time from the README's scope bullet (the one
+    line RESERVED_ALLOWED admits), so no test spells one."""
+    bullet = [
+        line
+        for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+        if _digest(line.strip()) in RESERVED_ALLOWED["README.md"]
+    ]
+    assert len(bullet) == 1
+    words = [w for w in identifier_words(bullet[0]) if _digest(w) in RESERVED_HASHES]
+    assert words
+    return words
+
+
+def _files_named(root: Path, names: Iterable[str]) -> list[str]:
+    files = [name for name in names if (root / name).is_file()]
+    assert files == list(names)
+    return files
+
+
+@pytest.mark.parametrize("shape", ["{}_count", "{}Field", "{}", "{}-rate"])
+def test_planted_reserved_word_is_caught_singular_and_plural(shape: str, tmp_path: Path) -> None:
+    """A reserved word planted outside the allow-list is reported, in the singular and in
+    the plural (the word with a trailing s), in every shape an edit gives it; the file is
+    clear once the word is removed. The hits are compared by digest, so a failure prints
+    no word."""
+    planted = tmp_path / "planted.py"
+    for word in reserved_words_in_scope_bullet():
+        for form in (word, word + "s"):
+            planted.write_text(f"value = {shape.format(form)}\n", encoding="utf-8")
+            hits = reserved_word_hits(_files_named(tmp_path, ["planted.py"]), tmp_path)
+            found = sorted({_digest(h.split(": ", 1)[1]) for h in hits})
+            expected = IDENTIFIER.findall(shape.format(form))[0]
+            assert found == [_digest(expected)], (shape, len(form))
+    planted.write_text("value = count\n", encoding="utf-8")
+    assert reserved_word_hits(_files_named(tmp_path, ["planted.py"]), tmp_path) == []
+
+
+def test_reserved_allow_list_is_keyed_by_path_and_exact_text(tmp_path: Path) -> None:
+    """The README's scope bullet is allowed only in a file named README.md and only as that
+    exact line: the same line in another file, or that file with the line changed, fails."""
+    readme = ROOT / "README.md"
+    bullet = next(
+        line
+        for line in readme.read_text(encoding="utf-8").splitlines()
+        if _digest(line.strip()) in RESERVED_ALLOWED["README.md"]
+    )
+    (tmp_path / "README.md").write_text(bullet + "\n", encoding="utf-8")
+    (tmp_path / "NOTES.md").write_text(bullet + "\n", encoding="utf-8")
+    assert reserved_word_hits(_files_named(tmp_path, ["README.md"]), tmp_path) == []
+    assert reserved_word_hits(_files_named(tmp_path, ["NOTES.md"]), tmp_path) != []
+    (tmp_path / "README.md").write_text(bullet + " (edited)\n", encoding="utf-8")
+    assert reserved_word_hits(_files_named(tmp_path, ["README.md"]), tmp_path) != []
+
+
+def test_planted_product_name_is_caught_singular_and_plural(tmp_path: Path) -> None:
+    """The product check, given a synthetic name's digest, reports that name and its plural
+    in prose and clears when the name is removed."""
+    hashes = frozenset({_digest("zzmakerzz"), _digest("zzmakerzzzzmodelzz")})
+    page = tmp_path / "page.md"
+    for text in (
+        "flown on a zzmakerzz",
+        "two zzmakerzzs",
+        "the zzmakerzz zzmodelzz",
+        "zzmakerzz zzmodelzzs",
+    ):
+        page.write_text(text + "\n", encoding="utf-8")
+        assert product_name_hits(_files_named(tmp_path, ["page.md"]), tmp_path, hashes) != [], text
+    page.write_text("flown on a fixed wing\n", encoding="utf-8")
+    assert product_name_hits(_files_named(tmp_path, ["page.md"]), tmp_path, hashes) == []
