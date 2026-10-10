@@ -53,6 +53,7 @@ def site_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}/"
     server.shutdown()
+    server.server_close()  # shutdown stops serving; the listening socket closes here
 
 
 @pytest.fixture(scope="module")
@@ -141,6 +142,7 @@ def test_a_fleet_that_did_fly_while_grounded_has_each_flight_listed(
     finally:
         other.close()
         server.shutdown()
+        server.server_close()
 
 
 def test_every_fleet_cell_is_filled_and_status_is_civil(page: Any) -> None:

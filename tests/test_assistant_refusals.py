@@ -112,7 +112,8 @@ def service_detail(url: str, path: str) -> tuple[int, str]:
         with urlopen(f"{url}{path}", timeout=30) as response:
             return response.status, json.loads(response.read())["detail"]
     except HTTPError as exc:
-        return exc.code, json.loads(exc.read())["detail"]
+        with exc:  # the error holds the response file; closed with it
+            return exc.code, json.loads(exc.read())["detail"]
 
 
 # ---- the library path -------------------------------------------------------------------
