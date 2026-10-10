@@ -47,6 +47,10 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = ["browser: renders the static page in headless Chromium (needs playwright)"]
 pythonpath = ["tests"]
+# A connection or file left open anywhere in the suite fails the test that leaked it (3.13+
+# warns for a sqlite3 connection collected unclosed; the warning is raised during garbage
+# collection, which pytest reports as PytestUnraisableExceptionWarning), issue #48.
+filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.mypy]
 python_version = "3.12"

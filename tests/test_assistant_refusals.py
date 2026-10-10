@@ -309,3 +309,19 @@ def test_uasw_ask_still_answers_on_a_readable_store(clean_service: str) -> None:
         "SYN-04 is unserviceable.\n\nCalls (1): GET /aircraft/SYN-04/due\n"
     )
     assert "Grounded: yes" in done.stdout
+
+
+def test_the_converted_http_error_is_closed() -> None:
+    """`service_caller` turns urllib's `HTTPError` into `RefusedCall` after reading its body;
+    the error holds the response file, and one left open is a `ResourceWarning` on 3.13+
+    (issue #48)."""
+    error = _http_error(404, b'{"detail": "aircraft \'SYN-99\' is not in the store"}')
+
+    def http(url: str, body: Any) -> Any:
+        raise error
+
+    caller = service_caller("http://127.0.0.1:1", http=http)
+    with pytest.raises(RefusedCall) as refused:
+        caller("/aircraft/SYN-99/due", {})
+    assert refused.value.detail == "aircraft 'SYN-99' is not in the store"
+    assert error.closed
