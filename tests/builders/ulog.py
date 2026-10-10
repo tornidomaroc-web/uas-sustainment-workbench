@@ -35,8 +35,8 @@ class ULogBuilder:
         self._topic_of: dict[int, str] = {}
 
     @staticmethod
-    def _message(out: bytearray, kind: str, payload: bytes) -> None:
-        out += struct.pack("<HB", len(payload), ord(kind)) + payload
+    def _message(out: bytearray, kind: str, body: bytes) -> None:
+        out += struct.pack("<HB", len(body), ord(kind)) + body
 
     def format(self, name: str, fields: Sequence[str]) -> ULogBuilder:
         """fields like "uint64_t timestamp", "float[2] x", or a nested "esc_report[2] esc"."""
@@ -84,14 +84,14 @@ class ULogBuilder:
         return bytes(out)
 
     def data(self, msg_id: int, values: Mapping[str, Any]) -> ULogBuilder:
-        payload = struct.pack("<H", msg_id) + self._pack(self._topic_of[msg_id], values)
-        self._message(self._data, "D", payload)
+        body = struct.pack("<H", msg_id) + self._pack(self._topic_of[msg_id], values)
+        self._message(self._data, "D", body)
         return self
 
     def log(self, level: int, text: str, timestamp: int) -> ULogBuilder:
         """level 0-7 as in syslog; written as an ASCII digit, as PX4 does."""
-        payload = bytes([ord("0") + level]) + struct.pack("<Q", timestamp) + text.encode()
-        self._message(self._data, "L", payload)
+        body = bytes([ord("0") + level]) + struct.pack("<Q", timestamp) + text.encode()
+        self._message(self._data, "L", body)
         return self
 
     def build(self) -> bytes:
