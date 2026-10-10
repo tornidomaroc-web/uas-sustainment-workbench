@@ -155,6 +155,9 @@ instead of leaving a stale answer on the page. No model runs in CI or on the pag
 call the service refuses, a 503 naming a record the store cannot read or a 404 for a key
 the model made up, ends the run before the model is asked again: `uasw ask` prints the
 service's own refusal line and exits 1, and no answer is grounded on a read that failed.
+A service that does not answer at all, or a model backend that answers an error, is not
+running or does not hold the model, ends the run the same way, with the URL and the reason
+on one `refused` line; never a traceback.
 
 **A maintenance ledger that is only ever appended.** Everything an operator records goes in
 as an entry: what happened, when it happened, when it was entered, by whom, and in what

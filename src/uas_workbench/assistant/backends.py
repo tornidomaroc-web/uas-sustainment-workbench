@@ -6,7 +6,10 @@ import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+from .errors import TRANSPORT_ERRORS, BackendError, transport_reason
 
 LOCALHOST = "http://127.0.0.1:11434"
 
@@ -45,21 +48,40 @@ def json_http(url: str, body: dict[str, Any] | None, timeout: float = 600.0) -> 
 
 class OllamaBackend:
     """A model served by Ollama on this machine, deterministic: temperature 0, seed 0, no
-    thinking. The digest of the model weights is read once so a recording can name it."""
+    thinking. The digest of the model weights is read once so a recording can name it.
+
+    A backend that answers an error status, does not answer, or does not hold the model is
+    BackendError, a 502 with the sentence (issue #49): the tag list and every chat turn go
+    through `_request`, so no turn is ever built on a failed reply."""
 
     def __init__(self, model: str, *, host: str = LOCALHOST, http: Http = json_http) -> None:
         self.tag = model
         self._host = host.rstrip("/")
         self._http = http
-        tags = self._http(f"{self._host}/api/tags", None)
+        tags = self._request("tags", None)
         digests = {m["name"]: str(m.get("digest", "")) for m in tags.get("models", [])}
         if model not in digests:
-            raise LookupError(f"model {model!r} is not pulled; Ollama has {sorted(digests)}")
+            raise BackendError(f"model {model!r} is not pulled; the backend has {sorted(digests)}")
         self.digest = digests[model]
 
+    def _request(self, endpoint: str, body: dict[str, Any] | None) -> Any:
+        """One exchange with the backend; its failure is a BackendError. An error status
+        keeps the backend's own `error` sentence when the body is JSON that carries one."""
+        try:
+            return self._http(f"{self._host}/api/{endpoint}", body)
+        except HTTPError as exc:
+            detail = f"the model backend at {self._host} answered {exc.code} {exc.reason}"
+            said = _backend_said(exc)
+            raise BackendError(f"{detail}: {said}" if said else detail) from None
+        except TRANSPORT_ERRORS as exc:
+            reason = transport_reason(exc)
+            raise BackendError(
+                f"the model backend at {self._host} did not answer: {reason}"
+            ) from None
+
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Turn:
-        reply = self._http(
-            f"{self._host}/api/chat",
+        reply = self._request(
+            "chat",
             {
                 "model": self.tag,
                 "messages": messages,
@@ -75,6 +97,21 @@ class OllamaBackend:
             for c in message.get("tool_calls") or []
         )
         return Turn(str(message.get("content", "")), calls)
+
+
+def _backend_said(exc: HTTPError) -> str:
+    """The `error` sentence in an error reply's JSON body, else nothing; the error holds the
+    response file, closed here on every path (issue #48)."""
+    try:
+        data = json.loads(exc.read())
+    except (OSError, AttributeError, ValueError):
+        return ""
+    finally:
+        if getattr(exc, "fp", None) is not None:
+            exc.close()
+    if isinstance(data, dict) and isinstance(data.get("error"), str):
+        return str(data["error"])
+    return ""
 
 
 class ReplayBackend:

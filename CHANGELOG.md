@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- `uasw ask` ends with one `refused` line on stderr and exit 1, never a traceback, when the
+  service does not answer or the model backend fails (issue #49). A service that is not
+  running, a host that does not resolve, a connection that times out, is reset or carries no
+  HTTP reply is `refused (503): the service at <url> did not answer: <reason>`; a backend
+  that answers an error status is `refused (502): the model backend at <host> answered <status>
+  <reason>`, with the backend's own `error` sentence when its reply carries one, a backend that
+  does not answer is the same line with `did not answer: <reason>`, and a model that is not
+  pulled is `refused (502): model '<tag>' is not pulled; the backend has [...]` (it was a bare
+  `LookupError`). The library raises `ServiceUnreachable` and `BackendError`, both
+  `RefusedCall`, now in `assistant/errors.py` and re-exported where they were; a refusal a
+  tool call raises keeps its type with the tool and path filled in. What is caught is exactly
+  `urllib.error.URLError`, `TimeoutError`, `ConnectionError` and `http.client.HTTPException`
+  from the exchange itself, nothing wider: the model is never given a failed or partial reply,
+  nothing is printed on stdout, `--record` writes nothing, and the existing 503 and 404 lines,
+  a successful `uasw ask`, every response, record, pack and hash are unchanged.
 - The repository hygiene guard's reserved-word and product-name checks screen a plural as
   its singular: each split word, and the second word of each adjacent pair, is compared
   with a trailing s removed as well as as written, so a plural identifier or a plural in
