@@ -306,3 +306,36 @@ def test_closing_a_store_twice_is_harmless(db: str) -> None:
     store.close()
     store.close()
     assert sidecars(db) == []
+
+
+@pytest.mark.parametrize("hook", ["_check_content", "_unjournaled"])
+def test_the_kept_walk_is_one_state_when_another_connection_commits_halfway(
+    db: str, monkeypatch: pytest.MonkeyPatch, hook: str
+) -> None:
+    """The walk that fills the kept result reads the journal, then each linked row, then every
+    row for one not linked. Another connection's write committed between those reads must not
+    reach the walk: the kept result is the state its data_version names, here the state
+    before that write, and the next call walks again and has the write."""
+    store = Store(db)
+    before = walked_afresh(db)
+    store._journal = None  # the next call walks
+    original = getattr(journal, hook)
+    fired: list[bool] = []
+
+    def commit_then_read(*args: object) -> object:
+        if not fired:
+            fired.append(True)
+            other = Store(db)
+            other.append_entry(entry("SYN-03", "committed halfway through the walk"))
+            other.close()
+        return original(*args)
+
+    monkeypatch.setattr(journal, hook, commit_then_read)
+    kept = store.journal_state()
+    monkeypatch.undo()
+    assert fired
+    assert kept == before, "the walk mixed two states of the file"
+    after = walked_afresh(db)
+    assert after.ok and after.length == before.length + 1
+    assert store.journal_state() == after
+    store.close()

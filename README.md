@@ -214,8 +214,10 @@ cost. The walk is a snapshot on a second connection, so a write made meanwhile l
 the store file is in SQLite's WAL mode, which means that while a service or a `uasw` command
 has it open, `fleet.sqlite` has `fleet.sqlite-wal` and `fleet.sqlite-shm` beside it and the
 file alone is not a complete copy. Copy or back it up with no store open (every command closes
-the store when it ends, and the two side files go with the last connection), or while the
-service runs with `sqlite3 fleet.sqlite ".backup copy.sqlite"`, which reads a snapshot. In the
+the store when it ends, and the two side files go with the last connection; after a process
+was terminated they stay until the next store opens and closes the file, so run `uasw verify`
+first), or while the service runs with `sqlite3 fleet.sqlite ".backup copy.sqlite"`, which
+reads a snapshot. In the
 container the three files live together in the `fleet-data` volume.
 
 **The assistant reads the ledger, and only reads it.** A sixth tool, over `GET /entries`,

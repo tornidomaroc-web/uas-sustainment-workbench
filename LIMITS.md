@@ -288,17 +288,30 @@ field-level tables. This file is about what that means for a maintenance tool.
   - *A reader on another connection sees a snapshot and makes the commit wait for nothing.*
     `PRAGMA data_version`, which the kept journal result and `/health` key on, moves on a
     commit from another connection and on nothing else (own commits, own rollbacks, another
-    connection's rollback), under WAL as before; the kept result always equals a fresh walk.
+    connection's rollback), under WAL as before. The walk that fills the kept result reads
+    `data_version` and every row inside one read transaction, so a commit from another
+    connection landing halfway through is not in it and the result is the state its version
+    names (before that, from PR #57 on, such a commit could make one answer show a break no
+    single state of the file had); the kept result equals a fresh walk of that state.
   - *Two side files while open.* `fleet.sqlite-wal` and `fleet.sqlite-shm` sit beside the file
     while any store has it open, in the `fleet-data` volume in the container; closing the last
     connection checkpoints the WAL into the file and removes both, so a closed store is one
-    file and every `uasw` command leaves it so. A copy of `fleet.sqlite` alone while a store is
-    open is not a complete copy: README says how to copy a running store. Every connection must
-    be on one host; the volume is, and a network file system is not supported.
-  - *The mode is kept in the file.* A store opened once by this version stays in WAL when a
-    0.5.x or 0.6.0 version opens it; both read and write it. A WAL-mode file in a directory the
-    process cannot write to cannot be opened unless it is opened as immutable, and the store
-    writes to the directory on open anyway (the schema, the migration), as before.
+    file, and every `uasw` command and a `uasw serve` stopped with Ctrl+C leave it so (checked
+    on Windows). A process that is terminated, or a service stopped with Ctrl+Break on Windows,
+    does not close the store: both side files stay, the `-wal` one holding commits not yet in
+    the file. They are part of the store, never stray files to delete: the next store to open
+    the file reads them and its close folds them in and removes them (checked: every write
+    there, integrity ok). A copy of `fleet.sqlite` alone while a store is open, or after such a
+    stop, is not a complete copy: README says how to copy a running store. Every connection
+    must be on one host; the volume is, and a network file system is not supported.
+  - *The mode is kept in the file.* A store opened once by this version stays in WAL when an
+    earlier version opens it. 0.5.2 was checked: it reads such a store with the same answers
+    and writes to it, but 0.5.x keeps no journal, so a row it writes has no link and from then
+    on this version reports the journal broken at that row (`unjournaled`); the migration runs
+    once, so the break stays. A store file marked read-only is verified as before, but its
+    close cannot fold the WAL in, so both side files stay until a store opens it writable. A
+    directory the process cannot write to was not measured; SQLite needs to create the side
+    files there to open a WAL-mode file at all.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

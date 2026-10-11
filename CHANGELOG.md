@@ -9,8 +9,11 @@
   #44). `PRAGMA synchronous` stays FULL and a second writer waits up to 5 s for the lock
   (`PRAGMA busy_timeout`). While a store is open, `fleet.sqlite-wal` and `fleet.sqlite-shm`
   sit beside the file; closing the last connection folds them into the file and removes them,
-  so a closed store is one file. README says how to copy a running store, and LIMITS.md what
-  WAL changes and what it does not. No response, record or hash changes.
+  so a closed store is one file; a terminated process leaves both, and the next store to open the
+  file folds them in. The walk behind the records summary's journal head reads its version and
+  every row in one read transaction, so another connection's commit landing halfway through no
+  longer shows a break no state of the file had. README says how to copy a running store, and
+  LIMITS.md what WAL changes and what it does not. No response, record or hash changes.
 - A draft records summary per aircraft, `uasw records KEY --out records.html [--json]`,
   `GET /aircraft/{key}/records` and `/records.html`, and one sample for SYN-04 in the static
   demo (`records/SYN-04.html`, linked from the page): titled "Draft records summary for the
