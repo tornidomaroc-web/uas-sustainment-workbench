@@ -260,7 +260,7 @@ def verify(db: sqlite3.Connection, head: str | None = None) -> Verification:
         given=head,
         given_at=given_at,
         migration=migration,
-        line=_line(chain_ok, prev, length, broken, head, given_at),
+        line=line(chain_ok, prev, length, broken, head, given_at),
     )
 
 
@@ -334,7 +334,7 @@ def _unjournaled(
     return None
 
 
-def _line(
+def line(
     chain_ok: bool,
     head: str,
     length: int,
@@ -342,6 +342,7 @@ def _line(
     given: str | None,
     given_at: int | None,
 ) -> str:
+    """What to tell a person about a verification: its one sentence."""
     links = f"{length} link{'s' if length != 1 else ''}"
     if not chain_ok and broken is not None:
         return f"journal broken at link {broken.seq}: {broken.kind}: {broken.detail}"

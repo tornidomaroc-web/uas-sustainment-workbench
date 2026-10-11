@@ -291,3 +291,37 @@ def test_clicking_an_aircraft_shows_its_flights(page: Any) -> None:
         assert text and BROKEN.search(text) is None, text
     assert "2018-07-30_16-46-36" in page.inner_text("#flights")
     assert page.problems == []
+
+
+def test_sample_records_summary_is_linked_and_honest_first(page: Any, site_url: str) -> None:
+    link = page.locator("a#sample-records")
+    assert link.count() == 1
+    text = page.inner_text("#records-section")
+    assert "draft" in text.lower() and "synthetic" in text.lower()
+    assert "states no record as true" in text and "UAS.SPEC.050(1)(g)" in text
+    href = link.get_attribute("href")
+    assert href == "records/SYN-04.html"
+    browser = page.context.browser
+    assert browser is not None
+    context = browser.new_context()
+    summary = context.new_page()
+    problems: list[str] = []
+    summary.on("pageerror", lambda e: problems.append(str(e)))
+    summary.goto(site_url + href, wait_until="load")
+    body = summary.inner_text("body")
+    first = body[:1500]
+    for phrase in (
+        "Draft records summary for the operator's own review",
+        "does not say that any record is true",
+        "does not certify airworthiness or return to service",
+        "the authority decides",
+        "Synthetic data",
+    ):
+        assert phrase in first, phrase
+    assert "unchanged since head" in body and "UAS.SPEC.050(1)(g)" in body
+    assert "not yet 3 years" in body
+    assert BROKEN.search(body) is None
+    assert re.search(r"\b(compliant|complies|meets|approved|certified)\b", body, re.I) is None
+    assert summary.locator(".print-header").count() == 1
+    assert problems == []
+    context.close()
