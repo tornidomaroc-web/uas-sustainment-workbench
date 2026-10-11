@@ -8,6 +8,7 @@
     uasw record ...      # append a maintenance entry: work orders, components, inspections
     uasw evidence KEY --out pack.html   # the draft evidence pack for OSO #03 of one aircraft
     uasw records KEY --out records.html # the draft records summary of one aircraft
+    uasw fleet-records --out fleet-records.html # the same summary for the whole fleet
     uasw verify [--head H]  # the write journal: unchanged since a head, or the first bad link
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
@@ -228,6 +229,32 @@ def cmd_records(args: argparse.Namespace) -> None:
     print(
         f"{pack['title']}: {args.aircraft}: written to {', '.join(written)}. "
         f"{pack['integrity']['line']}"
+    )
+
+
+def cmd_fleet_records(args: argparse.Namespace) -> None:
+    """Write the draft records summary of the whole fleet as HTML, and as JSON with --json."""
+    import json
+    from datetime import UTC, datetime
+
+    from uas_workbench.evidence import build_fleet_records, render_fleet_records_html
+
+    store = open_store(args.db)
+    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=UTC)
+    summary = build_fleet_records(store, load_config(), as_of=as_of, commit=current_commit())
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(render_fleet_records_html(summary), encoding="utf-8")
+    written = [str(args.out)]
+    if args.json:
+        path = args.out.with_suffix(".json")
+        path.write_text(json.dumps(summary, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        written.append(str(path))
+    log.info("fleet records", extra={"aircraft": summary["counts"]["aircraft"], "out": written})
+    print(
+        f"{summary['title']}: the fleet, {summary['counts']['aircraft']} aircraft: written to "
+        f"{', '.join(written)}. {summary['integrity']['line']}"
     )
 
 
@@ -476,6 +503,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
     p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
     p.set_defaults(func=cmd_records)
+
+    p = sub.add_parser(
+        "fleet-records",
+        help="write the draft records summary of the whole fleet (HTML): one row per aircraft "
+        "with the statuses its own summary gives, fleet counts, one journal head and verify "
+        "result for the store",
+    )
+    p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
+    p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
+    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.set_defaults(func=cmd_fleet_records)
 
     p = sub.add_parser(
         "verify",
