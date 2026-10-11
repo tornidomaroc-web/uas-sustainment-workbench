@@ -125,6 +125,19 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
         "html": f"records/{sample_key}.html",
         "json": f"records/{sample_key}.json",
     }
+    # And the same summary for the whole demo fleet, one row per aircraft.
+    from uas_workbench.evidence import build_fleet_records, render_fleet_records_html
+
+    whole = build_fleet_records(
+        store, cfg, as_of=now, commit=os.environ.get("UASW_COMMIT") or None, generated_utc=now
+    )
+    (out_dir / "records" / "fleet.html").write_text(
+        render_fleet_records_html(whole), encoding="utf-8"
+    )
+    (out_dir / "records" / "fleet.json").write_text(
+        json.dumps(whole, indent=1, ensure_ascii=False), encoding="utf-8"
+    )
+    data["fleet_records"] = {"html": "records/fleet.html", "json": "records/fleet.json"}
     (out_dir / "fleet.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
     runs = {
         "notice": ASSISTANT_NOTICE,

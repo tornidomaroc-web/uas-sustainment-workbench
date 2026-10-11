@@ -36,6 +36,8 @@ jobs:
           UASW_COMMIT="$GITHUB_SHA" uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
           test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
           test -s /tmp/site/evidence/SYN-04.html && test -s /tmp/site/evidence/SYN-04.json
+          test -s /tmp/site/records/fleet.html && test -s /tmp/site/records/fleet.json
+          grep -q 'unchanged since head' /tmp/site/records/fleet.html
           grep -q 'does not show compliance' /tmp/site/evidence/SYN-04.html
           grep -q "\"commit\": \"$GITHUB_SHA\"" /tmp/site/evidence/SYN-04.json
           grep -q '"status_reasons"' /tmp/site/fleet.json

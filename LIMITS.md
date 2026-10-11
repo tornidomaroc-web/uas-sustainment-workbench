@@ -312,8 +312,8 @@ field-level tables. This file is about what that means for a maintenance tool.
     close cannot fold the WAL in, so both side files stay until a store opens it writable. A
     directory the process cannot write to was not measured; SQLite needs to create the side
     files there to open a WAL-mode file at all.
-- **Threads never read through one connection; each read is one state of the file, and a
-  response built from several reads is not.** Every request thread read through the store's
+- **Threads never read through one connection; each read is one state of the file, and so
+  is each records summary and evidence pack, while the board's responses are not.** Every request thread read through the store's
   one SQLite connection with nothing serialising the reads, and Python's `sqlite3` keeps one
   statement cache per connection, so two threads running the same SQL stepped the same prepared
   statement and read each other's rows: a GET answered 200 with another query's rows, 404 for
@@ -329,27 +329,64 @@ field-level tables. This file is about what that means for a maintenance tool.
   write lock only; every thread that reads opens a reading connection of its own on its first
   read, and each read (`aircraft`, `flights`, `entries`, the walk of the journal, every other)
   runs inside one read transaction on it, so one call never mixes two states of the file and
-  no write waits for it. What is not promised: a response built from several reads (the due
-  list of an aircraft reads its flights and the projection; `/entries` reads the projection and
-  the entries) can straddle a write that lands between them, as it always could, and the kept
-  projection is computed on a connection of its own, so a request's direct reads and the
-  projection it uses are two snapshots, each whole. The two answers the store keeps, the
-  journal result behind the records summary and `/health`, are read on the writing connection
-  under the write lock, the one connection whose `PRAGMA data_version` the store's own commits
-  leave still (on any other connection an own commit is another connection's commit and moves
-  it); a write therefore waits for the one read of the whole store that follows a commit from
-  outside (1.3 s at 128,718 entries, above) and for the one walk of the journal that follows
-  it, and for nothing else; measured here, `POST /entries` takes 47 ms alone and 179 ms (median
-  of 10) with 8 readers running, which is the interpreter's one lock shared with the readers'
-  work, not the store. A `wal_checkpoint(TRUNCATE)`, which every `uasw` command and every store
+  no write waits for it. Every such transaction is a snapshot (`Store.snapshot`) labelled with
+  the state it reads: the `PRAGMA data_version` of one more connection the store keeps for
+  nothing else, read before and after the snapshot's first read and taken only when the two
+  agree, which moves on every commit to the file, the store's own or another connection's,
+  and on nothing else. A response that opens one snapshot around every read it makes is one
+  state of the store, the projection and the kept journal result it shows included, and
+  three do: the draft records summary of one aircraft, the fleet records summary and the
+  draft evidence pack for OSO #03. Before, each of their reads was whole and the response was
+  not: a correction committed between the entries and the projection of one summary gave the
+  entries of the state before it with the superseded count and the journal length of the
+  state after it (10 entries, 2 superseded, 95 links, where the store held (10, 1, 94) before
+  the correction and (11, 2, 95) after; `tests/test_snapshot.py` on the version before).
+  What is still not promised: the board's responses (`/aircraft`, `/aircraft/{key}` and its
+  due list, `/fleet/due`, `/fleet/findings`, `/fleet/grounded-flights`, `/entries`,
+  `/components`, the gauges behind `/metrics`) and the static export's `fleet.json` are built
+  from several reads with no snapshot around them, so one can straddle a write that lands
+  between two of its reads, as it always could; none of them carries a journal head or a
+  hash that names one state, and each is rebuilt on the next request. The three answers the
+  store keeps rather than computes on every call, the kept journal result behind the records
+  summaries, what `/health` holds and the whole-ledger projection, are each labelled with
+  the state they were computed from; a snapshot uses one only when its label is the
+  snapshot's own, computes it on its own connection otherwise, and keeps it unless a newer
+  state's answer is kept already. The store's own commit moves the three labels on with
+  nothing computed when the kept answers described the state right before it, which the
+  writing connection's `PRAGMA data_version` tells (it moves on another connection's commit
+  and never on the store's own; read before the write and after the new label, it says
+  whether any other commit landed in between), and drops them otherwise. So a snapshot never
+  waits for a write and a write never waits for a snapshot: no read takes the write lock,
+  and the one walk of the journal and the one read of the whole store that follow a commit
+  from outside (1.3 s at 128,718 entries, above) run on the reading thread that meets it,
+  where before they ran on the writing connection under the write lock and a write waited
+  for them. What a write does pay: three `PRAGMA data_version` reads around its transaction
+  (four when another connection committed since the store's last own write), two on the
+  labelling connection and one or two on the writing one, each a C call that lets the
+  interpreter's lock go, where a write made no such read before. Measured here, in a cloud
+  container (Linux, Python 3.13, SQLite 3.45.1, 2026-10-11, medians; the version before in
+  brackets): at the store, 30 writes 50 ms apart, with no reader 1.5 ms (1.4 ms); with 4
+  threads building the per-aircraft summary without pause 9.7 ms (5.1 ms); with 8, 16.5 ms
+  (10.1 ms). Through `uasw serve`, 20 `POST /entries` 100 ms apart: 28 ms alone (30 ms); 1.94 s
+  with 8 unauthenticated readers looping over the per-aircraft summary, which answered 481
+  requests meanwhile (1.59 s with 367 answered: those readers took the write lock for the kept
+  journal result and were slower, so they left the writer more of the interpreter); 1.88 s with
+  8 looping over the fleet summary (57 answered); 0.90 s with 8 looping over `/health`, which
+  reads nothing but the kept answer (1.60 s, where `/health` took the write lock). The wait is
+  the interpreter's one lock shared with the readers' threads, not the store, and every C call
+  a write makes is one more turn it waits for: a caller who needs no token can slow every write
+  by keeping the service's threads busy, on this version as on the one before, and the fleet
+  summary gives such a caller nine aircraft's work for one request; nothing in the service
+  limits a caller's rate, which is the reverse proxy's or the operator's to do. A
+  `wal_checkpoint(TRUNCATE)`, which every `uasw` command and every store
   runs on close, moves other connections' `data_version` as a commit does, so a `uasw verify`
   run beside the service makes the service walk the journal and read the whole store once more
   on its next call, to the same answers. The reading connections are closed by `Store.close`,
   from the closing thread, after the threads that read are done: `uasw` closes its store when
   the command ends, `uasw serve` after the server has stopped; a read after the close is refused
   as a read on a closed connection is, and a closed store is one file, as before. A store in
-  memory has one connection and takes the write lock for every read, so there threads read one
-  at a time.
+  memory has one connection: a snapshot there holds the write lock for its length, so threads
+  read one at a time and a write issued during a summary waits for it and lands after it.
 - **Two entries appended at once through one store are checked one after the other; through two
   processes they are not.** An entry is checked against the records and then written, and the
   check and the write hold the store's write lock together, so a second request served beside
@@ -470,16 +507,39 @@ field-level tables. This file is about what that means for a maintenance tool.
   so a reader checks the consolidated text in force.
 - **The journal head in the records summary is the store's last walk, not a walk per call.**
   The summary needs no token, so a caller may ask for it as often as they like. The store walks
-  the journal once at startup and again only on the first read after another connection has
-  committed to the file; a write made through the store, once its commit has gone through,
+  the journal once at startup and again only on the first snapshot after another connection
+  has committed to the file; a write made through the store, once its commit has gone through,
   moves the kept head and length on by the link the store itself appended, with no row read,
   when the chain verified before it, and makes the next read walk again when it did not; a
-  write whose commit is refused leaves the kept result where it was. Measured in the suite:
+  write whose commit is refused leaves the kept result where it was. The result a summary
+  shows is the one labelled with the state the summary reads, never a newer or an older one:
+  a summary that straddles a commit shows the head it began on, with the rows it began on, and
+  walks nothing for it; the first summary after the commit walks once. Measured in the suite:
   twenty requests with no token, zero walks; one write through the store, zero walks and the
-  head moved; one edit made in the file, one walk, and the break shown from then on. What the
-  summary shows is exactly what `uasw verify` would compute at that moment, including the 3.9 s
-  a 100,000-link store costs the one walk after an outside commit, which lands on the first
-  reader after it.
+  head moved; one edit made in the file, one walk, and the break shown from then on; one
+  outside commit landing inside an open snapshot, zero walks for that snapshot and one for the
+  next. What the summary shows is exactly what `uasw verify` would compute of that state,
+  including the 3.9 s a 100,000-link store costs the one walk after an outside commit, which
+  lands on the first reader after it and on no write.
+- **The fleet records summary is the per-aircraft summaries, read in one state, and nothing
+  more.** `uasw fleet-records` and `GET /fleet/records` build each row with `build_records` and
+  keep its statuses, span word and counts; a row has no reason or value its own summary does
+  not have. The rows, the projection behind them and the one integrity line are read inside
+  one snapshot on the request thread's own connection, which holds no write lock: a commit
+  from another connection while the summary is built is not in it and is met by the next
+  build, and a write through the store issued meanwhile lands at once and is in the next build
+  too; measured in the suite, a write issued into a build held open finishes while the build
+  is still held, and the build shows the state it began on. The summary costs the work of
+  asking for each aircraft's summary in turn, in one request, and no walk of the journal
+  (twenty fleet requests with no token, zero walks; one outside commit, one walk for the next
+  build, not nine). At fleet level a record the store cannot read follows the board's liveness
+  rule through the rows: one entry that cannot be read leaves maintenance activities and the
+  span not known on every row, because liveness is decided over the whole ledger, and a flight
+  record that cannot be read leaves only its aircraft's operations and span not known; the
+  counts count such rows as not known and in no other bucket; the first unreadable record is
+  named once; and the summary is written where `/aircraft` answers 503, because a record that
+  cannot be read is part of what the records show. A count of not-known rows is a count, never
+  a finding.
 
 ## Limits of the assistant
 

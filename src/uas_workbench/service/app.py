@@ -939,6 +939,34 @@ def create_app(
 
         return HTMLResponse(render_records_html(_records(key, as_of)))
 
+    def _fleet_records(as_of: datetime | None) -> dict[str, Any]:
+        from uas_workbench.evidence import build_fleet_records
+
+        return build_fleet_records(
+            store,
+            cfg,
+            as_of=_utc(as_of) or datetime.now(UTC),
+            commit=os.environ.get("UASW_COMMIT") or None,
+        )
+
+    @app.get("/fleet/records", tags=["evidence"])
+    def fleet_records_json(as_of: AsOf = None) -> dict[str, Any]:
+        """Draft records summary for the operator's own review, for the whole fleet, as data:
+        one row per aircraft with the statuses and span its own summary gives, fleet-level
+        counts, and one write journal head and verify result for the whole store. Every row
+        and the head come from one snapshot of the store, which holds no write lock. It
+        states no record as true, decides nothing and certifies nothing, and it needs no
+        token: the verify result is the one the store already holds, read once per build,
+        never walked per row or per call."""
+        return _fleet_records(as_of)
+
+    @app.get("/fleet/records.html", tags=["evidence"], response_class=HTMLResponse)
+    def fleet_records_html(as_of: AsOf = None) -> HTMLResponse:
+        """The same fleet summary as one self-contained HTML document, printable to PDF."""
+        from uas_workbench.evidence import render_fleet_records_html
+
+        return HTMLResponse(render_fleet_records_html(_fleet_records(as_of)))
+
     @app.post(
         "/entries",
         tags=["ledger"],

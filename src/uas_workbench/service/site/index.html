@@ -371,6 +371,12 @@
       'It is a draft for the operator to review: it states no record as true, decides nothing and certifies nothing; the authority decides. ' +
       'The same summary exists for every aircraft through the API and the command line of a locally running service.'
     : 'No sample summary in this build.';
+  const fr = data.fleet_records;
+  if (fr) {
+    $('#records-sub').innerHTML +=
+      ` For the whole demo fleet, one row per aircraft with the same statuses and one journal head for the store: ` +
+      `<a id="fleet-records" href="${esc(fr.html)}">open the fleet records summary</a> (or the <a href="${esc(fr.json)}">same summary as JSON</a>).`;
+  }
 
   try {
     const runs = await (await fetch('assistant.json')).json();
