@@ -400,8 +400,9 @@ def test_a_row_is_not_written_when_its_link_cannot_be(
 
 
 def test_concurrent_appends_keep_one_dense_chain(db: str) -> None:
-    """The service answers on a thread pool over one connection; appends from many threads
-    land one after another, each with the link that names the one before it."""
+    """The service answers on a thread pool over one writing connection, under the write
+    lock; appends from many threads land one after another, each with the link that names the
+    one before it."""
     store = Store(db)
     before = store.verify_journal()
     at = datetime(2026, 9, 1, tzinfo=UTC)

@@ -210,7 +210,8 @@ journaled when first opened, after a note that what came before it is not tamper
 Whatever the file holds, verifying reports a break and never crashes. `GET /journal/verify`
 needs the write token, or comes from this machine when none is set, as the writes do: it
 writes nothing, but it reads every row on a call, and [LIMITS.md](LIMITS.md) gives the measured
-cost. The walk is a snapshot on a second connection, so a write made meanwhile lands at once:
+cost. The walk is a snapshot on the request thread's own reading connection, so a write made
+meanwhile lands at once:
 the store file is in SQLite's WAL mode, which means that while a service or a `uasw` command
 has it open, `fleet.sqlite` has `fleet.sqlite-wal` and `fleet.sqlite-shm` beside it and the
 file alone is not a complete copy. Copy or back it up with no store open (every command closes

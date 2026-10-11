@@ -202,8 +202,9 @@ class Verification:
 def verify(db: sqlite3.Connection, head: str | None = None) -> Verification:
     """Walk the chain from the first link, recomputing every hash from the rows as they are.
 
-    Reads the whole store once; the caller holds the store's write lock so no write lands
-    halfway through and the result describes one state of the file.
+    Reads the whole store once; the caller runs it inside one read transaction (or under the
+    store's write lock on a store in memory), so no write lands halfway through and the result
+    describes one state of the file.
     """
     links = db.execute(
         "SELECT seq, kind, ref, note, content_hash, prev_hash, link_hash FROM journal ORDER BY seq"

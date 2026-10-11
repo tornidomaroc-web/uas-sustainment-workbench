@@ -268,9 +268,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   the seeded store (94 links, median of 50 runs on 2026-10-07), and 2.4 s for a store of
   100,000 links (the seeded store plus copies of its entries, 78 MB; median of 5 runs on
   2026-10-11 in a cloud container, Python 3.12, SQLite 3.45.1; 3.9 s on 2026-10-08 on another
-  container). A write no longer waits for it: the walk runs on a second connection inside one
-  read transaction, and the store file is in SQLite's WAL mode, so the walk reads a snapshot
-  and the store's commit goes through beside it. Measured on the same 100,000-link store: a
+  container). A write no longer waits for it: the walk runs on the calling thread's own
+  reading connection inside one read transaction, and the store file is in SQLite's WAL mode,
+  so the walk reads a snapshot and the store's commit goes through beside it. Measured on the same 100,000-link store: a
   write issued 0.5 s into the walk took 1.9 ms (median of 5, 4.2 ms at most) where it takes
   1.0 ms alone and waited 3.86 s on 2026-10-08, when the walk held the store's write lock; a
   write made while another connection holds a read transaction took 1.4 ms, where in the
@@ -312,6 +312,44 @@ field-level tables. This file is about what that means for a maintenance tool.
     close cannot fold the WAL in, so both side files stay until a store opens it writable. A
     directory the process cannot write to was not measured; SQLite needs to create the side
     files there to open a WAL-mode file at all.
+- **Threads never read through one connection; each read is one state of the file, and a
+  response built from several reads is not.** Every request thread read through the store's
+  one SQLite connection with nothing serialising the reads, and Python's `sqlite3` keeps one
+  statement cache per connection, so two threads running the same SQL stepped the same prepared
+  statement and read each other's rows: a GET answered 200 with another query's rows, 404 for
+  an aircraft that is in the store, 500, or 503 naming a record that reads (issue #60; v0.5.2
+  is affected). Measured through `uasw serve` in a process of its own, by
+  `tests/test_concurrent_reads.py`: 200 requests per reader over five routes and a writer
+  posting an entry every 20 ms, in a cloud container (Linux, Python 3.12, SQLite 3.45.1, 4
+  cores, 2026-10-11, three runs each). On the version before this change, 2 readers answered
+  23 to 39 of 400 requests wrongly (2 to 8 of them 200 with another query's body), 4 readers
+  85 to 128 of 800, 8 readers 205 to 328 of 1,600; the issue's own figures, on a Windows
+  desktop over 8 s, are of the same kind. With this change, 0 of 2,800 in every run, on Python
+  3.12 and 3.13. Now the writing connection is used under the
+  write lock only; every thread that reads opens a reading connection of its own on its first
+  read, and each read (`aircraft`, `flights`, `entries`, the walk of the journal, every other)
+  runs inside one read transaction on it, so one call never mixes two states of the file and
+  no write waits for it. What is not promised: a response built from several reads (the due
+  list of an aircraft reads its flights and the projection; `/entries` reads the projection and
+  the entries) can straddle a write that lands between them, as it always could, and the kept
+  projection is computed on a connection of its own, so a request's direct reads and the
+  projection it uses are two snapshots, each whole. The two answers the store keeps, the
+  journal result behind the records summary and `/health`, are read on the writing connection
+  under the write lock, the one connection whose `PRAGMA data_version` the store's own commits
+  leave still (on any other connection an own commit is another connection's commit and moves
+  it); a write therefore waits for the one read of the whole store that follows a commit from
+  outside (1.3 s at 128,718 entries, above) and for the one walk of the journal that follows
+  it, and for nothing else; measured here, `POST /entries` takes 47 ms alone and 179 ms (median
+  of 10) with 8 readers running, which is the interpreter's one lock shared with the readers'
+  work, not the store. A `wal_checkpoint(TRUNCATE)`, which every `uasw` command and every store
+  runs on close, moves other connections' `data_version` as a commit does, so a `uasw verify`
+  run beside the service makes the service walk the journal and read the whole store once more
+  on its next call, to the same answers. The reading connections are closed by `Store.close`,
+  from the closing thread, after the threads that read are done: `uasw` closes its store when
+  the command ends, `uasw serve` after the server has stopped; a read after the close is refused
+  as a read on a closed connection is, and a closed store is one file, as before. A store in
+  memory has one connection and takes the write lock for every read, so there threads read one
+  at a time.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
