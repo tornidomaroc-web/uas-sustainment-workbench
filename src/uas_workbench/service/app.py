@@ -768,7 +768,7 @@ def create_app(
 
     def writer(request: Request) -> None:
         """Every write goes through here, POST /entries and POST /ingest, and so does
-        GET /journal/verify, which holds the write lock while it reads every row."""
+        GET /journal/verify, which reads every row of the store on a call."""
         if token:
             if request.headers.get("authorization") != f"Bearer {token}":
                 raise HTTPException(
@@ -1073,9 +1073,10 @@ def create_app(
         what kind of break it is. Unchanged since a head is all it says; it does not say that
         the records are correct.
 
-        Guarded like a write, though it writes nothing: it reads every row and holds the
-        store's write lock meanwhile, so writes wait for as long as the walk takes (LIMITS.md
-        gives the measured cost), and only who may write may make them wait."""
+        Guarded like a write, though it writes nothing: it reads every row of the store on a
+        call, which is the costliest read the service has (LIMITS.md gives the measured cost),
+        and only who may write may ask for it. The walk is a snapshot on a second connection,
+        so a write made meanwhile lands at once and is in the next walk."""
         result = store.verify_journal(head)
         return JournalVerifyOut(
             ok=result.ok,

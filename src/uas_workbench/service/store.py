@@ -11,6 +11,18 @@ transaction that writes it, so a change made to either directly in the SQLite fi
 reported by `verify_journal`. A store written by 0.5.x is journaled when first opened, after
 a note saying that what came before is not tamper-evident.
 
+A file store is in SQLite's WAL mode (`PRAGMA journal_mode`, kept in the file): a reader on
+another connection keeps a snapshot while the store commits, where the rollback journal made
+the commit wait for the reader and fail (issue #44). The store holds one writing connection,
+serialised by its own lock, and one reading connection that `verify_journal` walks the journal
+on inside a read transaction, so the walk describes one state of the file and a write issued
+during it lands at once. `PRAGMA synchronous` stays FULL: a journal link is on disk before the
+commit returns, as before. `PRAGMA busy_timeout` is 5 s: a second writer (a `uasw record`
+beside a running service) waits that long for the write lock, then fails as before. While a
+store is open its file has `-wal` and `-shm` beside it; `close` checkpoints the WAL into the
+file and, when it was the last connection, SQLite removes both, so a closed store is one file.
+A store in memory has no file and keeps the mode SQLite gives it.
+
 Every record is read through one path (`_entry`, `_flight`), and a record that cannot be
 read there (not JSON, nested too deep for the parser, a field missing or of the wrong type,
 a time with no UTC offset) raises `UnreadableRecord` naming the table, the row, its aircraft
@@ -21,6 +33,7 @@ on it is not known, and the service, the command line and the evidence pack say 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -72,6 +85,9 @@ CREATE TABLE IF NOT EXISTS entries (
     + journal.SCHEMA
 )
 AIRCRAFT_COLUMNS = "key, label, source, synthetic, licence, attribution"
+# How long a write waits for another writer's lock before it fails. Writes take milliseconds;
+# a second writer is `uasw record` beside a running service, or two services on one file.
+BUSY_TIMEOUT_MS = 5000
 
 
 class DuplicateFlight(Exception):
@@ -81,8 +97,18 @@ class DuplicateFlight(Exception):
 class Store:
     def __init__(self, path: str = ":memory:") -> None:
         self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         self._db.execute("PRAGMA foreign_keys = ON")
+        self._db.execute("PRAGMA synchronous = FULL")
+        # A second connection for reads that must not hold the write lock; the walk of the
+        # journal reads every row on it. A store in memory is one connection, so it has none.
+        self._reader: sqlite3.Connection | None = None
+        if path != ":memory:":
+            self._db.execute("PRAGMA journal_mode = WAL")
+            self._reader = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+            self._reader.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         self._lock = threading.Lock()
+        self._read_lock = threading.Lock()
         with self._lock:
             self._db.executescript(SCHEMA)
             with self._db:
@@ -98,6 +124,14 @@ class Store:
         self._journal_version = -1
 
     def close(self) -> None:
+        """Close both connections. The WAL is checkpointed into the file first, so that when
+        this was the last connection the file alone holds every committed write and SQLite
+        removes `-wal` and `-shm`; another connection still open keeps them, and SQLite does
+        the same when that one closes. Closing a closed store does nothing."""
+        if self._reader is not None:
+            self._reader.close()
+        with contextlib.suppress(sqlite3.Error):
+            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._db.close()
 
     def add_fleet(self, fleet: Fleet) -> None:
@@ -235,9 +269,22 @@ class Store:
     def verify_journal(self, head: str | None = None) -> Verification:
         """Walk the journal and recompute every hash from the rows as they are now; with
         `head`, also whether that head is in the chain, which a truncated or recomputed
-        chain fails. Holds the write lock, so the result describes one state of the file."""
-        with self._lock:
-            return journal.verify(self._db, head)
+        chain fails.
+
+        The walk is on the reading connection, inside one read transaction: under WAL that is
+        a snapshot, so the result describes one state of the file, and the store's writes go
+        on meanwhile (issue #44); a write that lands during the walk is in the next one. A
+        store in memory has one connection and walks it under the write lock, as before.
+        """
+        if self._reader is None:
+            with self._lock:
+                return journal.verify(self._db, head)
+        with self._read_lock:
+            self._reader.execute("BEGIN")
+            try:
+                return journal.verify(self._reader, head)
+            finally:
+                self._reader.execute("ROLLBACK")  # nothing was written; ends the snapshot
 
     def journal_state(self) -> Verification:
         """The result of the last walk of the journal, as `verify_journal()` with no head
