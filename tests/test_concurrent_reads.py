@@ -41,6 +41,22 @@ REQUESTS_PER_READER = 200
 # that takes every turn the readers' threads could have had.
 WRITE_EVERY_S = 0.02
 TIMEOUT_S = 30.0
+START_BUDGET_S = 120.0  # wall clock, not a count of polls: a loaded machine starts it slowly
+
+
+class Connection(http.client.HTTPConnection):
+    """A connection to the service that counts the sockets the test opens through it. The
+    count is the test's measure of its own footprint on the machine: a run that opens a
+    socket per request can run out of local ports where a port closed stays reserved for a
+    while, and that fails the test with nothing wrong in the service."""
+
+    opened = 0
+    _count = threading.Lock()
+
+    def connect(self) -> None:
+        super().connect()
+        with Connection._count:
+            Connection.opened += 1
 
 
 @dataclass
@@ -95,18 +111,16 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, int
         stderr=subprocess.DEVNULL,  # one JSON line per request; a pipe left unread would fill
     )
     try:
-        for _ in range(1200):  # a minute: a loaded or a Windows machine starts it slowly
-            if server.poll() is not None:
-                break
+        deadline = time.monotonic() + START_BUDGET_S
+        while server.poll() is None:
             try:
                 status, _ = get((host, port), "/health")
             except OSError:
-                time.sleep(0.05)
-                continue
+                status = 0
             if status == 200:
                 break
-        else:
-            raise AssertionError("the service did not start")
+            assert time.monotonic() < deadline, "the service did not start"
+            time.sleep(0.05)
         assert server.poll() is None, f"the service exited with {server.returncode}"
         yield host, port
     finally:
@@ -119,7 +133,7 @@ def get(service: tuple[str, int], url: str) -> tuple[int, bytes]:
     thing, but on the server's keep-alive path one small write waits for the delayed ACK of
     the one before it (about 40 ms on Linux, 200 ms on Windows), which would make a request
     wait on the network rather than on the store, and the test much slower."""
-    conn = http.client.HTTPConnection(*service, timeout=TIMEOUT_S)
+    conn = Connection(*service, timeout=TIMEOUT_S)
     try:
         conn.request("GET", url, headers={"Connection": "close"})
         response = conn.getresponse()
@@ -196,7 +210,7 @@ def write(service: tuple[str, int], stop: threading.Event, statuses: list[int]) 
             "statement": f"written while {n} reads were in flight",
             "details": {"state": "deferred"},
         }
-        conn = http.client.HTTPConnection(*service, timeout=TIMEOUT_S)
+        conn = Connection(*service, timeout=TIMEOUT_S)
         try:
             conn.request(
                 "POST",
@@ -218,6 +232,7 @@ def write(service: tuple[str, int], stop: threading.Event, statuses: list[int]) 
 def test_concurrent_reads_answer_each_with_their_own_rows(
     service: tuple[str, int], readers: int
 ) -> None:
+    opened_before = Connection.opened
     urls = urls_to_read(service)
     expected = single_threaded(service, urls)
     tallies = [Tally() for _ in range(readers)]
@@ -251,6 +266,12 @@ def test_concurrent_reads_answer_each_with_their_own_rows(
     counts = {status: written.count(status) for status in sorted(set(written))}
     assert written and set(written) == {201}, f"the writer's statuses (0: not completed): {counts}"
     print(line + f"; {len(written)} writes")
+    # The test's own footprint: one socket per reader, one for the writer and one for the
+    # requests made here, however many requests they make. One socket per request ran a
+    # Windows machine out of local ports mid-suite (issue #62) with nothing wrong in the
+    # service; a socket that stays open is also what a browser or a client library does.
+    opened = Connection.opened - opened_before
+    assert opened <= readers + 2, f"{opened} sockets opened for {readers} readers and a writer"
     # The writes landed: every one of them is in the store, with the rest of the fleet as read.
     status, body = get(service, f"/entries?subject={WRITTEN}")
     assert status == 200
