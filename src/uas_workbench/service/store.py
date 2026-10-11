@@ -313,6 +313,15 @@ class Store:
             self._journal_after_write(head)
         return stored
 
+    @contextlib.contextmanager
+    def writing(self) -> Iterator[None]:
+        """Hold the write lock across a check and the write it decides, so that no other write
+        made through this store lands between them: two requests served at once are then
+        checked as if made one after the other (`ledger.append`). Reads go on meanwhile on
+        their own connections. A write from another process is not held back by it."""
+        with self._lock:
+            yield
+
     def next_entry_id(self) -> int:
         with self._read() as db:
             row = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM entries").fetchone()
@@ -462,7 +471,7 @@ class Store:
         # connection's data_version and the kept projection is not served past it, so a
         # record that can no longer be read is met on the next read, never hidden by a copy.
         # A store in memory has one connection and computes it there under the write lock.
-        with self._projection_lock, self._projection_read() as db:
+        with self._projection_read() as db:
             version = int(db.execute("PRAGMA data_version").fetchone()[0])
             if self._projection is None or version != self._projection_version:
                 self._projection = project(self._entries(db))
@@ -471,11 +480,14 @@ class Store:
 
     @contextlib.contextmanager
     def _projection_read(self) -> Iterator[sqlite3.Connection]:
+        # The write lock before the projection's own, always: a write held across its check
+        # (`writing`) reads the projection under the write lock.
         if self._cache is None:
-            with self._lock:
+            with self._lock, self._projection_lock:
                 yield self._db
             return
-        yield from self._snapshot(self._cache)
+        with self._projection_lock:
+            yield from self._snapshot(self._cache)
 
     def components(self, as_of: datetime | None = None) -> Sequence[Component]:
         return self.projection(as_of).components

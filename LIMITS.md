@@ -350,6 +350,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   as a read on a closed connection is, and a closed store is one file, as before. A store in
   memory has one connection and takes the write lock for every read, so there threads read one
   at a time.
+- **Two entries appended at once through one store are checked one after the other; through two
+  processes they are not.** An entry is checked against the records and then written, and the
+  check and the write hold the store's write lock together, so a second request served beside
+  the first is checked against the records with the first in them: two corrections of one
+  entry posted at once give one 201 and one 409. Before, both were checked against the records
+  as they were before either wrote and both were accepted (60 of 60 such pairs through `uasw
+  serve` on Windows, Python 3.12, 2026-10-11, and 45 of 60 on the version before). Reads go on beside the check on their own
+  connections. The lock is the process's own: a `uasw record` run beside a running service, or
+  two `uasw` commands at once, can still both pass their checks before either writes, so record
+  through one of them at a time.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
