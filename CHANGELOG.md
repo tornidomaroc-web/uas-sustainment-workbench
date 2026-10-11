@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The store file is in SQLite's WAL mode, and `uasw verify` and `GET /journal/verify` walk the
+  journal on a second connection inside one read transaction, so a write issued during the
+  walk lands at once (1.9 ms into a 100,000-link walk where it waited 3.86 s) and a reader on
+  another connection no longer makes the store's commit fail with the database locked (closes
+  #44). `PRAGMA synchronous` stays FULL and a second writer waits up to 5 s for the lock
+  (`PRAGMA busy_timeout`). While a store is open, `fleet.sqlite-wal` and `fleet.sqlite-shm`
+  sit beside the file; closing the last connection folds them into the file and removes them,
+  so a closed store is one file. README says how to copy a running store, and LIMITS.md what
+  WAL changes and what it does not. No response, record or hash changes.
 - A draft records summary per aircraft, `uasw records KEY --out records.html [--json]`,
   `GET /aircraft/{key}/records` and `/records.html`, and one sample for SYN-04 in the static
   demo (`records/SYN-04.html`, linked from the page): titled "Draft records summary for the

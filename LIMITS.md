@@ -264,21 +264,41 @@ field-level tables. This file is about what that means for a maintenance tool.
   the file holds, verifying reports and never raises: a record that cannot be parsed or hashed
   (not JSON, nested too deep for the parser, a column turned into a BLOB), a note that is not
   the migration note, and a note on an entry or flight link, where the column is NULL and no
-  hash covers it, are each a `content` break at that link. Verifying reads every row and holds
-  the store's write lock meanwhile, so a write waits for it: 3 ms for the seeded store (94
-  links, median of 50 runs on 2026-10-07), and 3.9 s for a store of 100,000 links (the seeded
-  store plus copies of its entries, 78 MB; median of 5 runs on 2026-10-08, a 4-vCPU Intel Xeon
-  2.80 GHz cloud container, Python 3.13; 4.6 s as `uasw verify` from the shell, process start
-  included), during which a write issued into the walk waited 3.86 s where it takes 2 ms
-  alone. So `GET /journal/verify` is guarded exactly as the writes are, token or loopback,
-  though it writes nothing: whoever may make writes wait is whoever may write. The store has
-  one connection and the lock is the store's, so a read-only verify on a second connection
-  would not help as the file is: in SQLite's default rollback-journal mode a reader holding a
-  read transaction makes a writer's commit wait for it too (measured: the commit waited the
-  whole 2.5 s the reader held its transaction), and only WAL mode lets a reader keep a snapshot
-  while a writer commits (measured: 0 ms). Switching the file to WAL is a change to what is on
-  disk (two sidecar files beside `fleet.sqlite`, which a copy of the file alone leaves behind)
-  and is not made here.
+  hash covers it, are each a `content` break at that link. Verifying reads every row: 3 ms for
+  the seeded store (94 links, median of 50 runs on 2026-10-07), and 2.4 s for a store of
+  100,000 links (the seeded store plus copies of its entries, 78 MB; median of 5 runs on
+  2026-10-11 in a cloud container, Python 3.12, SQLite 3.45.1; 3.9 s on 2026-10-08 on another
+  container). A write no longer waits for it: the walk runs on a second connection inside one
+  read transaction, and the store file is in SQLite's WAL mode, so the walk reads a snapshot
+  and the store's commit goes through beside it. Measured on the same 100,000-link store: a
+  write issued 0.5 s into the walk took 1.9 ms (median of 5, 4.2 ms at most) where it takes
+  1.0 ms alone and waited 3.86 s on 2026-10-08, when the walk held the store's write lock; a
+  write made while another connection holds a read transaction took 1.4 ms, where in the
+  rollback-journal mode it failed with the database locked (the defect PR #57 met). What WAL
+  changes and what it does not, each checked by `tests/test_wal.py`:
+  - *`GET /journal/verify` stays guarded as the writes are*, token or loopback, though it makes
+    nothing wait: it is the costliest read the service has, every row on every call.
+  - *One writer at a time, as before.* A second writer (`uasw record` beside a running service)
+    waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then fails with the database
+    locked; a refused commit is rolled back and moves nothing kept. SQLite's rollback journal
+    had no wait at all, so that failure came at once.
+  - *Durability is as it was.* `PRAGMA synchronous` is FULL, the WAL default: a journal link is
+    on disk before the commit that wrote it returns. NORMAL would save one sync per commit and
+    could lose the last commits to a power cut; the link is the record and is not traded.
+  - *A reader on another connection sees a snapshot and makes the commit wait for nothing.*
+    `PRAGMA data_version`, which the kept journal result and `/health` key on, moves on a
+    commit from another connection and on nothing else (own commits, own rollbacks, another
+    connection's rollback), under WAL as before; the kept result always equals a fresh walk.
+  - *Two side files while open.* `fleet.sqlite-wal` and `fleet.sqlite-shm` sit beside the file
+    while any store has it open, in the `fleet-data` volume in the container; closing the last
+    connection checkpoints the WAL into the file and removes both, so a closed store is one
+    file and every `uasw` command leaves it so. A copy of `fleet.sqlite` alone while a store is
+    open is not a complete copy: README says how to copy a running store. Every connection must
+    be on one host; the volume is, and a network file system is not supported.
+  - *The mode is kept in the file.* A store opened once by this version stays in WAL when a
+    0.5.x or 0.6.0 version opens it; both read and write it. A WAL-mode file in a directory the
+    process cannot write to cannot be opened unless it is opened as immutable, and the store
+    writes to the directory on open anyway (the schema, the migration), as before.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
