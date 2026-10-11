@@ -301,6 +301,9 @@ def test_sample_records_summary_is_linked_and_honest_first(page: Any, site_url: 
     assert "states no record as true" in text and "UAS.SPEC.050(1)(g)" in text
     href = link.get_attribute("href")
     assert href == "records/SYN-04.html"
+    whole = page.locator("a#fleet-records")
+    assert whole.count() == 1 and whole.get_attribute("href") == "records/fleet.html"
+    assert "one row per aircraft" in text
     browser = page.context.browser
     assert browser is not None
     context = browser.new_context()
