@@ -1,6 +1,8 @@
 """The store file is in SQLite's WAL mode, so a reader on another connection never makes the
-store's own commit wait, and `verify_journal` walks the journal on a second connection without
-the store's write lock, so a write issued during the walk lands at once (issue #44).
+store's own commit wait, and `verify_journal` walks the journal on the calling thread's own
+reading connection without the store's write lock, so a write issued during the walk lands at
+once (issue #44). Every thread that reads has a connection of its own (issue #60, the last
+section here); the writing connection is used under the write lock only.
 
 What must still hold, and is checked here: the two caches keyed on `PRAGMA data_version`
 (the kept journal result and /health) see every commit from another connection and none of
@@ -12,16 +14,20 @@ no `-wal` or `-shm` beside it. No assertion names an OS: no error text, no path 
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import sqlite3
 import threading
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from uas_workbench.ledger import Entry
+from uas_workbench.ledger import Entry, UnreadableRecord
 from uas_workbench.service import journal
 from uas_workbench.service.cli import main
+from uas_workbench.service.journal import Verification
 from uas_workbench.service.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -61,6 +67,17 @@ def walked_afresh(path: str) -> journal.Verification:
     connection = sqlite3.connect(path)
     try:
         return journal.verify(connection)
+    finally:
+        connection.close()
+
+
+@contextlib.contextmanager
+def raw(path: str) -> Iterator[sqlite3.Connection]:
+    """A plain connection on the file, as an edit made with sqlite3 would use."""
+    connection = sqlite3.connect(path)
+    try:
+        yield connection
+        connection.commit()
     finally:
         connection.close()
 
@@ -338,4 +355,169 @@ def test_the_kept_walk_is_one_state_when_another_connection_commits_halfway(
     after = walked_afresh(db)
     assert after.ok and after.length == before.length + 1
     assert store.journal_state() == after
+    store.close()
+
+
+# ---- one reading connection per thread (issue #60) ---------------------------------------
+
+
+def _in_threads(count: int, work: Callable[[int], object]) -> list[object]:
+    """`work(n)` on `count` threads at once; the results in thread order, exceptions kept."""
+    results: list[object] = [None] * count
+
+    def run(n: int) -> None:
+        try:
+            results[n] = work(n)
+        except BaseException as exc:
+            results[n] = exc
+
+    threads = [threading.Thread(target=run, args=(n,)) for n in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    return results
+
+
+def test_each_thread_reads_on_its_own_connection_and_close_closes_every_one(db: str) -> None:
+    """Eight threads read at once, each on a connection of its own and none on the writing
+    one, so no two threads step one prepared statement; the walk of the journal runs on that
+    connection too. `close` closes every one of them from the closing thread: the closed
+    store is one file, and a read after it, from a thread that read before or a new one, is
+    refused as a read on a closed connection is. Nothing is left open: the suite turns a
+    connection collected unclosed into an error."""
+    store = Store(db)
+    fresh = walked_afresh(db)
+    expected = [a.key for a in store.aircraft()]
+
+    def work(n: int) -> int:
+        for _ in range(20):
+            assert [a.key for a in store.aircraft()] == expected
+            assert store.flights("SYN-03")[0].log_ref.startswith("SYN-03")
+            assert store.entries("SYN-03")
+            assert store.verify_journal() == fresh
+        return id(store._reader())
+
+    connections = _in_threads(8, work)
+    assert all(isinstance(c, int) for c in connections), connections
+    assert len(set(connections)) == 8, "two threads read on one connection"
+    assert id(store._db) not in connections, "a thread read on the writing connection"
+    assert set(connections) <= {id(c) for c in store._readers}
+    store.close()
+    gc.collect()
+    assert sidecars(db) == []
+    with pytest.raises(sqlite3.ProgrammingError):
+        store.aircraft()  # this thread never read
+    refused = _in_threads(2, lambda n: store.entry_count())
+    assert all(isinstance(r, sqlite3.ProgrammingError) for r in refused), refused
+
+
+def test_a_store_in_memory_is_read_by_threads_under_its_one_connection(db: str) -> None:
+    """A store in memory has one connection; threads read it one at a time under the write
+    lock, and every read is whole."""
+    store = Store(":memory:")
+    main(["--db", ":memory:", "seed", "--fixtures", str(FIXTURES)])  # exercises the path only
+    seeded = Store(db)
+    for aircraft in seeded.aircraft():
+        store.add_aircraft(aircraft)
+        for record in seeded.flights(aircraft.key):
+            store.add_flight(aircraft.key, record)
+    seeded.close()
+    expected = [(a.key, len(store.flights(a.key))) for a in store.aircraft()]
+
+    def work(n: int) -> bool:
+        return all(
+            [(a.key, len(store.flights(a.key))) for a in store.aircraft()] == expected
+            for _ in range(30)
+        )
+
+    assert _in_threads(4, work) == [True] * 4
+    store.close()
+
+
+def test_a_reading_connections_data_version_moves_on_the_stores_own_commit(db: str) -> None:
+    """Why the kept answers are not keyed on a reading connection's version: from any
+    connection but the writing one, the store's own commit is another connection's commit,
+    so it moves that connection's data_version, and a cache keyed on it there would walk the
+    journal, or read the whole store, after every write. The kept journal result and /health
+    are keyed on the writing connection's version, read under the write lock, which own
+    commits leave still (the test above this section) and which this test's own thread's
+    reading connection does not share."""
+    store = Store(db)
+    reader = store._reader()
+    reader.execute("SELECT COUNT(*) FROM entries").fetchone()  # a version is per connection
+    start = pragma(reader, "data_version")
+    writer_start = pragma(store._db, "data_version")
+    store.append_entry(entry("SYN-02", "own commit"))
+    assert pragma(reader, "data_version") != start, "own commit left the reader's version"
+    assert pragma(store._db, "data_version") == writer_start, "own commit moved the writer's"
+    assert store.journal_state() == walked_afresh(db)
+    store.close()
+
+
+def test_the_kept_answers_equal_a_fresh_computation_from_every_thread_after_every_change(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """From four threads at once, after each kind of change: the kept journal result is what
+    a fresh walk of the file gives, and /health's answer is what a fresh read of the whole
+    store gives, with the journal walked and the store read again exactly when another
+    connection has committed, never for the store's own commit or rollback, another
+    connection's rollback, or a call."""
+    store = Store(db)
+    other = Store(db)
+    store.journal_state()
+    store.readable()
+    walks: list[int] = []
+    reads: list[int] = []
+    walk, read = journal.verify, Store._first_unreadable
+
+    def counted_walk(connection: sqlite3.Connection, head: str | None = None) -> Verification:
+        walks.append(1)
+        return walk(connection, head)
+
+    def counted_read(self: Store, connection: sqlite3.Connection) -> UnreadableRecord | None:
+        reads.append(1)
+        return read(self, connection)
+
+    monkeypatch.setattr(journal, "verify", counted_walk)
+    monkeypatch.setattr(Store, "_first_unreadable", counted_read)
+
+    def kept_equal_fresh(walked: int, read_: int) -> None:
+        fresh = walked_afresh(db)
+        del walks[-1:]  # that walk, not one of the store's
+        with raw(db) as c:  # a fresh read of the whole store by a connection that kept nothing
+            unreadable = read(store, c)
+        results = _in_threads(
+            4, lambda n: [(store.journal_state(), store.readable()) for _ in range(5)]
+        )
+        for result in results:
+            assert isinstance(result, list), result
+            for kept, health in result:
+                assert kept == fresh
+                assert (health is None) == (unreadable is None)
+                if health is not None and unreadable is not None:
+                    assert health.detail == unreadable.detail
+        assert (sum(walks), sum(reads)) == (walked, read_), "walks and reads of the whole store"
+
+    kept_equal_fresh(0, 0)  # 20 calls from 4 threads, nothing changed: no walk, no read
+    store.append_entry(entry("SYN-02", "own commit"))
+    kept_equal_fresh(0, 0)
+    store._db.execute("INSERT INTO aircraft VALUES ('X', 'x', 'px4', 1, 'none', 'none')")
+    store._db.rollback()
+    kept_equal_fresh(0, 0)
+    other.append_entry(entry("SYN-03", "another connection's commit"))
+    kept_equal_fresh(1, 1)
+    other._db.execute("INSERT INTO aircraft VALUES ('Y', 'y', 'px4', 1, 'none', 'none')")
+    other._db.rollback()
+    kept_equal_fresh(1, 1)
+    with raw(db) as c:
+        (text,) = c.execute("SELECT record FROM entries WHERE id = 4").fetchone()
+        c.execute("UPDATE entries SET record = 'not json' WHERE id = 4")
+    kept_equal_fresh(2, 2)
+    assert store.journal_state().broken is not None and store.readable() is not None
+    with raw(db) as c:
+        c.execute("UPDATE entries SET record = ? WHERE id = 4", (text,))
+    kept_equal_fresh(3, 3)
+    assert store.journal_state().ok and store.readable() is None
+    other.close()
     store.close()

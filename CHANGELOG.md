@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Threads no longer read through one SQLite connection: a GET served beside another could
+  answer 200 with the other query's rows, 404 for an aircraft that is in the store, 500, or 503
+  naming a record that reads, because Python's `sqlite3` keeps one statement cache per
+  connection and two threads stepped the same prepared statement (closes #60; v0.5.2 is
+  affected). The writing connection is used under the write lock only; every thread that reads
+  opens a reading connection of its own on its first read and each read runs inside one read
+  transaction on it, closed with the store by `Store.close`; the kept journal result and
+  `/health` stay keyed on the writing connection's `PRAGMA data_version` under the write lock,
+  since on any other connection the store's own commits move it, and the kept projection is
+  computed on a connection of its own. `tests/test_concurrent_reads.py` runs 2, 4 and 8
+  reader threads through `uasw serve` in a process of its own with a writer posting meanwhile
+  and compares every body with the single-threaded answer: on the version before, 23 to 39 of
+  400 requests were wrong with 2 readers and 205 to 328 of 1,600 with 8; now 0 of 2,800. No
+  response, record, pack or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
+  stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and a static export
+  of a clean store is byte-identical to the one before with the clock masked. LIMITS.md says
+  what one read promises and what a response built from several does not, and that a
+  checkpoint by another connection (every `uasw` command's close) is met like a commit.
 - The store file is in SQLite's WAL mode, and `uasw verify` and `GET /journal/verify` walk the
   journal on a second connection inside one read transaction, so a write issued during the
   walk lands at once (1.9 ms into a 100,000-link walk where it waited 3.86 s) and a reader on
