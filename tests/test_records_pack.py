@@ -567,21 +567,21 @@ def test_writes_from_the_store_and_from_another_connection_leave_the_kept_result
 
 
 def test_a_write_whose_commit_fails_leaves_the_kept_result_where_it_was(db: str) -> None:
-    """Another connection holds a read open, so the store's commit cannot take the file and
+    """Another connection holds the write lock, so the store's commit cannot take the file and
     the write is rolled back: the kept result must not have moved to the head that was never
-    stored, then or after the next write."""
+    stored, then or after the next write. (A reader holding a read open did this too in
+    rollback mode; under WAL only a writer does, tests/test_wal.py.)"""
     store = Store(db)
     before = store.journal_state()
     store._db.execute("PRAGMA busy_timeout = 100")
-    reader = sqlite3.connect(db, isolation_level=None)
-    reader.execute("BEGIN")
-    reader.execute("SELECT COUNT(*) FROM journal").fetchone()
+    writer = sqlite3.connect(db, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")
     try:
         with pytest.raises(sqlite3.OperationalError):
             store.append_entry(entry("SYN-02", AT_WRITE, "a write that is rolled back"))
     finally:
-        reader.execute("COMMIT")
-        reader.close()
+        writer.execute("ROLLBACK")
+        writer.close()
     assert store.journal_state() == walked_afresh(db) == before
     store.append_entry(entry("SYN-02", AT_WRITE, "a write that is stored"))
     assert store.journal_state() == walked_afresh(db)
