@@ -300,10 +300,17 @@ class Store:
         call walk it, and once.
         """
         with self._lock:
-            version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
-            if self._journal is None or version != self._journal_version:
-                self._journal = journal.verify(self._db)
-                self._journal_version = version
+            # One read transaction for the version and the walk: the walk is several reads,
+            # and a commit from another connection between two of them would otherwise give
+            # a result no single state of the file has, labelled with the older version.
+            self._db.execute("BEGIN")
+            try:
+                version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
+                if self._journal is None or version != self._journal_version:
+                    self._journal = journal.verify(self._db)
+                    self._journal_version = version
+            finally:
+                self._db.execute("ROLLBACK")  # nothing was written; ends the snapshot
             return self._journal
 
     def _journal_after_write(self, head: str) -> None:
