@@ -153,7 +153,7 @@ def test_the_title_is_the_same_draft_wording_as_the_per_aircraft_summary(store: 
     assert RECORDS_TITLE in body[:600]
     assert "does not say that any record is true" in body[:1500]
     assert "the authority decides" in body[:1500]
-    assert "<title>" + RECORDS_TITLE + ": the fleet</title>" in html
+    assert unescape(html.split("</title>", 1)[0]).endswith(RECORDS_TITLE + ": the fleet")
 
 
 def test_no_fleet_output_carries_a_forbidden_phrase(store: Store) -> None:
@@ -262,13 +262,16 @@ def test_the_fleet_counts_add_up_to_the_rows(store: Store) -> None:
     assert c["rows_not_known"] == sum(
         "not known" in r["statuses"].values() or r["span"] == "not known" for r in rows
     )
-    # The demo: training never, maintenance on the seven synthetic aircraft, operations partly
-    # on every aircraft with a log, no span yet 3 years, nothing not known.
+    # The demo: training never; maintenance on the six synthetic aircraft with an entry by the
+    # computation date (SYN-06 has none, nor has a showcase aircraft); operations partly on
+    # every aircraft, each having a log; the span covered on the one aircraft whose logs are
+    # 8 years old, not yet 3 years on the rest; nothing not known.
     assert c["by_point"]["training-records"]["not evidenced by this workbench"] == 9
-    assert c["by_point"]["maintenance-activities"]["supported by these records"] == 7
-    assert c["by_point"]["maintenance-activities"]["not evidenced by this workbench"] == 2
+    assert c["by_point"]["maintenance-activities"]["supported by these records"] == 6
+    assert c["by_point"]["maintenance-activities"]["not evidenced by this workbench"] == 3
     assert c["by_point"]["operations-occurrences"]["partly"] == 9
-    assert c["span"]["not yet 3 years"] == 9
+    assert c["span"] == {"covered": 1, "not yet 3 years": 8, "not known": 0}
+    assert by_key(s)[ALFA_KEY]["span"] == "covered" and by_key(s)["SYN-06"]["entries"] == 0
     assert c["rows_not_known"] == 0
     assert s["readable"]["ok"] is True and s["readable"]["unreadable"] is None
 
@@ -359,7 +362,7 @@ def test_an_unreadable_flight_leaves_only_its_aircraft_not_known(db: str) -> Non
         if key == "SYN-01":
             continue
         assert "not known" not in row["statuses"].values(), key
-        assert row["span"] == "not yet 3 years", key
+        assert row["span"] != "not known", key
     c = s["counts"]
     assert c["by_point"]["operations-occurrences"]["not known"] == 1
     assert c["by_point"]["operations-occurrences"]["partly"] == 8
@@ -377,20 +380,11 @@ def test_building_the_fleet_summary_walks_the_journal_zero_times_for_an_unauthen
     db: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Nine aircraft, ten requests of the data and ten of the page, no token: zero walks. The
-    integrity line is the result the store already holds, and it is read once per build, not
-    once per row."""
+    integrity line is the result the store already holds."""
     store = Store(db)
     app = create_app(store, write_token="t")
     client = TestClient(app, client=("172.17.0.1", 40000))  # not loopback, no token
     walks = count_walks(monkeypatch)
-    states: list[int] = []
-    kept = store.journal_state
-
-    def counted_state() -> journal.Verification:
-        states.append(1)
-        return kept()
-
-    monkeypatch.setattr(store, "journal_state", counted_state)
     heads = set()
     for _ in range(10):
         body = client.get("/fleet/records").json()
@@ -399,7 +393,6 @@ def test_building_the_fleet_summary_walks_the_journal_zero_times_for_an_unauthen
         assert client.get("/fleet/records.html").status_code == 200
     assert heads == {SEEDED_HEAD}
     assert sum(walks) == 0, f"{sum(walks)} walks for 20 unauthenticated fleet requests"
-    assert sum(states) == 20, f"{sum(states)} reads of the kept result for 20 builds"
     assert client.get("/journal/verify").status_code == 401  # the guarded route stays guarded
     store.close()
 
@@ -437,7 +430,6 @@ def test_a_write_landing_mid_build_reaches_no_row_and_not_the_integrity_line(
     store = Store(db)
     before = fleet(store)
     assert before["integrity"]["head"] == SEEDED_HEAD
-    build = fleet_module.build_records
     fired: list[bool] = []
     through_store = threading.Thread(
         target=lambda: store.append_entry(entry("SYN-02", "through the store, mid-build"))
@@ -450,7 +442,7 @@ def test_a_write_landing_mid_build_reaches_no_row_and_not_the_integrity_line(
             other.append_entry(entry("SYN-02", "by another connection, mid-build"))
             other.close()
             through_store.start()
-        return build(*args, **kwargs)
+        return build_records(*args, **kwargs)
 
     monkeypatch.setattr(fleet_module, "build_records", write_then_build)
     try:

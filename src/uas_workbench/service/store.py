@@ -37,7 +37,7 @@ import contextlib
 import json
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -107,7 +107,9 @@ class Store:
             self._db.execute("PRAGMA journal_mode = WAL")
             self._reader = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
             self._reader.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-        self._lock = threading.Lock()
+        # Re-entrant: a read inside `snapshot` takes it again on the same thread, so the
+        # kept journal result is read within the snapshot's transaction, never beside it.
+        self._lock = threading.RLock()
         self._read_lock = threading.Lock()
         with self._lock:
             self._db.executescript(SCHEMA)
@@ -299,19 +301,42 @@ class Store:
         only a write, which needs the token, or a commit from outside the store makes the next
         call walk it, and once.
         """
+        # One read transaction for the version and the walk: the walk is several reads, and
+        # a commit from another connection between two of them would otherwise give a result
+        # no single state of the file has, labelled with the older version. Inside a caller's
+        # `snapshot` this joins that transaction, and the result is of that state.
+        with self.snapshot():
+            version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
+            if self._journal is None or version != self._journal_version:
+                self._journal = journal.verify(self._db)
+                self._journal_version = version
+            return self._journal
+
+    @contextlib.contextmanager
+    def snapshot(self) -> Iterator[None]:
+        """One read transaction on the writing connection, under the write lock, for a read
+        made of many reads that must describe one state of the store (the fleet records
+        summary: every aircraft's rows and the one integrity line).
+
+        Under WAL the transaction is a snapshot: a commit from another connection while it
+        is open is not in it and is met by the next read. A write through this store waits
+        for the lock until the snapshot ends and lands then; it is never refused. The caches
+        this store keys on `PRAGMA data_version` (the projection, the kept journal result,
+        what `readable` holds) are consistent inside it: the version does not move within a
+        read transaction, so a cache filled inside describes the snapshot's state and is
+        labelled with its version, and one filled before an outside commit is not served
+        past it. Nested use on the same thread joins the open transaction. Nothing is
+        written; the transaction ends with a rollback.
+        """
         with self._lock:
-            # One read transaction for the version and the walk: the walk is several reads,
-            # and a commit from another connection between two of them would otherwise give
-            # a result no single state of the file has, labelled with the older version.
+            if self._db.in_transaction:
+                yield
+                return
             self._db.execute("BEGIN")
             try:
-                version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
-                if self._journal is None or version != self._journal_version:
-                    self._journal = journal.verify(self._db)
-                    self._journal_version = version
+                yield
             finally:
                 self._db.execute("ROLLBACK")  # nothing was written; ends the snapshot
-            return self._journal
 
     def _journal_after_write(self, head: str) -> None:
         """Called under the write lock, after this store linked one row and the commit went

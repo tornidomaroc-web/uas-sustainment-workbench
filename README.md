@@ -271,6 +271,21 @@ own writes; `GET /journal/verify` stays guarded and walks on demand. One self-co
 document, as the evidence pack is, and one sample for SYN-04 on the live demo. A record the
 store cannot read leaves what depended on it not known, with the record named.
 
+**The same summary for the whole fleet.** `uasw fleet-records --out fleet-records.html`, or
+`GET /fleet/records.html` and the same as JSON at `/fleet/records`, carries the same title and
+one row per aircraft with the three statuses and the span word that aircraft's own summary
+gives (each row is that summary, reduced; there is no second implementation), the counts of
+aircraft by point and status and by span, one journal head and verify result for the whole
+store, and whether every stored record reads. Every row and the head are read from one state
+of the store: a write landing while the summary is built is in the next one, never in half of
+this one. It needs no token and reuses the walk the store already holds, so nine aircraft cost
+no walk, and an outside commit costs the next build one walk, not one per aircraft. One entry
+the store cannot read leaves the maintenance point and the span not known on every row, as the
+board's liveness rule has it; a flight record that cannot be read leaves only its aircraft's
+operations and span not known; the counts count each such row as not known and nowhere else,
+and the summary is still written, with the record named. The live demo carries it as
+`records/fleet.html` beside the SYN-04 sample.
+
 ## What remains
 
 - No release to service is recorded, by design: the tool never releases anything, and a
@@ -346,6 +361,7 @@ uasw record time-in-service my-aircraft 42.5 --supersedes 9 --by "..." --reason 
     --statement "..."                             # a correction; it keeps entry 9's date
 uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
 uasw records my-aircraft --out records.html       # the draft records summary, journal head in it
+uasw fleet-records --out fleet-records.html        # the same for the whole fleet, one row each
 uasw verify                                        # the journal: intact or the first bad link
 uasw verify --head <head from an earlier run>      # unchanged since that head, or not
 ```

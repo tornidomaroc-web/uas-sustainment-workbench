@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- A draft records summary for the whole fleet, `uasw fleet-records --out fleet-records.html
+  [--json]`, `GET /fleet/records` and `/fleet/records.html`, and `records/fleet.html` in the
+  static demo (linked from the page beside the SYN-04 sample): the same title as the
+  per-aircraft summary, one row per aircraft carrying the three statuses and the span word
+  that aircraft's own summary gives (each row is `build_records` reduced, not a second
+  implementation), fleet-level counts by point and status and by span, one write journal head
+  and verify result for the whole store, "unchanged since head H" on a pass and the break
+  otherwise, and whether every stored record reads, with the first that does not named. Every
+  row and the integrity line come from one read of the store (`Store.snapshot`, one read
+  transaction under the write lock, which `Store.journal_state` now joins): a write landing
+  mid-build, through the store or from another connection, reaches no row and not the line
+  and is in the next build; a write through the store waits for the build and lands then. The
+  summary needs no token and reuses the kept journal result: nine aircraft, twenty requests
+  with no token, zero walks; one outside commit, one walk for the next build, not one per
+  aircraft. A stored entry the store cannot read leaves maintenance activities and the span
+  not known on every row (liveness is decided over the whole ledger, the board's rule), a
+  flight record that cannot be read leaves only its aircraft's operations and span not known,
+  and the counts count each such row as not known and in no other bucket; the summary is still
+  written, where the board answers 503, because that a record cannot be read is part of the
+  report. No response, record or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
+  stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, the per-aircraft
+  summary is byte for byte what it was; `fleet.json` gains `fleet_records` and the OpenAPI
+  document the two routes.
 - The store file is in SQLite's WAL mode, and `uasw verify` and `GET /journal/verify` walk the
   journal on a second connection inside one read transaction, so a write issued during the
   walk lands at once (1.9 ms into a 100,000-link walk where it waited 3.86 s) and a reader on

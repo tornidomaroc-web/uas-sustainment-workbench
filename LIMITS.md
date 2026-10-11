@@ -432,6 +432,26 @@ field-level tables. This file is about what that means for a maintenance tool.
   summary shows is exactly what `uasw verify` would compute at that moment, including the 3.9 s
   a 100,000-link store costs the one walk after an outside commit, which lands on the first
   reader after it.
+- **The fleet records summary is the per-aircraft summaries, read in one state, and nothing
+  more.** `uasw fleet-records` and `GET /fleet/records` build each row with `build_records` and
+  keep its statuses, span word and counts; a row has no reason or value its own summary does
+  not have. The rows and the one integrity line are read inside one read transaction on the
+  store's writing connection, under its write lock: under WAL that is a snapshot, so a commit
+  from another connection while the summary is built is not in it and is met by the next
+  build, and a write through the store waits for the build to end, then lands; measured in the
+  suite, a write issued mid-build waits and lands when the build releases it. That wait is the
+  cost of the consistency: a caller who needs no token can hold the write lock for the length
+  of one fleet build (nine aircraft, about 60 ms on the machine that wrote this; it grows
+  with the aircraft and their logs), which is the same work as asking for each aircraft's summary in
+  turn, now in one request, and no walk of the journal (twenty fleet requests with no token,
+  zero walks; one outside commit, one walk for the next build, not nine). At fleet level a
+  record the store cannot read follows the board's liveness rule through the rows: one entry
+  that cannot be read leaves maintenance activities and the span not known on every row,
+  because liveness is decided over the whole ledger, and a flight record that cannot be read
+  leaves only its aircraft's operations and span not known; the counts count such rows as not
+  known and in no other bucket; the first unreadable record is named once; and the summary is
+  written where `/aircraft` answers 503, because a record that cannot be read is part of what
+  the records show. A count of not-known rows is a count, never a finding.
 
 ## Limits of the assistant
 
