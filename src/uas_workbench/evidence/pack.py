@@ -8,6 +8,10 @@ A stored record the store cannot read (issue #43) does not stop the pack: a dama
 where a pack that names the damage matters. Nothing is computed without the record either:
 each value that depended on it is `{"unknown": <the record named>}`, every item it would
 have supported is "not evidenced" for that reason, and the label says so.
+
+Every read the pack makes, the projection included, is inside one `Store.snapshot()`: the
+entries its ledger hash is over, the flights and the due list are one state of the store,
+and a write landing while the pack is built is in the next one.
 """
 
 from __future__ import annotations
@@ -205,6 +209,21 @@ def build_pack(
     as_of: datetime,
     commit: str | None,
     generated_utc: datetime | None = None,
+) -> dict[str, Any]:
+    with store.snapshot():
+        return _build_pack(
+            store, aircraft_key, config, as_of=as_of, commit=commit, generated_utc=generated_utc
+        )
+
+
+def _build_pack(
+    store: Store,
+    aircraft_key: str,
+    config: FleetConfig,
+    *,
+    as_of: datetime,
+    commit: str | None,
+    generated_utc: datetime | None,
 ) -> dict[str, Any]:
     aircraft = store.get_aircraft(aircraft_key)
     if aircraft is None:

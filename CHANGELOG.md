@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- A draft records summary for the whole fleet, `uasw fleet-records --out fleet-records.html
+  [--json]`, `GET /fleet/records` and `/fleet/records.html`, and `records/fleet.html` in the
+  static demo (linked from the page beside the SYN-04 sample): the same title as the
+  per-aircraft summary, one row per aircraft carrying the three statuses and the span word
+  that aircraft's own summary gives (each row is `build_records` reduced, not a second
+  implementation), fleet-level counts by point and status and by span, one write journal head
+  and verify result for the whole store, "unchanged since head H" on a pass and the break
+  otherwise, and whether every stored record reads, with the first that does not named. A
+  stored entry the store cannot read leaves maintenance activities and the span not known on
+  every row (liveness is decided over the whole ledger, the board's rule), a flight record
+  that cannot be read leaves only its aircraft's operations and span not known, and the counts
+  count each such row as not known and in no other bucket; the summary is still written, where
+  the board answers 503, because that a record cannot be read is part of the report. One
+  state of the store per summary: every read the per-aircraft summary, the fleet summary and
+  the draft evidence pack for OSO #03 make, the projection and the journal result they show
+  included, runs inside one `Store.snapshot()`, a read transaction on the request thread's own
+  connection labelled with the state it reads and holding no write lock, so a write landing
+  mid-build lands at once and is in the next summary, never in half of this one (before, a
+  correction committed between the entries and the projection of one summary gave the entries
+  of the state before it with the superseded count and the journal length of the state after
+  it; `tests/test_snapshot.py`). The kept journal result, what `/health` holds and the
+  projection are each labelled with the state they describe and used only by a snapshot of
+  that state; a call still walks nothing, a write through the store still walks nothing, and
+  a commit from outside still costs the first snapshot after it one walk, now on the reading
+  thread, so no write waits for it. Twenty fleet requests with no token, zero walks; one
+  outside commit, one walk for the next build, not one per aircraft. No response, record,
+  pack or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
+  stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every other
+  clean-store response is byte for byte what it was with the clock masked; `fleet.json` gains
+  `fleet_records`, the page its link, the OpenAPI document the two routes and `/metrics` their
+  counters. Supersedes PR #59, whose summary took its snapshot on the writing connection under
+  the write lock.
 - Threads no longer read through one SQLite connection: a GET served beside another could
   answer 200 with the other query's rows, 404 for an aircraft that is in the store, 500, or 503
   naming a record that reads, because Python's `sqlite3` keeps one statement cache per

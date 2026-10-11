@@ -12,6 +12,10 @@ The verify result comes from `Store.journal_state()`, the last walk of the journ
 the store and moved on by its own writes, so a caller who needs no token to read this pack
 cannot make the service walk the whole journal on every request; `GET /journal/verify` and
 `uasw verify`, which walk it on demand, stay guarded as the writes are.
+
+Every read the summary makes, the projection and the verify result included, is inside one
+`Store.snapshot()`: one state of the store, which holds no write lock. A write landing while
+the summary is built is in the next one, never in half of this one.
 """
 
 from __future__ import annotations
@@ -272,6 +276,21 @@ def build_records(
     as_of: datetime,
     commit: str | None,
     generated_utc: datetime | None = None,
+) -> dict[str, Any]:
+    with store.snapshot():
+        return _build_records(
+            store, aircraft_key, config, as_of=as_of, commit=commit, generated_utc=generated_utc
+        )
+
+
+def _build_records(
+    store: Store,
+    aircraft_key: str,
+    config: FleetConfig,
+    *,
+    as_of: datetime,
+    commit: str | None,
+    generated_utc: datetime | None,
 ) -> dict[str, Any]:
     aircraft = store.get_aircraft(aircraft_key)
     if aircraft is None:
