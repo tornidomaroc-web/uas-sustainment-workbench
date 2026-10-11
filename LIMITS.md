@@ -313,8 +313,8 @@ field-level tables. This file is about what that means for a maintenance tool.
     directory the process cannot write to was not measured; SQLite needs to create the side
     files there to open a WAL-mode file at all.
 - **Threads never read through one connection; each read is one state of the file, and so
-  is each records summary and evidence pack, while the board's responses are not.** Every request thread read through the store's
-  one SQLite connection with nothing serialising the reads, and Python's `sqlite3` keeps one
+  is each records summary and evidence pack, while the board's responses are not.** Every
+  request thread read through the store's one SQLite connection with nothing serialising the reads, and Python's `sqlite3` keeps one
   statement cache per connection, so two threads running the same SQL stepped the same prepared
   statement and read each other's rows: a GET answered 200 with another query's rows, 404 for
   an aircraft that is in the store, 500, or 503 naming a record that reads (issue #60; v0.5.2
@@ -354,15 +354,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   state's answer is kept already. The store's own commit moves the three labels on with
   nothing computed when the kept answers described the state right before it, which the
   writing connection's `PRAGMA data_version` tells (it moves on another connection's commit
-  and never on the store's own; read before the write and after the new label, it says
-  whether any other commit landed in between), and drops them otherwise. So a snapshot never
+  and never on the store's own; read before the label the write starts from and again after
+  the new label, it says whether any other commit landed in between; read after that label
+  instead, a commit landing between the two reads was missed, and the kept answers were moved
+  on over it: a journal length one short, or "unchanged" and every record reading after an
+  edit that broke the store, `tests/test_snapshot.py` at each of those reads), and drops them
+  otherwise. So a snapshot never
   waits for a write and a write never waits for a snapshot: no read takes the write lock,
   and the one walk of the journal and the one read of the whole store that follow a commit
   from outside (1.3 s at 128,718 entries, above) run on the reading thread that meets it,
   where before they ran on the writing connection under the write lock and a write waited
-  for them. What a write does pay: three `PRAGMA data_version` reads around its transaction
-  (four when another connection committed since the store's last own write), two on the
-  labelling connection and one or two on the writing one, each a C call that lets the
+  for them. What a write does pay: three `PRAGMA data_version` reads around its transaction,
+  two on the labelling connection and one on the writing one (five, three and two, when
+  another connection committed since the store's last own write), each a C call that lets the
   interpreter's lock go, where a write made no such read before. Measured here, in a cloud
   container (Linux, Python 3.13, SQLite 3.45.1, 2026-10-11, medians; the version before in
   brackets): at the store, 30 writes 50 ms apart, with no reader 1.5 ms (1.4 ms); with 4
@@ -375,8 +379,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   reads nothing but the kept answer (1.60 s, where `/health` took the write lock). The wait is
   the interpreter's one lock shared with the readers' threads, not the store, and every C call
   a write makes is one more turn it waits for: a caller who needs no token can slow every write
-  by keeping the service's threads busy, on this version as on the one before, and the fleet
-  summary gives such a caller nine aircraft's work for one request; nothing in the service
+  by keeping the service's threads busy, on this version as on the one before. A summary
+  reads the whole ledger once per snapshot and folds it once per date it asks for, so the
+  fleet summary costs about a third of nine summaries asked for in turn (74 folds of 29 dates
+  for the seeded fleet became 29), and cheaper reads do not spare the writes of such a caller:
+  they loop faster. Measured on a Windows desktop (Python 3.12.10, 2026-10-11; 20 `POST
+  /entries` 100 ms apart, medians; before the summary read the ledger once, in brackets): 22 ms
+  alone; 794 ms with 8 readers looping over the fleet summary, which answered 504 requests
+  meanwhile (471 ms, 72 answered); 3.36 s with 32 (1.62 s); with 8 readers asking once a
+  second each, 25 ms (25 ms), 213 ms at the 90th percentile (341 ms). Nothing in the service
   limits a caller's rate, which is the reverse proxy's or the operator's to do. A
   `wal_checkpoint(TRUNCATE)`, which every `uasw` command and every store
   runs on close, moves other connections' `data_version` as a commit does, so a `uasw verify`
@@ -529,8 +540,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   from another connection while the summary is built is not in it and is met by the next
   build, and a write through the store issued meanwhile lands at once and is in the next build
   too; measured in the suite, a write issued into a build held open finishes while the build
-  is still held, and the build shows the state it began on. The summary costs the work of
-  asking for each aircraft's summary in turn, in one request, and no walk of the journal
+  is still held, and the build shows the state it began on. The summary costs one read of
+  the ledger and one fold per date inside its snapshot, where asking for each aircraft's
+  summary in turn reads and folds it per aircraft, and no walk of the journal
   (twenty fleet requests with no token, zero walks; one outside commit, one walk for the next
   build, not nine). At fleet level a record the store cannot read follows the board's liveness
   rule through the rows: one entry that cannot be read leaves maintenance activities and the

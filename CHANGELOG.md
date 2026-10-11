@@ -27,7 +27,8 @@
   that state; a call still walks nothing, a write through the store still walks nothing, and
   a commit from outside still costs the first snapshot after it one walk, now on the reading
   thread, so no write waits for it. Twenty fleet requests with no token, zero walks; one
-  outside commit, one walk for the next build, not one per aircraft. No response, record,
+  outside commit, one walk for the next build, not one per aircraft; and one build reads the
+  ledger once and folds it once per date, not once per aircraft. No response, record,
   pack or hash changes: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
   stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every other

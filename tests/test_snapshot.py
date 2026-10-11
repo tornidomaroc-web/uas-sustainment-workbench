@@ -87,18 +87,18 @@ def entry(subject: str, statement: str = "a record", at: datetime = AT_WRITE) ->
 def correction_of(store: Store, key: str) -> Entry:
     """A correction of the aircraft's last inspection entry, which nothing supersedes and which
     supersedes nothing: one more entry held, one more superseded."""
-    target = [e for e in store.entries(key) if e.kind == "inspection.done"][-1]
-    assert target.id is not None and target.supersedes is None
+    inspected = [e for e in store.entries(key) if e.kind == "inspection.done"][-1]
+    assert inspected.id is not None and inspected.supersedes is None
     return Entry(
         id=None,
         subject=key,
-        kind=target.kind,
-        occurred_utc=target.occurred_utc,
+        kind=inspected.kind,
+        occurred_utc=inspected.occurred_utc,
         recorded_utc=AT_WRITE,
         entered_by="A. Tester, maintenance",
         statement="the hours at the inspection, read again",
-        details={**target.details, "at_hours_s": float(target.details["at_hours_s"]) + 60.0},
-        supersedes=target.id,
+        details={**inspected.details, "at_hours_s": float(inspected.details["at_hours_s"]) + 60.0},
+        supersedes=inspected.id,
         reason="a typo in the hours",
         synthetic=False,
     )
@@ -144,7 +144,7 @@ class Lander:
             other.append_entry(e)
             other.close()
         else:
-            self.thread = threading.Thread(target=lambda: self.store.append_entry(e))
+            self.thread = threading.Thread(None, lambda: self.store.append_entry(e))
             self.thread.start()
 
     def done(self) -> None:
@@ -256,8 +256,8 @@ def test_a_write_issued_while_a_summary_is_built_lands_at_once_and_is_in_the_nex
 
     monkeypatch.setattr(store, "flights", held)
     results: list[dict[str, Any]] = []
-    building = threading.Thread(target=lambda: results.append(records(store)))
-    writing = threading.Thread(target=lambda: store.append_entry(entry(KEY, "lands at once")))
+    building = threading.Thread(None, lambda: results.append(records(store)))
+    writing = threading.Thread(None, lambda: store.append_entry(entry(KEY, "lands at once")))
     building.start()
     assert started.wait(WAIT_S)
     writing.start()
@@ -330,7 +330,7 @@ def test_an_own_write_landing_mid_snapshot_is_not_in_it_and_moves_the_kept_head_
     walks = count_walks(monkeypatch)
     with store.snapshot():
         store.entry_count()
-        writing = threading.Thread(target=lambda: store.append_entry(entry("SYN-02", "own")))
+        writing = threading.Thread(None, lambda: store.append_entry(entry("SYN-02", "own")))
         writing.start()
         writing.join(WAIT_S)
         assert not writing.is_alive(), "the write waited for the snapshot"
@@ -357,4 +357,126 @@ def test_a_write_from_the_store_and_one_from_outside_close_together_leave_the_ke
     assert sum(walks) == 1
     assert store.journal_state() == walked_afresh(db) and sum(walks) == 1
     other.close()
+    store.close()
+
+
+# ---- the label of an own write -----------------------------------------------------------------
+
+
+def break_a_flight(path: str) -> None:
+    """An edit made with sqlite3 that leaves a flight record unreadable and its link broken."""
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute("UPDATE flights SET record = 'not JSON' WHERE id = 1")
+    connection.close()
+
+
+def record_outside(path: str) -> None:
+    other = Store(path)
+    other.append_entry(entry("SYN-03", "outside, mid-write"))
+    other.close()
+
+
+@pytest.mark.parametrize(
+    ("outside", "breaks"), [(record_outside, False), (break_a_flight, True)], ids=["record", "edit"]
+)
+def test_an_outside_commit_at_any_point_of_an_own_write_never_leaves_the_kept_answers_on_it(
+    db: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outside: Callable[[str], None],
+    breaks: bool,
+) -> None:
+    """An own write reads the state's label and the writing connection's version before and
+    after its commit, to tell whether the kept answers described the state right before it.
+    A commit from outside landing just before or just after any one of those reads must leave
+    the kept journal result and `readable` equal to a fresh walk: never a length one short,
+    never "unchanged" and every record reading where an edit broke the store."""
+    import shutil
+
+    seeded = tmp_path / "seeded.sqlite"
+    shutil.copyfile(db, seeded)
+    at = 0
+    while True:
+        path = str(tmp_path / f"case{at}.sqlite")
+        shutil.copyfile(seeded, path)
+        if not own_write_meeting_an_outside_commit(path, at, outside, breaks, monkeypatch):
+            break
+        at += 1
+    assert at >= 6, f"an own write made {at // 2} label and version reads"
+
+
+def own_write_meeting_an_outside_commit(
+    path: str,
+    at: int,
+    outside: Callable[[str], None],
+    breaks: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> bool:
+    """One own write, with `outside` committed just before (`at` even) or just after (odd) its
+    read number `at // 2` of a label or a version; False when the write made fewer reads."""
+    import uas_workbench.service.store as store_module
+
+    store = Store(path)
+    record_outside(path)  # the label moved since the store's last own commit
+    store.journal_state()
+    assert store.readable() is None
+    reads = [0]
+    data_version, label = store_module._data_version, store._label
+
+    def around(read: Callable[[], Any]) -> Any:
+        reads[0] += 1
+        if at == 2 * (reads[0] - 1):
+            outside(path)
+        value = read()
+        if at == 2 * (reads[0] - 1) + 1:
+            outside(path)
+        return value
+
+    monkeypatch.setattr(store, "_label", lambda: around(label))
+    monkeypatch.setattr(store_module, "_data_version", lambda c: around(lambda: data_version(c)))
+    store.append_entry(entry("SYN-02", "own"))
+    monkeypatch.undo()
+    reached = at < 2 * reads[0]
+    if reached:
+        assert store.journal_state() == walked_afresh(path), f"outside commit at {at}"
+        assert (store.readable() is not None) is breaks, f"outside commit at {at}"
+    store.close()
+    return reached
+
+
+# ---- dated projections ----------------------------------------------------------------------
+
+
+def test_a_dated_projection_is_folded_once_per_snapshot_and_never_outlives_it(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fleet summary asks every aircraft's summary for the projection at the computation
+    date, and the grounded flights at each flight's own time; inside one snapshot, one state,
+    each date is one fold, the same one a fresh fold gives. The next snapshot folds its own
+    state again."""
+    import uas_workbench.service.store as store_module
+    from uas_workbench.evidence import build_fleet_records
+    from uas_workbench.ledger.project import project
+
+    store = Store(db)
+    store.journal_state()
+    store.readable()
+    folds: list[datetime | None] = []
+
+    def counted(entries: Any, as_of: datetime | None = None) -> Any:
+        folds.append(as_of)
+        return project(entries, as_of)
+
+    monkeypatch.setattr(store_module, "project", counted)
+    store.projection()  # the whole-ledger one, kept
+    folds.clear()
+    build_fleet_records(store, CONFIG, as_of=AS_OF, commit="abc1234", generated_utc=NOW)
+    assert AS_OF in folds
+    assert len(folds) == len(set(folds)), f"{len(folds)} folds of {len(set(folds))} dates"
+    with store.snapshot():
+        assert store.projection(AS_OF) == project(store.entries(), AS_OF)
+        live = len(store.projection(AS_OF).live)
+    store.append_entry(entry(KEY, "after the snapshot"))
+    assert len(store.projection(AS_OF).live) == live + 1
     store.close()

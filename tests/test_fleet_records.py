@@ -124,18 +124,18 @@ def entry(subject: str, statement: str = "a record", at: datetime = AT_WRITE) ->
 def correction_of(store: Store, key: str) -> Entry:
     """A correction of the aircraft's last inspection entry, which nothing supersedes and which
     supersedes nothing: one more entry held, one more superseded."""
-    target = [e for e in store.entries(key) if e.kind == "inspection.done"][-1]
-    assert target.id is not None and target.supersedes is None
+    inspected = [e for e in store.entries(key) if e.kind == "inspection.done"][-1]
+    assert inspected.id is not None and inspected.supersedes is None
     return Entry(
         id=None,
         subject=key,
-        kind=target.kind,
-        occurred_utc=target.occurred_utc,
+        kind=inspected.kind,
+        occurred_utc=inspected.occurred_utc,
         recorded_utc=AT_WRITE,
         entered_by="A. Tester, maintenance",
         statement="the hours at the inspection, read again",
-        details={**target.details, "at_hours_s": float(target.details["at_hours_s"]) + 60.0},
-        supersedes=target.id,
+        details={**inspected.details, "at_hours_s": float(inspected.details["at_hours_s"]) + 60.0},
+        supersedes=inspected.id,
         reason="a typo in the hours",
         synthetic=False,
     )
@@ -493,7 +493,7 @@ def test_a_write_landing_mid_build_reaches_no_row_and_not_the_integrity_line(
     assert before["integrity"]["head"] == SEEDED_HEAD
     fired: list[bool] = []
     through_store = threading.Thread(
-        target=lambda: store.append_entry(entry("SYN-02", "through the store, mid-build"))
+        None, lambda: store.append_entry(entry("SYN-02", "through the store, mid-build"))
     )
     build = build_records  # the one `fleet_records` calls
 
@@ -540,8 +540,8 @@ def test_a_write_issued_during_a_build_does_not_wait_for_it_and_is_in_the_next_o
 
     monkeypatch.setattr(store, "aircraft", held)
     results: list[dict[str, Any]] = []
-    building = threading.Thread(target=lambda: results.append(fleet(store)))
-    writing = threading.Thread(target=lambda: store.append_entry(entry("SYN-03", "lands")))
+    building = threading.Thread(None, lambda: results.append(fleet(store)))
+    writing = threading.Thread(None, lambda: store.append_entry(entry("SYN-03", "lands")))
     building.start()
     assert started.wait(WAIT_S)
     writing.start()

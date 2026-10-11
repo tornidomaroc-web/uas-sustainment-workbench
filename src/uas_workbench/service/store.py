@@ -65,7 +65,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -132,7 +132,7 @@ class _Kept[T]:
         self.lock = threading.Lock()
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Snapshot:
     label: int
     # The kept answers as they were when the snapshot began, so that an own commit landing
@@ -140,6 +140,11 @@ class _Snapshot:
     journal: tuple[int, Verification] | None
     readable: tuple[int, UnreadableRecord | None] | None
     projection: tuple[int, Projection] | None
+    # What this snapshot read once and hands out again, one state: every entry, as read, and
+    # the dated projections folded from them, by date. A summary of nine aircraft reads the
+    # ledger once and folds each date once, where it read and folded per aircraft and per date.
+    ledger: list[Entry] | None = None
+    dated: dict[datetime, Projection] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,7 @@ class Store:
                     yield
                 finally:
                     self._local.depth = 0
+                    self._local.snapshot = None
             return
         connection = self._reader()
         label = self._begin(connection)
@@ -276,6 +282,7 @@ class Store:
             yield
         finally:
             self._local.depth = 0
+            self._local.snapshot = None
             # Nothing was written; this ends the snapshot. A connection closed meanwhile (the
             # store was closed under a running read) has nothing left to end.
             with contextlib.suppress(sqlite3.ProgrammingError):
@@ -347,7 +354,13 @@ class Store:
         label = self._label()
         if self._since is not None and self._since[1] == label:
             return _BeforeCommit(self._since[0], label)
-        return _BeforeCommit(_data_version(self._db), label)
+        # The writing connection's version first, the label after it: a commit from outside
+        # landing between the two is then in the label and missing from the version, so the
+        # version read after the write differs and the kept answers are dropped. Read the
+        # other way round, it was in the version and not in the label, and the kept answers
+        # of the state before it were moved on over it.
+        outside = _data_version(self._db)
+        return _BeforeCommit(outside, self._label())
 
     def _after_commit(self, before: _BeforeCommit, head: str | None, entries: bool) -> None:
         """Under the write lock, after an own commit went through: move the kept answers on
@@ -531,9 +544,15 @@ class Store:
         return int(row[0])
 
     def entries(self, subject: str | None = None) -> Sequence[Entry]:
-        """Every entry, superseded ones included, in the order they were entered."""
+        """Every entry, superseded ones included, in the order they were entered. The whole
+        ledger is read once per snapshot, and each call gets its own list of it."""
         with self._read() as db:
-            return self._entries(db, subject)
+            if subject is not None:
+                return self._entries(db, subject)
+            snapshot: _Snapshot = self._local.snapshot
+            if snapshot.ledger is None:
+                snapshot.ledger = self._entries(db)
+            return list(snapshot.ledger)
 
     def _entries(self, db: sqlite3.Connection, subject: str | None = None) -> list[Entry]:
         if subject is None:
@@ -619,11 +638,16 @@ class Store:
 
         The whole-ledger projection is kept, labelled with the state its entries were read
         in, and computed again once per state an entry was written in or a commit from
-        outside made; a dated one is folded on request from the entries of the calling
-        snapshot.
+        outside made; a dated one is folded from the entries of the calling snapshot once per
+        date that snapshot asks for, and kept no longer than the snapshot.
         """
         if as_of is not None:
-            return project(self.entries(), as_of)
+            with self._read():
+                dated = self._local.snapshot.dated
+                found: Projection | None = dated.get(as_of)
+                if found is None:
+                    found = dated[as_of] = project(self.entries(), as_of)
+                return found
         with self._read() as db:
             snapshot: _Snapshot = self._local.snapshot
             return self._kept(
