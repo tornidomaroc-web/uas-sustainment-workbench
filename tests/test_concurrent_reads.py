@@ -8,10 +8,13 @@ reader; 21 wrong and 41 errors with two; 143 and 205 with four; 114 and 221 with
 
 The check is through a real server, `uasw serve` in a process of its own on a loopback port,
 never the single-threaded `TestClient`: N reader threads loop over several routes for every
-aircraft but one, each body is compared with the single-threaded answer for the same URL, and
-a writer posts entries about the one aircraft they never read meanwhile, so no answer they
-compare changes. Required: zero differing 200s, zero 5xx, zero failed requests, and every
-write stored. No assertion names an OS: no error text, no path separator.
+aircraft but one, each on one kept-alive connection of its own, each body is compared with the
+single-threaded answer for the same URL, and a writer posts entries about the one aircraft they
+never read meanwhile, on one connection of its own, so no answer they compare changes.
+Required: zero differing 200s, zero 5xx, zero failed requests, every write stored, and no more
+sockets opened than readers + 3 (issue #62: one socket per request ran a machine out of local
+ports mid-suite, with nothing wrong in the service). No assertion names an OS: no error text,
+no path separator.
 """
 
 from __future__ import annotations
@@ -65,6 +68,7 @@ class Tally:
     differing: int = 0  # 200 with a body that is not the single-threaded answer
     failed: int = 0  # any status that is not 200
     errors: int = 0  # the request did not complete at all
+    reopened: int = 0  # the server had closed the idle connection; retried once on a new one
     statuses: dict[int, int] = field(default_factory=dict)
     examples: list[str] = field(default_factory=list)
 
@@ -72,7 +76,7 @@ class Tally:
         return (
             f"{readers} readers: {self.identical} identical, {self.differing} differing 200s, "
             f"{self.failed} non-200 {dict(sorted(self.statuses.items()))}, "
-            f"{self.errors} errors"
+            f"{self.errors} errors, {self.reopened} reopened"
             + ("; e.g. " + "; ".join(self.examples[:3]) if self.examples else "")
         )
 
@@ -113,10 +117,13 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, int
     try:
         deadline = time.monotonic() + START_BUDGET_S
         while server.poll() is None:
+            health = Connection(host, port, timeout=TIMEOUT_S)
             try:
-                status, _ = get((host, port), "/health")
+                status, _ = get(health, "/health")
             except OSError:
                 status = 0
+            finally:
+                health.close()
             if status == 200:
                 break
             assert time.monotonic() < deadline, "the service did not start"
@@ -128,23 +135,19 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, int
         server.wait(30)
 
 
-def get(service: tuple[str, int], url: str) -> tuple[int, bytes]:
-    """One request on a connection of its own. A kept-alive connection would be the natural
-    thing, but on the server's keep-alive path one small write waits for the delayed ACK of
-    the one before it (about 40 ms on Linux, 200 ms on Windows), which would make a request
-    wait on the network rather than on the store, and the test much slower."""
-    conn = Connection(*service, timeout=TIMEOUT_S)
-    try:
-        conn.request("GET", url, headers={"Connection": "close"})
-        response = conn.getresponse()
-        return response.status, response.read()
-    finally:
-        conn.close()
+def get(conn: http.client.HTTPConnection, url: str) -> tuple[int, bytes]:
+    """One request on a kept-alive connection; the connection opens its socket on the first
+    request and keeps it for the next. Measured here against `uasw serve` on loopback, 200
+    GETs took 0.70 s kept alive and 0.85 s on a connection per request, so nothing on the
+    keep-alive path waits on the network."""
+    conn.request("GET", url)
+    response = conn.getresponse()
+    return response.status, response.read()
 
 
-def urls_to_read(service: tuple[str, int]) -> list[str]:
+def urls_to_read(conn: http.client.HTTPConnection) -> list[str]:
     """Several routes for every aircraft the writer never touches."""
-    status, body = get(service, "/aircraft")
+    status, body = get(conn, "/aircraft")
     assert status == 200
     keys = [a["key"] for a in json.loads(body) if a["key"] != WRITTEN]
     assert len(keys) >= 4
@@ -161,30 +164,42 @@ def urls_to_read(service: tuple[str, int]) -> list[str]:
     ]
 
 
-def single_threaded(service: tuple[str, int], urls: list[str]) -> dict[str, bytes]:
+def single_threaded(conn: http.client.HTTPConnection, urls: list[str]) -> dict[str, bytes]:
     """The answer for every URL with one reader and nothing else going on: twice, so the
     comparison below is known to be against a deterministic answer."""
     first = {}
     for url in urls:
-        status, body = get(service, url)
+        status, body = get(conn, url)
         assert status == 200, (url, status, body[:200])
         first[url] = body
     for url in urls:
-        assert get(service, url) == (200, first[url]), f"{url} is not deterministic alone"
+        assert get(conn, url) == (200, first[url]), f"{url} is not deterministic alone"
     return first
 
 
 def read(
     service: tuple[str, int], urls: list[str], expected: dict[str, bytes], offset: int, out: Tally
 ) -> None:
-    """One reader: REQUESTS_PER_READER requests round-robin over the URLs."""
+    """One reader: REQUESTS_PER_READER requests round-robin over the URLs, on one connection
+    of its own. A server closes a kept-alive connection it finds idle (uvicorn after 5 s),
+    which a client learns of only when its next request gets no response at all; that one
+    request is then made again on a new connection, once, as every client library does. Any
+    other failure, a response cut short included, is an error, and closes the connection so
+    the next request opens a socket again and is counted."""
+    conn = Connection(*service, timeout=TIMEOUT_S)
     for n in range(REQUESTS_PER_READER):
         url = urls[(offset + n) % len(urls)]
         try:
-            status, body = get(service, url)
+            try:
+                status, body = get(conn, url)
+            except http.client.RemoteDisconnected:
+                conn.close()
+                out.reopened += 1
+                status, body = get(conn, url)
         except (OSError, http.client.HTTPException) as exc:
             out.errors += 1
             out.examples.append(f"{url}: {type(exc).__name__}: {exc}")
+            conn.close()
             continue
         if status != 200:
             out.failed += 1
@@ -195,10 +210,13 @@ def read(
         else:
             out.differing += 1
             out.examples.append(f"{url}: 200 with {body[:120]!r}")
+    conn.close()
 
 
 def write(service: tuple[str, int], stop: threading.Event, statuses: list[int]) -> None:
-    """The writer: entries about WRITTEN, one after another, until the readers are done."""
+    """The writer: entries about WRITTEN, one after another on one connection, until the
+    readers are done."""
+    conn = Connection(*service, timeout=TIMEOUT_S)
     n = 0
     while not stop.is_set():
         n += 1
@@ -210,22 +228,21 @@ def write(service: tuple[str, int], stop: threading.Event, statuses: list[int]) 
             "statement": f"written while {n} reads were in flight",
             "details": {"state": "deferred"},
         }
-        conn = Connection(*service, timeout=TIMEOUT_S)
         try:
             conn.request(
                 "POST",
                 "/entries",
                 body=json.dumps(entry),
-                headers={"Content-Type": "application/json", "Connection": "close"},
+                headers={"Content-Type": "application/json"},
             )
             response = conn.getresponse()
             response.read()
             statuses.append(response.status)
         except (OSError, http.client.HTTPException):
             statuses.append(0)  # the write did not complete at all
-        finally:
             conn.close()
         stop.wait(WRITE_EVERY_S)
+    conn.close()
 
 
 @pytest.mark.parametrize("readers", [2, 4, 8])
@@ -233,8 +250,10 @@ def test_concurrent_reads_answer_each_with_their_own_rows(
     service: tuple[str, int], readers: int
 ) -> None:
     opened_before = Connection.opened
-    urls = urls_to_read(service)
-    expected = single_threaded(service, urls)
+    own = Connection(*service, timeout=TIMEOUT_S)
+    urls = urls_to_read(own)
+    expected = single_threaded(own, urls)
+    own.close()  # idle while the readers run, so the server would close it; opened again below
     tallies = [Tally() for _ in range(readers)]
     threads = [
         threading.Thread(target=read, args=(service, urls, expected, i * 7, tallies[i]))
@@ -256,6 +275,7 @@ def test_concurrent_reads_answer_each_with_their_own_rows(
         total.differing += tally.differing
         total.failed += tally.failed
         total.errors += tally.errors
+        total.reopened += tally.reopened
         for status, count in tally.statuses.items():
             total.statuses[status] = total.statuses.get(status, 0) + count
         total.examples.extend(tally.examples)
@@ -266,14 +286,19 @@ def test_concurrent_reads_answer_each_with_their_own_rows(
     counts = {status: written.count(status) for status in sorted(set(written))}
     assert written and set(written) == {201}, f"the writer's statuses (0: not completed): {counts}"
     print(line + f"; {len(written)} writes")
-    # The test's own footprint: one socket per reader, one for the writer and one for the
-    # requests made here, however many requests they make. One socket per request ran a
-    # Windows machine out of local ports mid-suite (issue #62) with nothing wrong in the
-    # service; a socket that stays open is also what a browser or a client library does.
+    # The test's own footprint: one socket per reader, one for the writer, two for the
+    # requests made here (before the readers and after them) and one per request made again
+    # after the server closed an idle connection, at most one per reader, however many
+    # requests they make. One socket per request ran a machine out of local ports mid-suite
+    # (issue #62) with nothing wrong in the service.
     opened = Connection.opened - opened_before
-    assert opened <= readers + 2, f"{opened} sockets opened for {readers} readers and a writer"
+    assert total.reopened <= readers, line
+    assert opened <= readers + 3 + total.reopened, (
+        f"{opened} sockets opened for {readers} readers and a writer; " + line
+    )
     # The writes landed: every one of them is in the store, with the rest of the fleet as read.
-    status, body = get(service, f"/entries?subject={WRITTEN}")
+    status, body = get(own, f"/entries?subject={WRITTEN}")
+    own.close()
     assert status == 200
     assert len([e for e in json.loads(body) if "reads were in flight" in e["statement"]]) >= len(
         written

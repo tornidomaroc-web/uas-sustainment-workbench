@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The concurrent-reads test opens one kept-alive connection per reader and one for its writer
+  instead of a socket per request (1,696 for eight readers), counts the sockets it opens and
+  fails over readers + 3, so a suite run can no longer run out of local ports on a machine that
+  keeps a closed port reserved for a while; the live-service fixtures wait for the service on a
+  wall-clock deadline of 120 s instead of a count of polls (issue #62). Test code only: no
+  response, record, pack or hash changes.
 - A draft records summary for the whole fleet, `uasw fleet-records --out fleet-records.html
   [--json]`, `GET /fleet/records` and `/fleet/records.html`, and `records/fleet.html` in the
   static demo (linked from the page beside the SYN-04 sample): the same title as the

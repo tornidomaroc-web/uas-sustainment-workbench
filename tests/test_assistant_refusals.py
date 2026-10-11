@@ -24,6 +24,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from io import BytesIO
@@ -45,6 +46,7 @@ from uas_workbench.service.store import Store
 FIXTURES = Path(__file__).parent / "fixtures"
 AS_OF = datetime(2026, 10, 1, tzinfo=UTC)
 AS_OF_TEXT = "2026-10-01T00:00:00Z"
+START_BUDGET_S = 120.0
 # A model that lists the fleet, then would answer with a number: the second turn must never
 # be reached when the first call is refused.
 LISTS_THEN_ANSWERS = [
@@ -79,9 +81,11 @@ def _serve(db: str) -> Iterator[str]:
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
-    for _ in range(200):
-        if server.started:
-            break
+    # A wall-clock budget, not a count of joins: starting the app on a seeded store refreshes
+    # the gauges, checks every record reads and walks the journal first, and a loaded machine
+    # takes its time over that (issue #62).
+    deadline = time.monotonic() + START_BUDGET_S
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
         thread.join(0.05)
     assert server.started, "the service did not start"
     try:
