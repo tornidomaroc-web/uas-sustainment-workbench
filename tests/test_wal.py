@@ -335,7 +335,7 @@ def test_the_kept_walk_is_one_state_when_another_connection_commits_halfway(
     before that write, and the next call walks again and has the write."""
     store = Store(db)
     before = walked_afresh(db)
-    store._journal = None  # the next call walks
+    store._journal.value = None  # the next call walks
     original = getattr(journal, hook)
     fired: list[bool] = []
 
