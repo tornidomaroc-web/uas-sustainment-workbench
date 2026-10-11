@@ -21,6 +21,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +116,7 @@ def entry(subject: str, at: datetime, statement: str = "a record") -> Entry:
         recorded_utc=at,
         entered_by="A. Tester, maintenance",
         statement=statement,
-        details={"state": "deferred"},
+        details={"state": "deferred", "work_id": "WO-1"},
         supersedes=None,
         reason=None,
         synthetic=False,
@@ -154,8 +155,8 @@ def test_the_title_is_exactly_the_draft_wording(store: Store) -> None:
     assert "does not certify airworthiness or return to service" in statement
     assert "the authority decides" in statement
     html = render_records_html(p)
-    body = re.sub(r"<[^>]+>", " ", html.split("<body", 1)[1])
-    assert body.strip().startswith(("Synthetic data", RECORDS_TITLE))
+    body = unescape(re.sub(r"<[^>]+>", " ", html.split("<body>", 1)[1]))
+    assert body.strip().startswith("Synthetic data")
     assert RECORDS_TITLE in body[:600] and "SYN-04" in body[:900]
 
 
@@ -348,10 +349,11 @@ def test_a_real_aircraft_whose_logs_go_back_8_years_is_covered_and_one_of_this_y
         (datetime(2023, 10, 1, 0, 0, 1, tzinfo=UTC), AS_OF, "not yet 3 years"),
         # One day over: covered.
         (datetime(2023, 9, 30, tzinfo=UTC), AS_OF, "covered"),
-        # A record on a leap day; 3 years later there is no 29 February, so the threshold is
-        # 28 February 2027: on 28 February 2027 the span is covered, and on 27 it is not.
-        (datetime(2024, 2, 29, tzinfo=UTC), datetime(2027, 2, 28, tzinfo=UTC), "covered"),
-        (datetime(2024, 2, 29, tzinfo=UTC), datetime(2027, 2, 27, tzinfo=UTC), "not yet 3 years"),
+        # A record on a leap day: 3 years later there is no 29 February. The rule counts back
+        # from the computation date, so on 28 February 2027 (3 years before it: 28 February
+        # 2024, the day before the record) the span is not yet 3 years, and on 1 March it is.
+        (datetime(2024, 2, 29, tzinfo=UTC), datetime(2027, 2, 28, tzinfo=UTC), "not yet 3 years"),
+        (datetime(2024, 2, 29, tzinfo=UTC), datetime(2027, 3, 1, tzinfo=UTC), "covered"),
         # as_of on a leap day: 3 years back is 28 February, the last day that exists.
         (datetime(2025, 2, 28, tzinfo=UTC), datetime(2028, 2, 29, tzinfo=UTC), "covered"),
         (datetime(2025, 3, 1, tzinfo=UTC), datetime(2028, 2, 29, tzinfo=UTC), "not yet 3 years"),
@@ -457,7 +459,7 @@ def test_an_unauthenticated_caller_never_makes_the_service_walk_the_journal(
         assert client.get("/aircraft/SYN-04/records.html").status_code == 200
     assert heads == {SEEDED_HEAD}
     assert sum(walks) == 0, f"{sum(walks)} walks for 20 unauthenticated requests"
-    assert client.get("/journal/verify").status_code == 403  # the guarded route stays guarded
+    assert client.get("/journal/verify").status_code == 401  # the guarded route stays guarded
     store.close()
 
 
@@ -533,7 +535,7 @@ def test_the_routes_answer_json_and_html_and_404_an_unknown_aircraft(store: Stor
     assert body["integrity"]["head"] == SEEDED_HEAD
     page = client.get("/aircraft/SYN-04/records.html", params={"as_of": AS_OF_TEXT})
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
-    assert page.text.startswith("<!doctype html>") and RECORDS_TITLE in page.text
+    assert page.text.startswith("<!doctype html>") and RECORDS_TITLE in unescape(page.text)
     assert client.get("/aircraft/no-such/records").status_code == 404
     assert client.get("/aircraft/no-such/records.html").status_code == 404
     paths = client.get("/openapi.json").json()["paths"]

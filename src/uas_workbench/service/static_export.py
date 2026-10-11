@@ -102,6 +102,29 @@ def export_static(store: Store, out_dir: Path, config: FleetConfig | None = None
         "html": f"evidence/{sample_key}.html",
         "json": f"evidence/{sample_key}.json",
     }
+    # And one sample draft records summary, for the same synthetic aircraft.
+    from uas_workbench.evidence import build_records, render_records_html
+
+    summary = build_records(
+        store,
+        sample_key,
+        cfg,
+        as_of=now,
+        commit=os.environ.get("UASW_COMMIT") or None,
+        generated_utc=now,
+    )
+    (out_dir / "records").mkdir(exist_ok=True)
+    (out_dir / "records" / f"{sample_key}.html").write_text(
+        render_records_html(summary), encoding="utf-8"
+    )
+    (out_dir / "records" / f"{sample_key}.json").write_text(
+        json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8"
+    )
+    data["sample_records"] = {
+        "aircraft_key": sample_key,
+        "html": f"records/{sample_key}.html",
+        "json": f"records/{sample_key}.json",
+    }
     (out_dir / "fleet.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
     runs = {
         "notice": ASSISTANT_NOTICE,

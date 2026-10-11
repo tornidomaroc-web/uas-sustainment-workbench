@@ -756,6 +756,7 @@ def create_app(
     )
     refresh_gauges(store, cfg)
     store.readable()  # read the whole store once now, so /health never does on a call
+    store.journal_state()  # walk the journal once now, so the records summary never does on a call
 
     async def unreadable(request: Request, exc: Exception) -> JSONResponse:
         """A read that depends on a stored record the store cannot read: 503 with the record
@@ -908,6 +909,35 @@ def create_app(
         from uas_workbench.evidence import render_html
 
         return HTMLResponse(render_html(_pack(key, as_of)))
+
+    def _records(key: str, as_of: datetime | None) -> dict[str, Any]:
+        from uas_workbench.evidence import build_records
+
+        aircraft = _aircraft_or_404(key)
+        return build_records(
+            store,
+            aircraft.key,
+            cfg,
+            as_of=_utc(as_of) or datetime.now(UTC),
+            commit=os.environ.get("UASW_COMMIT") or None,
+        )
+
+    @app.get("/aircraft/{key}/records", tags=["evidence"])
+    def records_json(key: str, as_of: AsOf = None) -> dict[str, Any]:
+        """Draft records summary for the operator's own review, as data: what the workbench
+        holds against the record-keeping points of UAS.SPEC.050(1)(g) of Regulation (EU)
+        2019/947, with the write journal's head and verify result. It states no record as
+        true, decides nothing and certifies nothing. The verify result is the one the store
+        already holds (walked at startup, moved on by the store's own writes, walked again
+        only after another connection changed the file), so this needs no token."""
+        return _records(key, as_of)
+
+    @app.get("/aircraft/{key}/records.html", tags=["evidence"], response_class=HTMLResponse)
+    def records_html(key: str, as_of: AsOf = None) -> HTMLResponse:
+        """The same summary as one self-contained HTML document, printable to PDF."""
+        from uas_workbench.evidence import render_records_html
+
+        return HTMLResponse(render_records_html(_records(key, as_of)))
 
     @app.post(
         "/entries",

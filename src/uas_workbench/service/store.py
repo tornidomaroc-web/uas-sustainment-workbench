@@ -92,6 +92,10 @@ class Store:
         self._readable_lock = threading.Lock()
         self._unreadable: UnreadableRecord | None = None
         self._readable_version = -1
+        # The last walk of the journal (verify_journal with no head), kept for the reads that
+        # need no token and so must not walk the whole journal on every call; see journal_state.
+        self._journal: Verification | None = None
+        self._journal_version = -1
 
     def close(self) -> None:
         self._db.close()
@@ -162,7 +166,8 @@ class Store:
                     ),
                 )
                 assert cursor.lastrowid is not None
-                journal.append_link(self._db, "flight", int(cursor.lastrowid))
+                head = journal.append_link(self._db, "flight", int(cursor.lastrowid))
+                self._journal_after_write(head)
         except sqlite3.IntegrityError as exc:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
 
@@ -190,7 +195,8 @@ class Store:
                 "UPDATE entries SET record = ? WHERE id = ?",
                 (json.dumps(entry_to_json(stored), ensure_ascii=False), stored.id),
             )
-            journal.append_link(self._db, "entry", int(stored.id or 0))
+            head = journal.append_link(self._db, "entry", int(stored.id or 0))
+            self._journal_after_write(head)
             self._projection = None
         return stored
 
@@ -228,6 +234,47 @@ class Store:
         chain fails. Holds the write lock, so the result describes one state of the file."""
         with self._lock:
             return journal.verify(self._db, head)
+
+    def journal_state(self) -> Verification:
+        """The result of the last walk of the journal, as `verify_journal()` with no head
+        computes it, for the reads anyone may make (the records summary of an aircraft).
+
+        The journal is walked once, and again only after another connection has committed to
+        the file (SQLite's data_version moves), as `readable` does for /health. A write made
+        through this store appends a link the store computed itself: when the chain verified
+        before it, the chain is intact with one more link, so the head and the length move
+        with no row read again; when it did not verify, the next call walks it again. So
+        asking again, which anyone who can reach the service may do, never walks the journal:
+        only a write, which needs the token, or a commit from outside the store makes the next
+        call walk it, and once.
+        """
+        with self._lock:
+            version = int(self._db.execute("PRAGMA data_version").fetchone()[0])
+            if self._journal is None or version != self._journal_version:
+                self._journal = journal.verify(self._db)
+                self._journal_version = version
+            return self._journal
+
+    def _journal_after_write(self, head: str) -> None:
+        """Called under the write lock, after this store linked one row: the kept result is
+        moved on by that link when it was intact, and dropped otherwise."""
+        kept = self._journal
+        if kept is None:
+            return
+        if not kept.ok:
+            self._journal = None
+            return
+        length = kept.length + 1
+        self._journal = Verification(
+            ok=True,
+            head=head,
+            length=length,
+            broken=None,
+            given=None,
+            given_at=None,
+            migration=kept.migration,
+            line=journal.line(True, head, length, None, None, None),
+        )
 
     def readable(self) -> UnreadableRecord | None:
         """The first stored record that cannot be read, or None when every entry reads and

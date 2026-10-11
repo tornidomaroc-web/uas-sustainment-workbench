@@ -246,6 +246,23 @@ the schedule and the life-limited part history, and nothing about instructions, 
 authorisation, competence, training, release to service, a procedure manual or third-party
 validation; the pack says so item by item.
 
+**A draft records summary against UAS.SPEC.050(1)(g).** `uasw records SYN-04 --out records.html`,
+or `GET /aircraft/{key}/records.html` and the same as JSON at `/aircraft/{key}/records`, sets
+what the workbench holds for one aircraft against the three record-keeping points of
+UAS.SPEC.050(1)(g) of Regulation (EU) 2019/947 (as amended by (EU) 2020/639; paraphrased and
+cited, never quoted): training records, maintenance activities, and operations with any unusual
+occurrences, each marked supported by these records, partly, not evidenced by this workbench or
+not known; the span of the records held against the point's 3-year minimum, as covered, not yet
+3 years or not known; and the write journal's head with its verify result, "unchanged since
+head H" when the chain verifies and the first bad link otherwise. Its title says what it is, a
+draft for the operator's own review: it states no record as true, decides nothing about any
+obligation, certifies nothing, and leaves the decision to the authority. It needs no token, and
+so it never walks the journal on a call: it shows the walk the store already holds, made at
+startup and again only after another connection changed the file, and moved on by the store's
+own writes; `GET /journal/verify` stays guarded and walks on demand. One self-contained HTML
+document, as the evidence pack is, and one sample for SYN-04 on the live demo. A record the
+store cannot read leaves what depended on it not known, with the record named.
+
 ## What remains
 
 - No release to service is recorded, by design: the tool never releases anything, and a
@@ -320,6 +337,7 @@ uasw record history my-aircraft --all              # superseded entries too, wit
 uasw record time-in-service my-aircraft 42.5 --supersedes 9 --by "..." --reason "misread" \
     --statement "..."                             # a correction; it keeps entry 9's date
 uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
+uasw records my-aircraft --out records.html       # the draft records summary, journal head in it
 uasw verify                                        # the journal: intact or the first bad link
 uasw verify --head <head from an earlier run>      # unchanged since that head, or not
 ```

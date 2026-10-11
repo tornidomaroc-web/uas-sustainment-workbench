@@ -373,6 +373,30 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **The sources are paraphrased.** The JARUS texts may be used but not copied without
   permission, so each item is a paraphrase in this project's words with document, edition
   and page; a reader checks the wording against the cited page.
+- **The records summary lists; it does not judge.** `uasw records` sets what the workbench
+  holds against the three record-keeping points of UAS.SPEC.050(1)(g) of Regulation (EU)
+  2019/947 and says, for each, only whether records that bear on it are held: training records
+  never (none are held), maintenance activities when the ledger holds an entry about the
+  aircraft, operations partly when a log is held (a log is information on an operation and
+  what the autopilot reported; no occurrence report written by a person is held, and the data
+  a declaration or authorisation requires is not). Whether an obligation is satisfied is not
+  said. The span is from the earliest dated record held to the computation date, against 3
+  calendar years (a computation date of 29 February counts back to 28 February): it says how
+  far back the records reach, never whether a record was ever removed, and an aircraft with no
+  dated record has a span that is not known. The regulatory wording is paraphrased; the public
+  text was read as reproduced by the UK retained version and the UK CAA regulatory library,
+  which carry the EU wording of the point, since EUR-Lex was not reachable from the session
+  that wrote it; a reader checks the consolidated text.
+- **The journal head in the records summary is the store's last walk, not a walk per call.**
+  The summary needs no token, so a caller may ask for it as often as they like. The store
+  walks the journal once at startup and again only on the first read after another connection
+  has committed to the file; a write made through the store moves the kept head and length on
+  by the link the store itself appended, with no row read, when the chain verified before it,
+  and makes the next read walk again when it did not. Measured in the suite: twenty requests
+  with no token, zero walks; one write through the store, zero walks and the head moved; one
+  edit made in the file, one walk, and the break shown from then on. What the summary shows is
+  exactly what `uasw verify` would compute at that moment, including the 3.9 s a 100,000-link
+  store costs the one walk after an outside commit, which lands on the first reader after it.
 
 ## Limits of the assistant
 

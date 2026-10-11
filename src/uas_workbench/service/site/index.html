@@ -150,6 +150,11 @@
     <p class="sub" id="evidence-sub"></p>
   </section>
 
+  <section id="records-section" class="card">
+    <h2 style="margin-top:0">Draft records summary for the operator's own review: one sample</h2>
+    <p class="sub" id="records-sub"></p>
+  </section>
+
   <section id="assistant">
     <h2>Assistant: recorded runs, not live</h2>
     <p class="sub" id="assistant-notice"></p>
@@ -356,6 +361,16 @@
       'It is a draft for the operator to review: it does not show compliance, claims no robustness level, and does not certify airworthiness or return to service; the authority decides. ' +
       'The same pack exists for every aircraft through the API and the command line of a locally running service.'
     : 'No sample pack in this build.';
+
+  const sr = data.sample_records;
+  $('#records-sub').innerHTML = sr
+    ? `One sample, generated with this page for the synthetic aircraft ${esc(sr.aircraft_key)}: ` +
+      `<a id="sample-records" href="${esc(sr.html)}">open the draft records summary</a> (or the <a href="${esc(sr.json)}">same summary as JSON</a>). ` +
+      'It lists what the workbench holds against the record-keeping points of UAS.SPEC.050(1)(g) of Regulation (EU) 2019/947, each as supported by these records, partly, not evidenced by this workbench or not known, ' +
+      'with the span of the records held against the 3-year minimum and the write journal\'s head and verify result. ' +
+      'It is a draft for the operator to review: it states no record as true, decides nothing and certifies nothing; the authority decides. ' +
+      'The same summary exists for every aircraft through the API and the command line of a locally running service.'
+    : 'No sample summary in this build.';
 
   try {
     const runs = await (await fetch('assistant.json')).json();

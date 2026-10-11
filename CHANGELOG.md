@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- A draft records summary per aircraft, `uasw records KEY --out records.html [--json]`,
+  `GET /aircraft/{key}/records` and `/records.html`, and one sample for SYN-04 in the static
+  demo (`records/SYN-04.html`, linked from the page): titled "Draft records summary for the
+  operator's own review", it sets what the workbench holds against the record-keeping points
+  of UAS.SPEC.050(1)(g) of Regulation (EU) 2019/947 as amended by (EU) 2020/639, paraphrased
+  and cited: training records, maintenance activities, and operations with unusual
+  occurrences, each with one of four statuses: supported by these records, partly, not
+  evidenced by this workbench, or not known; the span of the records held against the 3-year
+  minimum as covered, not yet 3 years, or not known (3 calendar years back from the
+  computation date, to the earliest dated entry or log); and the write journal's head with
+  its verify result, "unchanged since head H" when the chain verifies and "journal broken at
+  link k" otherwise. A record the store cannot read leaves what depended on it not known,
+  with the record named. The summary needs no token, so it never walks the journal on a call: the
+  store keeps the last walk (`Store.journal_state()`, walked at startup and after another
+  connection commits to the file, moved on by the store's own writes with no row read), and
+  `GET /journal/verify` and `uasw verify` stay guarded and walk on demand. No response, record
+  or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and the seeded journal
+  head stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`; `fleet.json`
+  gains `sample_records` and the OpenAPI document the two routes.
 - `uasw ask` ends with one `refused` line on stderr and exit 1, never a traceback, when the
   service does not answer or the model backend fails (issue #49). A service that is not
   running, a host that does not resolve, a connection that times out, is reset or carries no
