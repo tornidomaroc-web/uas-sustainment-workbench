@@ -62,10 +62,10 @@ RECORDS_STATEMENT: tuple[str, ...] = (
     "what the records cannot support is shown as not known with its reason.",
 )
 
-# The one regulatory source, paraphrased. The public text was checked as reproduced by the
-# UK retained version (legislation.gov.uk) and the UK CAA regulatory library, which carry the
-# EU wording of point (1)(g) as amended by (EU) 2020/639; the EUR-Lex consolidated text is the
-# reference a reader checks. Nothing here is quoted.
+# The one regulatory source, paraphrased. Point (1)(g) was read on EUR-Lex in the consolidated
+# text of 1 May 2025, the latest listed when checked (11 October 2026); its wording there is the
+# same as in the consolidation of 4 April 2022 that follows (EU) 2020/639. Nothing here is
+# quoted.
 RECORDS_SOURCES: tuple[dict[str, str], ...] = (
     {
         "id": "eu-2019-947-uas-spec-050",
@@ -73,7 +73,7 @@ RECORDS_SOURCES: tuple[dict[str, str], ...] = (
         "for the operation of unmanned aircraft, Annex, Part B, UAS.SPEC.050 Responsibilities "
         "of the UAS operator, point (1)(g), as amended by Implementing Regulation (EU) 2020/639",
         "document": "Regulation (EU) 2019/947, consolidated",
-        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02019R0947-20220404",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02019R0947-20250501",
         "note": "Paraphrased, not quoted: point (1)(g) asks the UAS operator to keep and "
         "maintain up to date a record of (i) the qualifications and training of the remote "
         "pilots, the other personnel essential to the operation and the maintenance staff, (ii) "
@@ -123,7 +123,7 @@ RECORDS_SECTIONS: tuple[str, ...] = (
 INTEGRITY_NOTE = (
     "The write journal links every entry and flight record in the store, in the order written, "
     "into one hash chain. Verifying recomputes every hash from the rows as they are now. "
-    "Unchanged since a head says the records are as they were when linked; it does not say "
+    "A chain that verifies says the records are as they were when linked; it does not say "
     "that what they state is true, and a chain cut short or recomputed with the file verifies "
     "alone and fails only against a head kept outside the file."
 )
@@ -192,8 +192,8 @@ def _integrity(state: Verification) -> dict[str, Any]:
         assert state.broken is not None
         line = (
             f"journal broken at link {state.broken.seq}: {state.broken.kind}: "
-            f"{state.broken.detail}. The records cannot be said to be unchanged; the chain is "
-            f"intact up to that link, head there {state.head}."
+            f"{state.broken.detail}. From that link on, the records cannot be shown to be as they "
+            f"were when linked; the chain is intact up to that link, head there {state.head}."
         )
     return {
         "ok": state.ok,

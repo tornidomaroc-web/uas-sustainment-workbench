@@ -14,10 +14,11 @@
   computation date, to the earliest dated entry or log); and the write journal's head with
   its verify result, "unchanged since head H" when the chain verifies and "journal broken at
   link k" otherwise. A record the store cannot read leaves what depended on it not known,
-  with the record named. The summary needs no token, so it never walks the journal on a call: the
-  store keeps the last walk (`Store.journal_state()`, walked at startup and after another
-  connection commits to the file, moved on by the store's own writes with no row read), and
-  `GET /journal/verify` and `uasw verify` stay guarded and walk on demand. No response, record
+  with the record named. The summary needs no token, so it never walks the journal on a call:
+  the store keeps the last walk (`Store.journal_state()`, walked at startup and after another
+  connection commits to the file, moved on by the store's own writes with no row read once
+  their commit has gone through), and `GET /journal/verify` and `uasw verify` stay guarded and
+  walk on demand. No response, record
   or hash changes: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and the seeded journal
   head stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`; `fleet.json`

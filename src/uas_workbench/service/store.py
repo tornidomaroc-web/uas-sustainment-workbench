@@ -153,20 +153,22 @@ class Store:
     def add_flight(self, aircraft_key: str, record: FlightRecord) -> None:
         utc = record.utc_start.isoformat() if is_known(record.utc_start) else None
         try:
-            with self._lock, self._db:
-                cursor = self._db.execute(
-                    "INSERT INTO flights (aircraft_key, log_ref, synthetic, utc_start, record) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (
-                        aircraft_key,
-                        record.log_ref,
-                        int(record.synthetic),
-                        utc,
-                        json.dumps(record_to_json(record)),
-                    ),
-                )
-                assert cursor.lastrowid is not None
-                head = journal.append_link(self._db, "flight", int(cursor.lastrowid))
+            with self._lock:
+                with self._db:
+                    cursor = self._db.execute(
+                        "INSERT INTO flights (aircraft_key, log_ref, synthetic, utc_start, record) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            aircraft_key,
+                            record.log_ref,
+                            int(record.synthetic),
+                            utc,
+                            json.dumps(record_to_json(record)),
+                        ),
+                    )
+                    assert cursor.lastrowid is not None
+                    head = journal.append_link(self._db, "flight", int(cursor.lastrowid))
+                # Only once the commit has gone through: a commit refused is rolled back.
                 self._journal_after_write(head)
         except sqlite3.IntegrityError as exc:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
@@ -175,29 +177,31 @@ class Store:
 
     def append_entry(self, entry: Entry) -> Entry:
         """Insert one entry and return it with its id. Validation is the ledger's job."""
-        with self._lock, self._db:
-            cursor = self._db.execute(
-                "INSERT INTO entries (subject, kind, occurred_utc, recorded_utc, synthetic, "
-                "supersedes, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    entry.subject,
-                    entry.kind,
-                    entry.occurred_utc.isoformat(),
-                    entry.recorded_utc.isoformat(),
-                    int(entry.synthetic),
-                    entry.supersedes,
-                    "",
-                ),
-            )
-            assert cursor.lastrowid is not None
-            stored = Entry(**{**entry.__dict__, "id": int(cursor.lastrowid)})
-            self._db.execute(
-                "UPDATE entries SET record = ? WHERE id = ?",
-                (json.dumps(entry_to_json(stored), ensure_ascii=False), stored.id),
-            )
-            head = journal.append_link(self._db, "entry", int(stored.id or 0))
+        with self._lock:
+            with self._db:
+                cursor = self._db.execute(
+                    "INSERT INTO entries (subject, kind, occurred_utc, recorded_utc, synthetic, "
+                    "supersedes, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        entry.subject,
+                        entry.kind,
+                        entry.occurred_utc.isoformat(),
+                        entry.recorded_utc.isoformat(),
+                        int(entry.synthetic),
+                        entry.supersedes,
+                        "",
+                    ),
+                )
+                assert cursor.lastrowid is not None
+                stored = Entry(**{**entry.__dict__, "id": int(cursor.lastrowid)})
+                self._db.execute(
+                    "UPDATE entries SET record = ? WHERE id = ?",
+                    (json.dumps(entry_to_json(stored), ensure_ascii=False), stored.id),
+                )
+                head = journal.append_link(self._db, "entry", int(stored.id or 0))
+                self._projection = None
+            # Only once the commit has gone through: a commit refused is rolled back.
             self._journal_after_write(head)
-            self._projection = None
         return stored
 
     def next_entry_id(self) -> int:
@@ -256,8 +260,9 @@ class Store:
             return self._journal
 
     def _journal_after_write(self, head: str) -> None:
-        """Called under the write lock, after this store linked one row: the kept result is
-        moved on by that link when it was intact, and dropped otherwise."""
+        """Called under the write lock, after this store linked one row and the commit went
+        through: the kept result is moved on by that link when it was intact, and dropped
+        otherwise."""
         kept = self._journal
         if kept is None:
             return

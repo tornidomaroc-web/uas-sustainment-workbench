@@ -383,20 +383,22 @@ field-level tables. This file is about what that means for a maintenance tool.
   said. The span is from the earliest dated record held to the computation date, against 3
   calendar years (a computation date of 29 February counts back to 28 February): it says how
   far back the records reach, never whether a record was ever removed, and an aircraft with no
-  dated record has a span that is not known. The regulatory wording is paraphrased; the public
-  text was read as reproduced by the UK retained version and the UK CAA regulatory library,
-  which carry the EU wording of the point, since EUR-Lex was not reachable from the session
-  that wrote it; a reader checks the consolidated text.
+  dated record has a span that is not known. The regulatory wording is paraphrased from the
+  EUR-Lex consolidated text of 1 May 2025 (the wording of point (1)(g) there is the same as in
+  the consolidation of 4 April 2022); a later amendment would not be noticed by the workbench,
+  so a reader checks the consolidated text in force.
 - **The journal head in the records summary is the store's last walk, not a walk per call.**
-  The summary needs no token, so a caller may ask for it as often as they like. The store
-  walks the journal once at startup and again only on the first read after another connection
-  has committed to the file; a write made through the store moves the kept head and length on
-  by the link the store itself appended, with no row read, when the chain verified before it,
-  and makes the next read walk again when it did not. Measured in the suite: twenty requests
-  with no token, zero walks; one write through the store, zero walks and the head moved; one
-  edit made in the file, one walk, and the break shown from then on. What the summary shows is
-  exactly what `uasw verify` would compute at that moment, including the 3.9 s a 100,000-link
-  store costs the one walk after an outside commit, which lands on the first reader after it.
+  The summary needs no token, so a caller may ask for it as often as they like. The store walks
+  the journal once at startup and again only on the first read after another connection has
+  committed to the file; a write made through the store, once its commit has gone through,
+  moves the kept head and length on by the link the store itself appended, with no row read,
+  when the chain verified before it, and makes the next read walk again when it did not; a
+  write whose commit is refused leaves the kept result where it was. Measured in the suite:
+  twenty requests with no token, zero walks; one write through the store, zero walks and the
+  head moved; one edit made in the file, one walk, and the break shown from then on. What the
+  summary shows is exactly what `uasw verify` would compute at that moment, including the 3.9 s
+  a 100,000-link store costs the one walk after an outside commit, which lands on the first
+  reader after it.
 
 ## Limits of the assistant
 
