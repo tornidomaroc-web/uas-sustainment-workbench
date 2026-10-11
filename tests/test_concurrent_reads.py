@@ -45,6 +45,9 @@ REQUESTS_PER_READER = 200
 WRITE_EVERY_S = 0.02
 TIMEOUT_S = 30.0
 START_BUDGET_S = 120.0  # wall clock, not a count of polls: a loaded machine starts it slowly
+# uvicorn closes a kept-alive connection left idle for 5 s; a connection idle this long may
+# have been closed, and one that was not idle was not.
+IDLE_CLOSE_S = 4.0
 
 
 class Connection(http.client.HTTPConnection):
@@ -55,11 +58,15 @@ class Connection(http.client.HTTPConnection):
 
     opened = 0
     _count = threading.Lock()
+    answered_at: float | None = None  # when the last response on this connection was read
 
     def connect(self) -> None:
         super().connect()
         with Connection._count:
             Connection.opened += 1
+
+    def idle_s(self) -> float:
+        return 0.0 if self.answered_at is None else time.monotonic() - self.answered_at
 
 
 @dataclass
@@ -135,17 +142,19 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, int
         server.wait(30)
 
 
-def get(conn: http.client.HTTPConnection, url: str) -> tuple[int, bytes]:
+def get(conn: Connection, url: str) -> tuple[int, bytes]:
     """One request on a kept-alive connection; the connection opens its socket on the first
     request and keeps it for the next. Measured here against `uasw serve` on loopback, 200
     GETs took 0.70 s kept alive and 0.85 s on a connection per request, so nothing on the
     keep-alive path waits on the network."""
     conn.request("GET", url)
     response = conn.getresponse()
-    return response.status, response.read()
+    body = response.read()
+    conn.answered_at = time.monotonic()
+    return response.status, body
 
 
-def urls_to_read(conn: http.client.HTTPConnection) -> list[str]:
+def urls_to_read(conn: Connection) -> list[str]:
     """Several routes for every aircraft the writer never touches."""
     status, body = get(conn, "/aircraft")
     assert status == 200
@@ -164,7 +173,7 @@ def urls_to_read(conn: http.client.HTTPConnection) -> list[str]:
     ]
 
 
-def single_threaded(conn: http.client.HTTPConnection, urls: list[str]) -> dict[str, bytes]:
+def single_threaded(conn: Connection, urls: list[str]) -> dict[str, bytes]:
     """The answer for every URL with one reader and nothing else going on: twice, so the
     comparison below is known to be against a deterministic answer."""
     first = {}
@@ -177,25 +186,36 @@ def single_threaded(conn: http.client.HTTPConnection, urls: list[str]) -> dict[s
     return first
 
 
+def get_reopening(conn: Connection, url: str, out: Tally) -> tuple[int, bytes]:
+    """`get`, made again once on a new connection when this one had been idle long enough for
+    the server to close it and the request failed as a closed connection does; any other
+    failure is raised."""
+    idle = conn.idle_s()
+    try:
+        return get(conn, url)
+    except ConnectionError:
+        if idle < IDLE_CLOSE_S:
+            raise
+        conn.close()
+        out.reopened += 1
+        return get(conn, url)
+
+
 def read(
     service: tuple[str, int], urls: list[str], expected: dict[str, bytes], offset: int, out: Tally
 ) -> None:
     """One reader: REQUESTS_PER_READER requests round-robin over the URLs, on one connection
     of its own. A server closes a kept-alive connection it finds idle (uvicorn after 5 s),
-    which a client learns of only when its next request gets no response at all; that one
-    request is then made again on a new connection, once, as every client library does. Any
-    other failure, a response cut short included, is an error, and closes the connection so
-    the next request opens a socket again and is counted."""
+    which a client learns of only when its next request fails: `RemoteDisconnected` on Linux,
+    `ConnectionAbortedError` on Windows. When the connection had been idle that long, that one
+    request is made again on a new connection, once, as every client library does. Any other
+    failure, a connection dropped while in use included, is an error, and closes the
+    connection so the next request opens a socket again and is counted."""
     conn = Connection(*service, timeout=TIMEOUT_S)
     for n in range(REQUESTS_PER_READER):
         url = urls[(offset + n) % len(urls)]
         try:
-            try:
-                status, body = get(conn, url)
-            except http.client.RemoteDisconnected:
-                conn.close()
-                out.reopened += 1
-                status, body = get(conn, url)
+            status, body = get_reopening(conn, url, out)
         except (OSError, http.client.HTTPException) as exc:
             out.errors += 1
             out.examples.append(f"{url}: {type(exc).__name__}: {exc}")
@@ -303,3 +323,19 @@ def test_concurrent_reads_answer_each_with_their_own_rows(
     assert len([e for e in json.loads(body) if "reads were in flight" in e["statement"]]) >= len(
         written
     )
+
+
+def test_a_connection_the_server_closed_as_idle_is_opened_again_once(
+    service: tuple[str, int],
+) -> None:
+    """Left idle past the server's keep-alive timeout, a connection is closed by the server,
+    and its next request fails: `RemoteDisconnected` on Linux, `ConnectionAbortedError` on
+    Windows. Either way that request is made again on a new connection, once, and answers."""
+    conn = Connection(*service, timeout=TIMEOUT_S)
+    out = Tally()
+    assert get(conn, "/health")[0] == 200
+    time.sleep(IDLE_CLOSE_S + 2.0)
+    assert get_reopening(conn, "/health", out)[0] == 200
+    assert out.reopened == 1
+    assert get_reopening(conn, "/health", out)[0] == 200 and out.reopened == 1
+    conn.close()
