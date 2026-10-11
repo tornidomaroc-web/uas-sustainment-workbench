@@ -53,6 +53,7 @@ CONFIG = load_config()
 AS_OF = datetime(2026, 10, 1, tzinfo=UTC)
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 AS_OF_TEXT = "2026-10-01T00:00:00Z"
+AT_WRITE = datetime(2026, 9, 20, 9, 0, tzinfo=UTC)
 AUTH = {"Authorization": "Bearer t"}
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 # The words no pack output may carry, as whole words, in any case: a records tool gathers and
@@ -274,7 +275,7 @@ def test_the_integrity_section_says_unchanged_since_head_when_the_journal_verifi
     assert integrity["ok"] is True and integrity["broken"] is None
     assert HEX64.match(integrity["head"]) and integrity["head"] == SEEDED_HEAD
     assert integrity["length"] == store.entry_count() + store.flight_count()
-    assert integrity["line"].startswith(f"unchanged since head {SEEDED_HEAD}")
+    assert integrity["line"].startswith(f"unchanged since head {SEEDED_HEAD} (")
     assert "not that they are true" in integrity["line"]
     html = render_records_html(p)
     assert f"unchanged since head {SEEDED_HEAD}" in html
@@ -298,7 +299,7 @@ def test_a_broken_journal_is_shown_as_a_break_never_as_unchanged(db: str) -> Non
     assert "entry 3" in integrity["broken"]["detail"]
     assert integrity["line"].startswith(f"journal broken at link {seq}: content:")
     for text in every_text(p):
-        assert "unchanged since head" not in text
+        assert not re.search(r"unchanged", text, re.I), "a break must never read as unchanged"
         assert f"journal broken at link {seq}" in text
     # The same from the service, to a caller with no token.
     client = TestClient(create_app(store, write_token="t"))
@@ -311,9 +312,12 @@ def test_a_journal_wiped_or_truncated_is_reported_as_the_journal_says(db: str) -
     with raw(db) as c:
         c.execute("DELETE FROM journal")
     store = Store(db)
-    integrity = records(store, "SYN-04")["integrity"]
+    p = records(store, "SYN-04")
+    integrity = p["integrity"]
     assert integrity["ok"] is False and integrity["broken"]["kind"] == "unjournaled"
     assert integrity["length"] == 0
+    for text in every_text(p):
+        assert not re.search(r"unchanged", text, re.I), "a break must never read as unchanged"
     store.close()
 
 
@@ -520,6 +524,68 @@ def test_the_cached_result_is_the_walk_itself(db: str) -> None:
         c.execute("UPDATE journal SET link_hash = ? WHERE seq = 12", ("00" * 32,))
     assert store.journal_state() == store.verify_journal()
     assert store.journal_state().broken is not None
+    store.close()
+
+
+def walked_afresh(path: str) -> journal.Verification:
+    """A walk by a connection that holds nothing kept: what the file says now."""
+    connection = sqlite3.connect(path)
+    try:
+        return journal.verify(connection)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("order", ["own then other", "other then own", "alternating"])
+def test_writes_from_the_store_and_from_another_connection_leave_the_kept_result_a_walk(
+    db: str, order: str
+) -> None:
+    """The store's own write and a write from another connection, close together and in
+    either order, with no read between them: the kept head, length and result are what a
+    fresh walk of the file gives."""
+    store = Store(db)
+    other = Store(db)
+    store.journal_state()
+
+    def own(n: int) -> None:
+        store.append_entry(entry("SYN-02", AT_WRITE, f"own {n}"))
+
+    def theirs(n: int) -> None:
+        other.append_entry(entry("SYN-03", AT_WRITE, f"other {n}"))
+
+    steps = {
+        "own then other": [own, theirs],
+        "other then own": [theirs, own],
+        "alternating": [theirs, own, theirs, own, own, theirs],
+    }[order]
+    for n, step in enumerate(steps):
+        step(n)
+    assert store.journal_state() == walked_afresh(db)
+    assert store.journal_state().length == walked_afresh(db).length
+    other.close()
+    store.close()
+
+
+def test_a_write_whose_commit_fails_leaves_the_kept_result_where_it_was(db: str) -> None:
+    """Another connection holds a read open, so the store's commit cannot take the file and
+    the write is rolled back: the kept result must not have moved to the head that was never
+    stored, then or after the next write."""
+    store = Store(db)
+    before = store.journal_state()
+    store._db.execute("PRAGMA busy_timeout = 100")
+    reader = sqlite3.connect(db, isolation_level=None)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM journal").fetchone()
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            store.append_entry(entry("SYN-02", AT_WRITE, "a write that is rolled back"))
+    finally:
+        reader.execute("COMMIT")
+        reader.close()
+    assert store.journal_state() == walked_afresh(db) == before
+    store.append_entry(entry("SYN-02", AT_WRITE, "a write that is stored"))
+    assert store.journal_state() == walked_afresh(db)
+    assert store.journal_state().length == before.length + 1
     store.close()
 
 
