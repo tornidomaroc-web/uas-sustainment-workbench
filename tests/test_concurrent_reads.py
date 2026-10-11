@@ -170,7 +170,7 @@ def read(
             status, body = get(service, url)
         except (OSError, http.client.HTTPException) as exc:
             out.errors += 1
-            out.examples.append(f"{url}: {type(exc).__name__}")
+            out.examples.append(f"{url}: {type(exc).__name__}: {exc}")
             continue
         if status != 200:
             out.failed += 1

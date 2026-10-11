@@ -1075,8 +1075,8 @@ def create_app(
 
         Guarded like a write, though it writes nothing: it reads every row of the store on a
         call, which is the costliest read the service has (LIMITS.md gives the measured cost),
-        and only who may write may ask for it. The walk is a snapshot on a second connection,
-        so a write made meanwhile lands at once and is in the next walk."""
+        and only who may write may ask for it. The walk is a snapshot on the request thread's own
+        reading connection, so a write made meanwhile lands at once and is in the next walk."""
         result = store.verify_journal(head)
         return JournalVerifyOut(
             ok=result.ok,

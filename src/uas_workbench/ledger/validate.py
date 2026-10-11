@@ -464,7 +464,10 @@ def append(
     now: datetime,
     tolerance_s: float = 30.0,
 ) -> Entry:
-    """Validate, then write. Nothing is written when validation refuses."""
-    return store.append_entry(
-        validate(store, entry, policy=policy, now=now, tolerance_s=tolerance_s)
-    )
+    """Validate, then write. Nothing is written when validation refuses. The check and the
+    write hold the store's write lock together, so two appends made at once are checked as if
+    made one after the other: two corrections of one entry cannot both be accepted."""
+    with store.writing():
+        return store.append_entry(
+            validate(store, entry, policy=policy, now=now, tolerance_s=tolerance_s)
+        )

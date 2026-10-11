@@ -20,7 +20,15 @@
   stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and a static export
   of a clean store is byte-identical to the one before with the clock masked. LIMITS.md says
   what one read promises and what a response built from several does not, and that a
-  checkpoint by another connection (every `uasw` command's close) is met like a commit.
+  checkpoint by another connection (every `uasw` command's close) is met like a commit. Two
+  entries appended at once through one store are now checked as if appended one after the
+  other: `ledger.append` checked an entry against the records and wrote it without holding the
+  write lock in between, so two corrections of one entry posted together were both accepted
+  (through `uasw serve` on Windows, 60 of 60 pairs with reads on their own connections, 45 of
+  60 on the version before); now one is and the other is refused with 409
+  (`tests/test_concurrent_writes.py`).
+  The description of `GET /journal/verify` in `/openapi.json` now names the connection the
+  walk runs on; no other response changes.
 - The store file is in SQLite's WAL mode, and `uasw verify` and `GET /journal/verify` walk the
   journal on a second connection inside one read transaction, so a write issued during the
   walk lands at once (1.9 ms into a 100,000-link walk where it waited 3.86 s) and a reader on
