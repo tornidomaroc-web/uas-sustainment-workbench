@@ -345,3 +345,123 @@ def test_the_command_line_refuses_with_one_line_when_the_store_stays_held(
         main(correction(db, corrected, 102))
     assert code.value.code == 1
     assert capsys.readouterr().err.strip().splitlines() == [f"refused (503): {BUSY}"]
+
+
+# ---- what the write transaction leaves alone ---------------------------------------------
+
+
+def every_read(store: Store) -> None:
+    """Each read the service and the command line make, the kept answers included."""
+    store.entries()
+    store.entries("SYN-03")
+    store.entry(1)
+    store.entry_count()
+    store.next_entry_id()
+    store.aircraft()
+    store.flights("SYN-03")
+    store.flight_count()
+    store.projection()
+    store.projection(NOW)
+    store.journal_state()
+    store.readable()
+    store.verify_journal()
+    with store.snapshot():
+        store.entries()
+        store.projection()
+
+
+def test_reads_go_on_while_a_write_holds_the_transaction_and_another_waits_for_it(
+    tmp_path: Path,
+) -> None:
+    """One store holds the write transaction across a check; a second store on the file
+    (another process, to SQLite) waits for it. Meanwhile every read, on either store and on
+    a third thread of the first, finishes: no read takes the store's lock or the file's,
+    and neither waiting writer holds anything a reader needs."""
+    db = tmp_path / "fleet.sqlite"
+    holder = seeded(db)
+    other = Store(str(db))
+    entered, release = threading.Event(), threading.Event()
+    results: list[object] = []
+
+    def hold() -> None:
+        with holder.writing():
+            entered.set()
+            release.wait(JOIN_S)
+
+    def wait_to_write() -> None:
+        try:
+            results.append(add(other, hours(150.0)))
+        except LedgerError as exc:
+            results.append(exc)
+
+    holding = threading.Thread(None, hold)
+    holding.start()
+    try:
+        assert entered.wait(JOIN_S)
+        waiting = threading.Thread(None, wait_to_write)
+        waiting.start()
+        for store in (holder, other):
+            reading = threading.Thread(None, every_read, args=(store,))
+            reading.start()
+            reading.join(JOIN_S / 4)
+            assert not reading.is_alive(), "a read waited for a write"
+        assert waiting.is_alive(), "the second writer did not wait for the first"
+    finally:
+        release.set()
+        holding.join(JOIN_S)
+    waiting.join(JOIN_S)
+    assert not waiting.is_alive()
+    assert [type(r) for r in results] == [Entry]
+    for store in (holder, other):
+        assert_kept_equal_fresh(store)
+    other.close()
+    holder.close()
+
+
+@pytest.mark.parametrize("where", ["memory", "file"])
+def test_a_write_is_not_checked_inside_an_open_snapshot(tmp_path: Path, where: str) -> None:
+    """A snapshot reads the state it began on; a check made inside one would read that state,
+    not the one the write lands on, so it is refused before anything is checked."""
+    store = Store(":memory:" if where == "memory" else str(tmp_path / "fleet.sqlite"))
+    store.add_fleet(generate(CONFIG))
+    before = store.entry_count()
+    with store.snapshot(), pytest.raises(RuntimeError):
+        add(store, hours(100.0))
+    assert store.entry_count() == before
+    store.close()
+
+
+def test_a_refused_check_and_a_failed_write_roll_back_and_move_nothing_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check that refuses inside the write transaction, and a write that fails after its
+    rows went in, both end with the transaction rolled back: nothing written, the kept answers
+    as they were and equal to a fresh computation, and the next write goes through."""
+    store = seeded(tmp_path / "fleet.sqlite")
+    first = add(store, hours(100.0))
+    add(store, hours(200.0, supersedes=first.id))
+    assert_kept_equal_fresh(store)
+    count, kept = store.entry_count(), store.journal_state()
+    with pytest.raises(LedgerError) as caught:
+        add(store, hours(300.0, supersedes=first.id))
+    assert caught.value.status == 409
+    assert not store._db.in_transaction
+    assert (store.entry_count(), store.journal_state()) == (count, kept)
+    assert_kept_equal_fresh(store)
+
+    journal = importlib.import_module("uas_workbench.service.journal")
+
+    def broken(*args: Any, **kwargs: Any) -> str:
+        raise OSError("the link could not be written")
+
+    with monkeypatch.context() as m:
+        m.setattr(journal, "append_link", broken)
+        with pytest.raises(OSError):
+            add(store, hours(400.0))
+    assert not store._db.in_transaction
+    assert (store.entry_count(), store.journal_state()) == (count, kept)
+    assert_kept_equal_fresh(store)
+    add(store, hours(500.0))
+    assert store.entry_count() == count + 1
+    assert_kept_equal_fresh(store)
+    store.close()

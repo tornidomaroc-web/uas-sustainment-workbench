@@ -43,12 +43,13 @@ Nothing a snapshot does takes the write lock: a write through the store lands wh
 snapshot is open and is in the next one. `PRAGMA synchronous` stays FULL: a journal link is
 on disk before the commit returns, as before. `PRAGMA busy_timeout` is 5 s: a second writer
 (a `uasw record` beside a running service) waits that long for the write lock, then fails as
-before. While a store is open its file has `-wal` and `-shm` beside it; `close` closes every
-reading connection, checkpoints the WAL into the file and closes the writing one, so when it
-was the last store on the file SQLite removes both and a closed store is one file. A store in
-memory has no file, keeps the mode SQLite gives it, and has one connection: a snapshot there
-holds the write lock for its length, its label is the count of the store's own commits, and a
-write issued meanwhile waits for it.
+before; a checked ledger write takes that lock before its check (`writing`), so it is refused
+with nothing checked or written. While a store is open its file has `-wal` and `-shm` beside
+it; `close` closes every reading connection, checkpoints the WAL into the file and closes the
+writing one, so when it was the last store on the file SQLite removes both and a closed store
+is one file. A store in memory has no file, keeps the mode SQLite gives it, and has one
+connection: a snapshot there holds the write lock for its length, its label is the count of
+the store's own commits, and a write issued meanwhile waits for it.
 
 Every record is read through one path (`_entry`, `_flight`), and a record that cannot be
 read there (not JSON, nested too deep for the parser, a field missing or of the wrong type,
@@ -73,7 +74,7 @@ from uas_workbench.fleet.model import Aircraft, Fleet
 from uas_workbench.flight.codec import record_from_json, record_to_json
 from uas_workbench.flight.record import FlightRecord, Source, is_known
 from uas_workbench.ledger.codec import entry_from_json, entry_to_json
-from uas_workbench.ledger.model import Entry, Projection, UnreadableRecord
+from uas_workbench.ledger.model import Entry, LedgerError, Projection, UnreadableRecord
 from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
 
@@ -116,6 +117,11 @@ AIRCRAFT_COLUMNS = "key, label, source, synthetic, licence, attribution"
 # How long a write waits for another writer's lock before it fails. Writes take milliseconds;
 # a second writer is `uasw record` beside a running service, or two services on one file.
 BUSY_TIMEOUT_MS = 5000
+# A checked write refused because another writer held the store past that wait (`writing`).
+BUSY = (
+    "another write held the store for longer than this one waits; nothing was written, "
+    "so send it again"
+)
 
 
 class DuplicateFlight(Exception):
@@ -532,11 +538,39 @@ class Store:
     @contextlib.contextmanager
     def writing(self) -> Iterator[None]:
         """Hold the write lock across a check and the write it decides, so that no other write
-        made through this store lands between them: two requests served at once are then
-        checked as if made one after the other (`ledger.append`). Reads go on meanwhile on
-        their own connections. A write from another process is not held back by it."""
+        lands between them: two requests served at once, or two processes writing to one file
+        at once, are then checked as if made one after the other (`ledger.append`).
+
+        The store's own lock keeps out the other threads of this process. On a file store the
+        check also runs inside the write transaction (`BEGIN IMMEDIATE` on the writing
+        connection), SQLite's lock on the file, which keeps out every other connection, those
+        of another process included (issue #65): a second writer waits for the first to commit,
+        up to the busy timeout, and is checked with the first in the records. The locks are
+        always taken in that order, the store's then the file's, and nothing that holds the
+        file's waits for the store's. The write commits the transaction; a check that refuses
+        rolls it back with nothing written. A writer that cannot get the transaction within the
+        busy timeout is refused (503) before anything is checked or written. Reads go on
+        meanwhile on their own connections, under WAL on a snapshot that waits for no writer.
+
+        The check reads the store as it is now, so it cannot run inside a snapshot this thread
+        holds open, which reads the state the snapshot began on."""
+        if getattr(self._local, "depth", 0):
+            raise RuntimeError("a write cannot be checked inside an open snapshot")
         with self._lock:
-            yield
+            if self._labeller is None or self._db.in_transaction:
+                yield
+                return
+            try:
+                self._db.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if exc.sqlite_errorcode & 0xFF != sqlite3.SQLITE_BUSY:
+                    raise
+                raise LedgerError(503, BUSY) from exc
+            try:
+                yield
+            finally:
+                if self._db.in_transaction:
+                    self._db.rollback()
 
     def next_entry_id(self) -> int:
         with self._read() as db:

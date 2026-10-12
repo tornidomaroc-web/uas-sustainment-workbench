@@ -146,7 +146,11 @@ def migrate(db: sqlite3.Connection, now: datetime | None = None) -> None:
     after a note that says so; an empty store starts with no note. Idempotent through
     PRAGMA user_version, so a journal emptied later is reported, not rebuilt."""
     if not db.in_transaction:
-        db.execute("BEGIN IMMEDIATE")  # the version is read under the write lock
+        # A store journaled already has nothing to write, so it takes no write lock and is
+        # opened while another process writes to it (issue #65); the version only moves up.
+        if int(db.execute("PRAGMA user_version").fetchone()[0]) >= SCHEMA_VERSION:
+            return
+        db.execute("BEGIN IMMEDIATE")  # the version is read again under the write lock
     version = int(db.execute("PRAGMA user_version").fetchone()[0])
     if version >= SCHEMA_VERSION:
         return
