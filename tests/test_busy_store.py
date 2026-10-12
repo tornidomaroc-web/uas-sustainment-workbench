@@ -269,13 +269,16 @@ def test_the_command_line_refuses_a_held_ingest_with_one_line_per_log(
     holder = Holder(db)
     try:
         with pytest.raises(SystemExit) as code:
-            main(["--db", str(db), "ingest", "NEW-01", str(LOG)])
+            main(["--db", str(db), "ingest", "NEW-01", str(LOG), str(LOG)])
     finally:
         holder.release()
     assert code.value.code == 1
+    # One line per log, each naming it, and the next log is still tried, as a log that cannot
+    # be read is refused and the next one read.
     lines = capsys.readouterr().err.strip().splitlines()
-    assert len(lines) == 1, lines
-    assert lines[0].startswith("refused (503): ") and lines[0].endswith(f": {BUSY}"), lines
+    assert len(lines) == 2, lines
+    for line in lines:
+        assert line.startswith("refused (503): ") and line.endswith(f"{LOG.name}: {BUSY}"), line
     assert rows(db) == before
 
 
@@ -315,3 +318,32 @@ def test_ingests_beside_a_writer_that_comes_and_goes_land_whole_or_not_at_all(
         writer.join(30)
     assert not writer.is_alive()
     assert_kept_equal_fresh(store)
+
+
+def test_a_refused_open_closes_every_connection_it_opened(
+    tmp_path: Path, short_wait: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing is left for the collector: every connection the refused open made is closed
+    (an unclosed one is a ResourceWarning on Python 3.13 and later, issue #48)."""
+    db = tmp_path / "fleet.sqlite"
+    make_0_5_store(db)
+    made: list[sqlite3.Connection] = []
+    connect = sqlite3.connect
+
+    def recording(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection: sqlite3.Connection = connect(*args, **kwargs)
+        made.append(connection)
+        return connection
+
+    holder = Holder(db)
+    try:
+        with monkeypatch.context() as m, pytest.raises(Exception) as caught:
+            m.setattr(STORE.sqlite3, "connect", recording)
+            Store(str(db))
+        assert isinstance(caught.value, STORE.StoreBusy), repr(caught.value)
+    finally:
+        holder.release()
+    assert made
+    for connection in made:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- A store another connection holds is waited for, then refused whole, never with a traceback
+  or a 500 after a commit (closes #69 and #70). An ingest writes a new aircraft's row and its
+  flight in one transaction, where a writer taking the store between the two commits left a
+  500 with the aircraft row written and no flight; an ingest that waits past the 5 s busy
+  timeout answers 503 (`refused (503)` per log on the command line, the next log still
+  tried), nothing written. The first open of a store 0.5.x left failed at once with a
+  traceback while another connection held the write lock, because SQLite does not apply the
+  busy timeout to the switch to WAL; the store now retries that switch within the busy
+  timeout and, past it, the open is refused with one `refused (503)` line and exit 1, the
+  file as it was and every connection the open made closed. Every write the store makes
+  refuses the same way (`StoreBusy`). LIMITS.md also says a folder a file-sync client keeps
+  is not supported, beside the network file system it already ruled out. No response,
+  record, pack or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal
+  head stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every
+  GET on a clean store is byte for byte what it was with the clock masked.
 - Two processes writing to one store file are checked one after the other (closes #65): the
   store's write lock held only within its own process, so a `uasw record` beside a running
   service, or two `uasw` commands at once, both checked an entry against the records as they

@@ -53,7 +53,7 @@ from .observability import (
     HTTP_LATENCY,
     HTTP_REQUESTS,
 )
-from .store import DuplicateFlight, Store
+from .store import DuplicateFlight, Store, StoreBusy
 
 logger = logging.getLogger("uasw.http")
 
@@ -766,6 +766,15 @@ def create_app(
 
     app.add_exception_handler(UnreadableRecord, unreadable)
 
+    async def busy(request: Request, exc: Exception) -> JSONResponse:
+        """A write that waited the busy timeout for another connection's write lock (a
+        `uasw` command, another service on the file): 503 with the sentence, nothing written,
+        never a 500 (issue #69)."""
+        assert isinstance(exc, StoreBusy)
+        return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
+
+    app.add_exception_handler(StoreBusy, busy)
+
     def writer(request: Request) -> None:
         """Every write goes through here, POST /entries and POST /ingest, and so does
         GET /journal/verify, which reads every row of the store on a call."""
@@ -1070,9 +1079,9 @@ def create_app(
         if record is None:
             raise HTTPException(422, f"not a readable PX4 ULog or ArduPilot DataFlash log: {error}")
         record = dataclasses.replace(record, log_ref=Path(log.filename or "upload").stem)
-        store.ensure_aircraft(aircraft_key, record)
         try:
-            store.add_flight(aircraft_key, record)
+            # The aircraft's row, when it is new, and the flight: one transaction (issue #69).
+            store.add_log(aircraft_key, record)
         except DuplicateFlight as exc:
             raise HTTPException(409, str(exc)) from exc
         refresh_gauges(store, cfg)

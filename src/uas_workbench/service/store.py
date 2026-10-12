@@ -42,9 +42,11 @@ does, and a commit from outside costs the first snapshot after it one walk and o
 Nothing a snapshot does takes the write lock: a write through the store lands while a
 snapshot is open and is in the next one. `PRAGMA synchronous` stays FULL: a journal link is
 on disk before the commit returns, as before. `PRAGMA busy_timeout` is 5 s: a second writer
-(a `uasw record` beside a running service) waits that long for the write lock, then fails as
-before; a checked ledger write takes that lock before its check (`writing`), so it is refused
-with nothing checked or written. While a store is open its file has `-wal` and `-shm` beside
+(a `uasw record` beside a running service) waits that long for the write lock, then is
+refused as `StoreBusy` with its transaction rolled back, so nothing of it is written; a
+checked ledger write takes that lock before its check (`writing`), so it is refused with
+nothing checked. An open that has to write (the first of a store 0.5.x left) waits and is
+refused the same way. While a store is open its file has `-wal` and `-shm` beside
 it; `close` closes every reading connection, checkpoints the WAL into the file and closes the
 writing one, so when it was the last store on the file SQLite removes both and a closed store
 is one file. A store in memory has no file, keeps the mode SQLite gives it, and has one
@@ -65,6 +67,7 @@ import contextlib
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -122,10 +125,34 @@ BUSY = (
     "another write held the store for longer than this one waits; nothing was written, "
     "so send it again"
 )
+# An open that had to write (a store 0.5.x left, switched to WAL and journaled on its first
+# open) refused because another connection held the write lock past that wait.
+BUSY_OPEN = (
+    "another connection held the store's write lock for longer than opening the store "
+    "waits; nothing was written, so run it again"
+)
 
 
 class DuplicateFlight(Exception):
     pass
+
+
+class StoreBusy(Exception):
+    """A write, or an open that has to write, that waited the busy timeout for another
+    connection's write lock and was refused with nothing written (issues #69, #70): the
+    service answers 503 with the sentence, the command line one `refused (503)` line."""
+
+    status = 503
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+def _busy(exc: sqlite3.OperationalError) -> bool:
+    """Whether SQLite refused because another connection held the lock (the result code,
+    never the message, which differs between builds)."""
+    return exc.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY
 
 
 class _Kept[T]:
@@ -184,13 +211,23 @@ class Store:
         # commit; a write whose label before it is still that label skips reading the former.
         self._since: tuple[int, int] | None = None
         self._closed = False
-        if path != ":memory:":
-            self._db.execute("PRAGMA journal_mode = WAL")
-            self._labeller = self._open_reader()
-        with self._lock:
-            self._db.executescript(SCHEMA)
-            with self._db:
-                journal.migrate(self._db)
+        # An open writes only on a store that needs it (one 0.5.x left: the switch to WAL, the
+        # journal table, the migration); each waits for another connection's write lock up to
+        # the busy timeout and, past it, the open is refused with nothing written and every
+        # connection it opened closed, never left for the collector (issue #70).
+        try:
+            if path != ":memory:":
+                self._wal()
+                self._labeller = self._open_reader()
+            with self._lock:
+                self._db.executescript(SCHEMA)
+                with self._db:
+                    journal.migrate(self._db)
+        except BaseException as exc:
+            self.close()
+            if isinstance(exc, sqlite3.OperationalError) and _busy(exc):
+                raise StoreBusy(BUSY_OPEN) from exc
+            raise
         # The answers kept rather than computed on every call: the whole-ledger projection,
         # the first record that cannot be read (`readable`, behind /health) and the last walk
         # of the journal (`journal_state`, behind the records summaries), each labelled.
@@ -215,6 +252,22 @@ class Store:
         with contextlib.suppress(sqlite3.Error):
             self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._db.close()
+
+    def _wal(self) -> None:
+        """Put the file in WAL mode. On a file in the rollback-journal mode (a store 0.5.x
+        left) the switch needs the write lock, and SQLite answers busy at once, without the
+        busy timeout, when another connection holds it; so the switch is tried again until
+        the busy timeout has passed, as every other write waits. On a file in WAL already it
+        changes nothing and takes no lock."""
+        deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+        while True:
+            try:
+                self._db.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if not _busy(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
 
     # ---- connections and snapshots ---------------------------------------------------
 
@@ -449,53 +502,42 @@ class Store:
     def add_aircraft(self, aircraft: Aircraft) -> None:
         with self._lock:
             before = self._before_commit()
-            with self._db:
+            with self._committing():
                 self._db.execute(
                     f"INSERT OR REPLACE INTO aircraft ({AIRCRAFT_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        aircraft.key,
-                        aircraft.label,
-                        aircraft.source,
-                        int(aircraft.synthetic),
-                        aircraft.licence,
-                        aircraft.attribution,
-                    ),
+                    _aircraft_row(aircraft),
                 )
             self._after_commit(before, None, entries=False)
 
-    def ensure_aircraft(self, key: str, record: FlightRecord) -> Aircraft:
-        """An aircraft row for an ingested log whose aircraft is not yet known."""
-        existing = self.get_aircraft(key)
-        if existing is not None:
-            return existing
-        aircraft = Aircraft(
-            key=key,
-            label=key,
-            source=record.source,
-            synthetic=record.synthetic,
-            licence=record.licence,
-            attribution=record.attribution,
-        )
-        self.add_aircraft(aircraft)
-        return aircraft
-
     def add_flight(self, aircraft_key: str, record: FlightRecord) -> None:
+        self._add_flight(aircraft_key, record, None)
+
+    def add_log(self, aircraft_key: str, record: FlightRecord) -> None:
+        """Store one ingested flight, with its aircraft's row when the store does not hold
+        one yet, in one transaction: both are written or neither is, so a write refused
+        midway leaves no aircraft without its flight (issue #69)."""
+        self._add_flight(aircraft_key, record, _aircraft_of(aircraft_key, record))
+
+    def _add_flight(
+        self, aircraft_key: str, record: FlightRecord, aircraft: Aircraft | None
+    ) -> None:
         utc = record.utc_start.isoformat() if is_known(record.utc_start) else None
+        text = json.dumps(record_to_json(record))
         try:
             with self._lock:
                 before = self._before_commit()
-                with self._db:
+                with self._committing():
+                    if aircraft is not None:
+                        self._db.execute(
+                            f"INSERT OR IGNORE INTO aircraft ({AIRCRAFT_COLUMNS}) "
+                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            _aircraft_row(aircraft),
+                        )
                     cursor = self._db.execute(
                         "INSERT INTO flights (aircraft_key, log_ref, synthetic, utc_start, record) "
                         "VALUES (?, ?, ?, ?, ?)",
-                        (
-                            aircraft_key,
-                            record.log_ref,
-                            int(record.synthetic),
-                            utc,
-                            json.dumps(record_to_json(record)),
-                        ),
+                        (aircraft_key, record.log_ref, int(record.synthetic), utc, text),
                     )
                     assert cursor.lastrowid is not None
                     head = journal.append_link(self._db, "flight", int(cursor.lastrowid))
@@ -504,13 +546,26 @@ class Store:
         except sqlite3.IntegrityError as exc:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
 
+    @contextlib.contextmanager
+    def _committing(self) -> Iterator[None]:
+        """One transaction on the writing connection, committed at the end and rolled back on
+        any error; a write that waited the busy timeout for another connection's lock is
+        refused as `StoreBusy`, with the transaction, and so everything in it, rolled back."""
+        try:
+            with self._db:
+                yield
+        except sqlite3.OperationalError as exc:
+            if _busy(exc):
+                raise StoreBusy(BUSY) from exc
+            raise
+
     # ---- the ledger ------------------------------------------------------------------
 
     def append_entry(self, entry: Entry) -> Entry:
         """Insert one entry and return it with its id. Validation is the ledger's job."""
         with self._lock:
             before = self._before_commit()
-            with self._db:
+            with self._committing():
                 cursor = self._db.execute(
                     "INSERT INTO entries (subject, kind, occurred_utc, recorded_utc, synthetic, "
                     "supersedes, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -767,6 +822,29 @@ class Store:
 # ValueError; AttributeError when the record is not an object at all), and the shape checks
 # above. Each is the record being unreadable, never a traceback for the caller.
 _CANNOT_READ = (RecursionError, KeyError, ValueError, TypeError, AttributeError)
+
+
+def _aircraft_of(key: str, record: FlightRecord) -> Aircraft:
+    """The aircraft row an ingested log gives an aircraft the store does not hold yet."""
+    return Aircraft(
+        key=key,
+        label=key,
+        source=record.source,
+        synthetic=record.synthetic,
+        licence=record.licence,
+        attribution=record.attribution,
+    )
+
+
+def _aircraft_row(aircraft: Aircraft) -> tuple[object, ...]:
+    return (
+        aircraft.key,
+        aircraft.label,
+        aircraft.source,
+        int(aircraft.synthetic),
+        aircraft.licence,
+        aircraft.attribution,
+    )
 
 
 def _data_version(connection: sqlite3.Connection) -> int:
