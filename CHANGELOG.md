@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI runs the check job's steps on Windows too, on Python 3.12 and 3.14 (#67): the jobs
+  `windows (3.12)` and `windows (3.14)`, beside check, container and browser on Linux.
 - A store file damaged while `uasw serve` runs is refused with 503 naming the cause, never
   served from memory and never a 500 (part of #73). SQLite does not see a file changed
   outside it, so a store overwritten, truncated or with its pages overwritten under a running

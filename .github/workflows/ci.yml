@@ -44,6 +44,48 @@ jobs:
           grep -q 'passed its 24-calendar-month life limit' /tmp/site/fleet.json
           test -s /tmp/site/assistant.json && grep -q '"grounding_verified": true' /tmp/site/assistant.json
 
+  # The same steps as check, on Windows, where the workbench is developed and run: sockets,
+  # file replacement and process exit behave differently there. The browser module stays on
+  # the browser job; it renders a static page, which does not depend on the OS.
+  windows:
+    name: windows (${{ matrix.python-version }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Types (strict)
+        run: python -m mypy
+      - name: Tests (synthetic fixtures and licensed excerpts only; no network)
+        run: python -m pytest -rs
+      - name: Static demo builds from the code
+        run: |
+          uasw --db /tmp/fleet.sqlite seed
+          UASW_COMMIT="$GITHUB_SHA" uasw --db /tmp/fleet.sqlite export-static --out /tmp/site
+          test -s /tmp/site/fleet.json && test -s /tmp/site/index.html
+          test -s /tmp/site/evidence/SYN-04.html && test -s /tmp/site/evidence/SYN-04.json
+          test -s /tmp/site/records/fleet.html && test -s /tmp/site/records/fleet.json
+          grep -q 'unchanged since head' /tmp/site/records/fleet.html
+          grep -q 'does not show compliance' /tmp/site/evidence/SYN-04.html
+          grep -q "\"commit\": \"$GITHUB_SHA\"" /tmp/site/evidence/SYN-04.json
+          grep -q '"status_reasons"' /tmp/site/fleet.json
+          grep -q 'passed its 24-calendar-month life limit' /tmp/site/fleet.json
+          test -s /tmp/site/assistant.json && grep -q '"grounding_verified": true' /tmp/site/assistant.json
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 15
