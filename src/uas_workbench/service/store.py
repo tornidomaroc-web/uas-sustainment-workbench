@@ -350,12 +350,17 @@ class Store:
             # looks unchanged: a damaged file is looked at again once a second regardless.
             again = self._damaged is not None and time.monotonic() - self._checked_at >= 1.0
             if now != self._file or again:
-                self._file = now
-                self._checked_at = time.monotonic()
                 self._damaged = self._damage_in(now)
                 if self._damaged is None:
                     # Every label carries the generation, so no answer kept before is used.
                     self._generation += 1
+                # The file as seen only once its verdict is in: until then every other
+                # thread's look misses, and it waits here for the verdict rather than reading
+                # or writing the changed file meanwhile. And the second look is timed from the
+                # end of the check, so a check longer than a second is not run again by every
+                # request that waited for it.
+                self._file = now
+                self._checked_at = time.monotonic()
             damaged = self._damaged
         if damaged is not None:
             raise StoreDamaged(damaged)

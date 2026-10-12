@@ -11,8 +11,11 @@
   The store now looks at its file (one `stat`) before every read and write and, when it
   changed outside SQLite, runs `PRAGMA quick_check`: damaged, replaced or removed, every route
   that reads or writes the store answers 503 naming why, `/health` included, nothing written
-  (`StoreDamaged`); restored in place, every connection is opened afresh and every kept answer
-  computed again (labels carry a connection generation), and it serves and writes again.
+  (`StoreDamaged`), and while the check runs every other read and write waits for its verdict;
+  restored in place, every connection is opened afresh and every kept answer computed again
+  (labels carry a connection generation), and it serves and writes again, unless the service
+  had writes waiting in its `-wal` file, which SQLite lays over the restored copy (restore
+  with the service stopped).
   Anything else SQLite refuses on the file is a 503 with SQLite's sentence. No response,
   record, pack or hash changes on a sound store: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head

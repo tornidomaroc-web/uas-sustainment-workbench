@@ -373,3 +373,85 @@ def test_a_reader_meets_the_damage_without_waiting_for_a_write_and_kept_answers_
         assert store.projection() == project(store.entries())
     finally:
         store.close()
+
+
+def test_no_read_or_write_passes_while_a_changed_file_is_being_checked(tmp_path: Path) -> None:
+    """While one thread checks a changed file, every other read and write waits for its
+    verdict: a warm reading thread and a warm writing connection, which hold pages of the file
+    as it was, neither answer from the damaged file nor write onto it. And a check that takes
+    longer than the second between second looks is run once, not once per waiting request."""
+    import importlib
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from uas_workbench.fleet import load_config
+    from uas_workbench.fleet.synthetic import generate
+    from uas_workbench.service.store import Store
+
+    store_module = importlib.import_module("uas_workbench.service.store")
+    db = tmp_path / "fleet.sqlite"
+    seeding = Store(str(db))
+    seeding.add_fleet(generate(load_config()))
+    seeding.close()
+    original = db.read_bytes()
+    store = Store(str(db))
+    pool = ThreadPoolExecutor(1)
+    others = ThreadPoolExecutor(4)
+    try:
+        first = store.entries()[0]
+
+        def one(statement: str) -> object:
+            return store.append_entry(
+                type(first)(**{**first.__dict__, "id": None, "statement": statement})
+            ).id
+
+        one("warm")  # the writing connection holds the pages a write needs
+        pool.submit(lambda: (store.entries(), store.aircraft())).result(30)
+        checks: list[int] = []
+        checking, go = threading.Event(), threading.Event()
+        real = store._damage_in
+
+        def held(now: object) -> str | None:
+            checks.append(1)
+            checking.set()
+            go.wait(30)
+            return real(now)  # type: ignore[arg-type]
+
+        store._damage_in = held  # type: ignore[method-assign]
+
+        def outcome(fn: object) -> object:
+            try:
+                return fn()  # type: ignore[operator]
+            except Exception as exc:
+                return exc
+
+        damage_in_place(db, original, "pages overwritten")
+        checker = others.submit(outcome, store.readable)
+        assert checking.wait(30)
+        read = pool.submit(outcome, lambda: (store.entry_count(), store.aircraft()))
+        write = others.submit(outcome, lambda: one("during the check"))
+        time.sleep(0.5)
+        waited = not read.done() and not write.done()
+        go.set()
+        answers = [f.result(30) for f in (checker, read, write)]
+        assert all(isinstance(a, store_module.StoreDamaged) for a in answers), answers
+        assert waited, "a read or a write went on while the changed file was being checked"
+        assert len(checks) == 1
+
+        # Damaged and due its second look, with a check that takes longer than the second:
+        # four requests that meet it get the one verdict.
+        checks.clear()
+        checking.clear()
+        go.clear()
+        time.sleep(1.1)
+        waiting = [others.submit(outcome, store.entry_count) for _ in range(4)]
+        assert checking.wait(30)
+        time.sleep(1.2)
+        go.set()
+        assert all(isinstance(f.result(30), store_module.StoreDamaged) for f in waiting)
+        assert len(checks) == 1, f"{len(checks)} checks for one second look"
+    finally:
+        go.set()
+        pool.shutdown()
+        others.shutdown()
+        store.close()
