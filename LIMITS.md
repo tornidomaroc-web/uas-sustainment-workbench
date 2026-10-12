@@ -439,6 +439,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   part of the fleet, a second seed ended in a traceback, and `uasw serve` seeded a store that
   held aircraft but no flight). The seed holds the lock about 10 ms where its commits took
   about 0.4 s on the machine measured. Two seeds of one new file at once seed it once.
+  The commands that write make the store on first use (`seed`, `serve`, `ingest`, `record`,
+  in which a component can be registered in a new store); the commands that only read
+  (`verify`, `records`, `evidence`, `fleet-records`, `export-static`, `record history`) and
+  `record retract`, which needs an entry, refuse a path with nothing at it in one
+  `refused (404)` line and make no file or folder, where a mistyped `--db` made an empty
+  store that `uasw verify` called intact (issue #73). A write command given a mistyped
+  `--db` still makes a store there, as it must to make one at all. `export-static` builds
+  the demo around the seeded fleet's SYN-04 and refuses a store without it (`refused (409)`)
+  instead of ending in a traceback; exporting a store of one's own logs is not supported.
+  The default `--fixtures` is the folder beside the code when it exists, so a seed run from
+  any working folder includes the two showcase aircraft; `UASW_FIXTURES` still overrides it.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
