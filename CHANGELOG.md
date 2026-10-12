@@ -10,8 +10,9 @@
   while `seed`, `serve`, `ingest` and `record` still make the store on first use.
   `export-static` on a store without the seeded fleet's SYN-04 ended in a `KeyError`
   traceback and is now one `refused (409)` line. The default `--fixtures` is the folder
-  beside the code when it exists, so a seed run from another working folder keeps the two
-  showcase aircraft (9, not 7); `UASW_FIXTURES` still overrides it. Tests that launch `uasw`
+  beside the code when it exists, so a seed run from another working folder of a checkout
+  or an editable install keeps the two showcase aircraft (9, not 7); `UASW_FIXTURES` still
+  overrides it, and a seed with no fixtures says so in the log. Tests that launch `uasw`
   processes ran whatever `uas_workbench` the child found first, so with a relative
   `PYTHONPATH` and the child in another folder they checked another checkout's code;
   `tests/child_code.py` puts the code under test first on `PYTHONPATH`, every entry
