@@ -363,6 +363,10 @@ uasw export-static --out site                     # the static demo, from the sa
 ruff check . && mypy && pytest                    # no network, no downloads needed
 ```
 
+CI runs lint, strict types, the tests and the static export on every pull request on Linux
+(Python 3.12) and on Windows (Python 3.12 and 3.14); the container and the headless-browser
+checks run on Linux.
+
 Recording maintenance, on the same store, with no service running:
 
 ```bash
