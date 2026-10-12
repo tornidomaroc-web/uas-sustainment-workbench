@@ -152,7 +152,8 @@ class StoreBusy(Exception):
 def _busy(exc: sqlite3.OperationalError) -> bool:
     """Whether SQLite refused because another connection held the lock (the result code,
     never the message, which differs between builds)."""
-    return exc.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY
+    code = getattr(exc, "sqlite_errorcode", None)  # absent when raised by Python code
+    return code is not None and code & 0xFF == sqlite3.SQLITE_BUSY
 
 
 class _Kept[T]:
@@ -618,7 +619,7 @@ class Store:
             try:
                 self._db.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as exc:
-                if exc.sqlite_errorcode & 0xFF != sqlite3.SQLITE_BUSY:
+                if not _busy(exc):
                     raise
                 raise LedgerError(503, BUSY) from exc
             try:
