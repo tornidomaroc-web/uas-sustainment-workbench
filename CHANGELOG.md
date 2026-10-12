@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Two processes writing to one store file are checked one after the other (closes #65): the
+  store's write lock held only within its own process, so a `uasw record` beside a running
+  service, or two `uasw` commands at once, both checked an entry against the records as they
+  were before either wrote, and two corrections of one entry were both recorded (20 of 20
+  rounds on Windows, 18 of 20 without a widened check). On a store file `Store.writing()` now
+  also opens SQLite's write transaction (`BEGIN IMMEDIATE`) before the check, the write
+  commits it and a refusal rolls it back, so the second writer waits for the first and is
+  checked with it in the records: one recorded and one `refused (409)` in 200 of 200 rounds of
+  two `uasw record` processes on Python 3.12 and 3.14 (`tests/test_cross_process_writes.py`).
+  An entry that waits past the 5 s busy timeout is refused with 503 before anything is checked
+  or written, through `POST /entries` and `uasw record` alike, where it raised the database
+  error; opening a journaled store takes no write lock, so a command starts while the service
+  writes; a write checked inside an open snapshot is refused, since it would read an older
+  state. Reads take neither lock. No response, record, pack or hash changes: the SYN-04
+  evidence sample keeps `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`,
+  the seeded journal head stays
+  `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every GET on a clean
+  store is byte for byte what it was with the clock masked. LIMITS.md says what stays: an
+  ingest that waits past the busy timeout still answers 500.
 - The concurrent-reads test opens one kept-alive connection per reader and one for its writer
   instead of a socket per request (1,696 for eight readers), counts the sockets it opens and
   fails over readers + 3, so a suite run can no longer run out of local ports on a machine that

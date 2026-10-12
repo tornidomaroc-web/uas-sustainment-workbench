@@ -187,7 +187,10 @@ once, is refused and names that entry. A correction keeps the date of the entry 
 corrects; to move a date, the entry is retracted and a new one written. Every entry
 carries the sentence that it records what the entering person stated and that the
 workbench does not certify airworthiness or return to service. `POST /entries` and `uasw record` reach the same
-append; `GET /entries` and `GET /components` read the history with superseded entries
+append, and two appends made at once, from one service or from a `uasw record` run beside it,
+are checked one after the other: two corrections of one entry give one entry and one 409, and
+an append that waits more than 5 s for another write is refused with 503, nothing written;
+`GET /entries` and `GET /components` read the history with superseded entries
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
 set; what that does not protect against is in [LIMITS.md](LIMITS.md).
 

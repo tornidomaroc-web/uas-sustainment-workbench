@@ -280,7 +280,8 @@ field-level tables. This file is about what that means for a maintenance tool.
     nothing wait: it is the costliest read the service has, every row on every call.
   - *One writer at a time, as before.* A second writer (`uasw record` beside a running service)
     waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then fails with the database
-    locked; a refused commit is rolled back and moves nothing kept. SQLite's rollback journal
+    locked; a refused commit is rolled back and moves nothing kept. A ledger entry takes that
+    lock before its check, so it is refused with 503 and nothing checked or written. SQLite's rollback journal
     had no wait at all, so that failure came at once.
   - *Durability is as it was.* `PRAGMA synchronous` is FULL, the WAL default: a journal link is
     on disk before the commit that wrote it returns. NORMAL would save one sync per commit and
@@ -398,16 +399,30 @@ field-level tables. This file is about what that means for a maintenance tool.
   as a read on a closed connection is, and a closed store is one file, as before. A store in
   memory has one connection: a snapshot there holds the write lock for its length, so threads
   read one at a time and a write issued during a summary waits for it and lands after it.
-- **Two entries appended at once through one store are checked one after the other; through two
-  processes they are not.** An entry is checked against the records and then written, and the
-  check and the write hold the store's write lock together, so a second request served beside
-  the first is checked against the records with the first in them: two corrections of one
-  entry posted at once give one 201 and one 409. Before, both were checked against the records
-  as they were before either wrote and both were accepted (60 of 60 such pairs through `uasw
-  serve` on Windows, Python 3.12, 2026-10-11, and 45 of 60 on the version before). Reads go on beside the check on their own
-  connections. The lock is the process's own: a `uasw record` run beside a running service, or
-  two `uasw` commands at once, can still both pass their checks before either writes, so record
-  through one of them at a time.
+- **Two entries appended at once are checked one after the other, through one store or from
+  two processes.** An entry is checked against the records and then written, and the check
+  and the write hold the store's write lock together, so a second request served beside the
+  first is checked against the records with the first in them: two corrections of one entry
+  posted at once give one 201 and one 409. Before, both were checked against the records as
+  they were before either wrote and both were accepted (60 of 60 such pairs through `uasw
+  serve` on Windows, Python 3.12, 2026-10-11, and 45 of 60 on the version before). That lock
+  is the process's own, so on a store file the check also runs inside SQLite's write
+  transaction (`BEGIN IMMEDIATE`), which holds across processes (issue #65): a `uasw record`
+  run beside a running service, or two `uasw` commands at once, wait for each other and the
+  second is checked with the first in the records. Two `uasw record` processes correcting one
+  entry at one instant: one recorded, the other `refused (409)`, in 200 of 200 rounds (Windows,
+  Python 3.12.10 and 3.14.3, 2026-10-12, 50 rounds each with and without a 0.4 s pause between
+  check and write), where the version before recorded both in 20 of 20 with the pause and 18
+  of 20 without. Reads go on beside the check on their own connections and wait for neither
+  lock. A writer that waits more than the 5 s busy timeout for another is refused with 503,
+  `refused (503)` on the command line, before anything is checked or written, so send it
+  again. Opening a store no longer takes the write lock once the store is journaled, so a
+  `uasw` command starts while the service writes. A store in memory has one connection and
+  keeps the process's lock alone. What stays: an `ingest` that waits past the busy timeout
+  still answers 500; with the other writer holding the store throughout nothing is written
+  (measured), but the aircraft row of a new aircraft and its flight are two commits, so a
+  writer that takes the store between them can leave that 500 after the aircraft row was
+  written, with no flight.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
