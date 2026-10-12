@@ -212,6 +212,7 @@ class Store:
         # commit; a write whose label before it is still that label skips reading the former.
         self._since: tuple[int, int] | None = None
         self._closed = False
+        self._batching = False  # inside `batch`: writes join its one transaction
         # An open writes only on a store that needs it (one 0.5.x left: the switch to WAL, the
         # journal table, the migration); each waits for another connection's write lock up to
         # the busy timeout and, past it, the open is refused with nothing written and every
@@ -438,7 +439,10 @@ class Store:
         store appended leaves an intact chain intact with one more link; a broken one it
         leaves to the next walk. A record this store wrote is one it wrote readable. The
         projection is dropped when an entry was written and kept when only a flight or an
-        aircraft was."""
+        aircraft was. Inside a batch nothing is committed yet, so nothing moves; the batch
+        moves everything on when it ends."""
+        if self._batching:
+            return
         if self._labeller is None:
             self._own_commits += 1
             after, exact = self._own_commits, True
@@ -548,10 +552,58 @@ class Store:
             raise DuplicateFlight(f"{aircraft_key}/{record.log_ref} is already stored") from exc
 
     @contextlib.contextmanager
+    def batch(self) -> Iterator[None]:
+        """Every write made inside, through this store on this thread, in one transaction:
+        committed together when the block ends and rolled back together when it raises, so a
+        batch that fails or is refused partway writes nothing (a seed, issue #72).
+
+        The store's lock and then, on a store file, SQLite's write transaction
+        (`BEGIN IMMEDIATE`) are held for its length, in that order, as `writing` takes them;
+        another connection holding the write lock past the busy timeout gets the batch
+        refused as `StoreBusy` before anything is written. Reads on other threads go on beside
+        it on their own connections and do not see it until it commits. The kept answers are
+        dropped when it ends, committed or not, and computed again on the next read. A batch
+        is not nested and does not run inside a snapshot this thread holds open."""
+        if getattr(self._local, "depth", 0):
+            raise RuntimeError("a batch of writes cannot run inside an open snapshot")
+        with self._lock:
+            if self._batching or self._db.in_transaction:
+                raise RuntimeError("a batch of writes cannot be nested")
+            try:
+                self._db.execute("BEGIN" if self._labeller is None else "BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if _busy(exc):
+                    raise StoreBusy(BUSY) from exc
+                raise
+            self._batching = True
+            try:
+                yield
+                self._db.commit()
+            except BaseException:
+                self._db.rollback()
+                raise
+            finally:
+                self._batching = False
+                # Nothing kept from inside the batch outlives it: a store in memory read the
+                # batch's own writes there, under a label its rollback does not move.
+                self._journal.value = None
+                self._unreadable.value = None
+                self._projection.value = None
+
+    def holds(self) -> tuple[int, int, int]:
+        """How many aircraft, flights and entries the store holds, read in one snapshot."""
+        with self.snapshot():
+            return len(self.aircraft()), self.flight_count(), self.entry_count()
+
+    @contextlib.contextmanager
     def _committing(self) -> Iterator[None]:
         """One transaction on the writing connection, committed at the end and rolled back on
         any error; a write that waited the busy timeout for another connection's lock is
-        refused as `StoreBusy`, with the transaction, and so everything in it, rolled back."""
+        refused as `StoreBusy`, with the transaction, and so everything in it, rolled back.
+        Inside a batch the write joins the batch's transaction, which commits or rolls back."""
+        if self._batching:
+            yield
+            return
         try:
             with self._db:
                 yield

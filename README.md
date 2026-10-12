@@ -350,7 +350,7 @@ Without Docker:
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev,fetch]"
-uasw serve                                        # seeds on first start; /docs, /metrics
+uasw serve                                        # seeds an empty store; /docs, /metrics
 uasw ingest my-aircraft path/to/log.ulg           # add your own logs (never stored raw)
 uasw export-static --out site                     # the static demo, from the same store
 ruff check . && mypy && pytest                    # no network, no downloads needed
