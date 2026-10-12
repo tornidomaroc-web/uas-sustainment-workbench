@@ -304,7 +304,11 @@ field-level tables. This file is about what that means for a maintenance tool.
     the file reads them and its close folds them in and removes them (checked: every write
     there, integrity ok). A copy of `fleet.sqlite` alone while a store is open, or after such a
     stop, is not a complete copy: README says how to copy a running store. Every connection
-    must be on one host; the volume is, and a network file system is not supported.
+    must be on one host; the volume is, and a network file system is not supported. Nor is a
+    folder a file-sync client keeps in step with other machines or a cloud account: it can
+    copy `fleet.sqlite` and its `-wal` file at different moments while a store is open, which
+    is not a complete copy, and a store opened on another machine's copy shares no lock with
+    this one. Keep the store on a local disk and copy it as README says.
   - *The mode is kept in the file.* A store opened once by this version stays in WAL when an
     earlier version opens it. 0.5.2 was checked: it reads such a store with the same answers
     and writes to it, but 0.5.x keeps no journal, so a row it writes has no link and from then
@@ -418,11 +422,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   `refused (503)` on the command line, before anything is checked or written, so send it
   again. Opening a store no longer takes the write lock once the store is journaled, so a
   `uasw` command starts while the service writes. A store in memory has one connection and
-  keeps the process's lock alone. What stays: an `ingest` that waits past the busy timeout
-  still answers 500; with the other writer holding the store throughout nothing is written
-  (measured), but the aircraft row of a new aircraft and its flight are two commits, so a
-  writer that takes the store between them can leave that 500 after the aircraft row was
-  written, with no flight.
+  keeps the process's lock alone. An ingest writes a new aircraft's row and its flight in one
+  transaction, so a writer that takes the store meanwhile leaves both or neither; one that
+  waits past the busy timeout is refused with 503 (`refused (503): <log>: ...` per log on the
+  command line, the next log still tried), where it answered 500 and could leave the aircraft
+  row with no flight (issue #69). The first open of a store 0.5.x left, which switches the file
+  to WAL and journals it, waits for another connection's write lock as every write does; past
+  the busy timeout it is refused with one `refused (503)` line and exit 1, `uasw serve`
+  included, with the file as it was, where it failed at once with a traceback (SQLite does not
+  apply the busy timeout to that switch, so the store retries it; issue #70). What stays:
+  `uasw seed` and the seeding `uasw serve` does on an empty store are many commits, so a seed
+  refused midway keeps the rows it wrote before the refusal.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

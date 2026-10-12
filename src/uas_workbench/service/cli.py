@@ -32,7 +32,7 @@ from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.ledger import UnreadableRecord
 
 from .observability import configure_logging
-from .store import DuplicateFlight, Store
+from .store import DuplicateFlight, Store, StoreBusy
 
 log = logging.getLogger("uasw.cli")
 
@@ -109,11 +109,16 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             print(f"refused (422): {path}: {detail}", file=sys.stderr)
             refused += 1
             continue
-        store.ensure_aircraft(args.aircraft, record)
         try:
-            store.add_flight(args.aircraft, record)
+            # The aircraft's row, when it is new, and the flight: one transaction (issue #69).
+            store.add_log(args.aircraft, record)
         except DuplicateFlight as exc:
             log.warning(str(exc))
+            continue
+        except StoreBusy as exc:
+            # The refusal POST /ingest gives while another connection holds the store.
+            print(f"refused ({exc.status}): {path}: {exc.detail}", file=sys.stderr)
+            refused += 1
             continue
         log.info("ingested", extra={"aircraft_key": args.aircraft, "log_ref": record.log_ref})
     if refused:
@@ -547,6 +552,11 @@ def main(argv: list[str] | None = None) -> None:
         # A stored record the store cannot read: the same refusal the service answers (503),
         # with the record named; never a traceback. `uasw verify` reports the same row.
         print(f"refused (503): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    except StoreBusy as exc:
+        # Another connection held the store's write lock past the busy timeout, at the open
+        # (issue #70) or at a write: the service's 503, one line, nothing written.
+        print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
         sys.exit(1)
     except RefusedCall as exc:
         # The service refused a tool call of `uasw ask` (issue #46), or did not answer, or
