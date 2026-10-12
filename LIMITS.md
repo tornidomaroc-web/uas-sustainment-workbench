@@ -462,9 +462,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   did not make the change, it runs `PRAGMA quick_check` on a connection of its own. A file that
   fails it (overwritten, truncated, pages overwritten) is refused on every route that reads or
   writes the store, `/health` included, with 503 naming the cause; `/metrics`, which reads no
-  store, still answers. A file restored in place is checked again and, sound, served: every
+  store, still answers. While the check runs, every other read and write waits for its
+  verdict. A file restored in place is checked again and, sound, served: every
   connection is opened afresh, so no page read from the damaged file is served, and every kept
-  answer is computed again (it carries the connection generation in its label). A file
+  answer is computed again (it carries the connection generation in its label). That holds for
+  a restore made while the service's `-wal` file holds no writes of its own: SQLite reads the
+  pages that file holds over whatever the store file now holds, so a copy restored while the
+  service has written since its last checkpoint is overlaid by those writes (measured: the
+  service went on answering its own last state, and the next checkpoint wrote it over the
+  copy, whose own entry was lost). Restore a store with the service stopped. A file
   replaced or removed while the service runs is refused until the service is restarted, since
   SQLite's side files belong to the file that was there (Windows refuses to replace or remove
   a file the service holds open). A store made read-only is still read; its writes are refused
@@ -473,7 +479,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   Windows) as the change last seen, at the same size, is seen only at the next change; a
   damaged file is looked at again once a second, so a restore is always seen within a second.
   A legitimate change from outside (another `uasw` command's commit and checkpoint) costs one
-  `quick_check` and the connections opened afresh, besides the journal walk it already cost.
+  `quick_check` and the connections opened afresh, besides the journal walk it already cost;
+  so does each of the service's own checkpoints (about one per 1000 pages written), after
+  which every kept answer, the journal walk included, is computed again on its next read. The
+  check is about 2 ms per MB of store here (18 ms at 9 MB); a damaged store is checked at most
+  once a second, however many requests meet it.
   Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
   last state the service read.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness

@@ -216,7 +216,9 @@ path with no store at it says so (`refused (404)`) rather than making an empty s
 calling it intact; so do the other commands that only read. A running service whose store
 file is overwritten, truncated, replaced or removed from outside refuses every read and write
 of the store with 503 naming the cause, `/health` included, rather than serving what it held
-in memory; restored in place, it serves the restored file. `GET /journal/verify`
+in memory; restored in place, it serves the restored file, provided the service had no writes
+of its own waiting in its `-wal` file (restore with the service stopped; see
+[LIMITS.md](LIMITS.md)). `GET /journal/verify`
 needs the write token, or comes from this machine when none is set, as the writes do: it
 writes nothing, but it reads every row on a call, and [LIMITS.md](LIMITS.md) gives the measured
 cost. The walk is a snapshot on the request thread's own reading connection, so a write made
