@@ -59,7 +59,11 @@ class Holder:
         self.connection = sqlite3.connect(
             str(path), isolation_level=None, timeout=0, check_same_thread=False
         )
-        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+        except BaseException:
+            self.connection.close()  # a lock not taken leaves no connection to collect
+            raise
 
     def release(self) -> None:
         if self.connection.in_transaction:

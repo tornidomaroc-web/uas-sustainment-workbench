@@ -28,7 +28,7 @@ from uas_workbench.ledger import Entry, UnreadableRecord
 from uas_workbench.service import journal
 from uas_workbench.service.cli import main
 from uas_workbench.service.journal import Verification
-from uas_workbench.service.store import Store
+from uas_workbench.service.store import Store, StoreBusy
 
 FIXTURES = Path(__file__).parent / "fixtures"
 AT = datetime(2026, 9, 20, 9, 0, tzinfo=UTC)
@@ -177,7 +177,7 @@ def test_a_second_writer_still_makes_the_commit_wait_and_a_refused_one_moves_not
     db: str,
 ) -> None:
     """WAL has one writer at a time: another connection holding the write lock makes the
-    store's commit wait for busy_timeout and then fail; the write is rolled back and the kept
+    store's commit wait for busy_timeout and then be refused; the write is rolled back, the kept
     result stays where it was, then moves with the next write that is stored."""
     store = Store(db)
     before = store.journal_state()
@@ -185,7 +185,7 @@ def test_a_second_writer_still_makes_the_commit_wait_and_a_refused_one_moves_not
     writer = sqlite3.connect(db, isolation_level=None)
     writer.execute("BEGIN IMMEDIATE")
     try:
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(StoreBusy):  # the database locked, refused (issue #69)
             store.append_entry(entry("SYN-02", "a write that is rolled back"))
     finally:
         writer.execute("ROLLBACK")

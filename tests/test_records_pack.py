@@ -46,7 +46,7 @@ from uas_workbench.service import journal
 from uas_workbench.service.app import create_app
 from uas_workbench.service.cli import main
 from uas_workbench.service.static_export import export_static
-from uas_workbench.service.store import Store
+from uas_workbench.service.store import Store, StoreBusy
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CONFIG = load_config()
@@ -577,7 +577,7 @@ def test_a_write_whose_commit_fails_leaves_the_kept_result_where_it_was(db: str)
     writer = sqlite3.connect(db, isolation_level=None)
     writer.execute("BEGIN IMMEDIATE")
     try:
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(StoreBusy):  # the database locked, refused (issue #69)
             store.append_entry(entry("SYN-02", AT_WRITE, "a write that is rolled back"))
     finally:
         writer.execute("ROLLBACK")
