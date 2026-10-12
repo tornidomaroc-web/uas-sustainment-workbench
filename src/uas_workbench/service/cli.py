@@ -78,14 +78,16 @@ def open_store(path: str, *, create: bool = True) -> Store:
     """The store at `path`, made there on first use by the commands that write (`seed`,
     `serve`, `ingest`, `record`). A command that only reads passes `create=False` and is
     refused (404) when nothing is at `path`, before any file or folder is made: a mistyped
-    `--db` made an empty store there, which `uasw verify` then called intact (issue #73)."""
-    if path != ":memory:" and not create and not Path(path).exists():
+    `--db` made an empty store there, which `uasw verify` then called intact (issue #73).
+    Only "nothing is there" is a 404: a path that cannot be looked at (a folder one may not
+    read) goes on to the open, which refuses it (503) as before, never a traceback."""
+    if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
             f"there is no store at {path}; a command that only reads does not make one, so "
             "check the path, or seed or ingest to make the store",
         )
-    if path != ":memory:":
+    if path != ":memory:" and create:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -94,6 +96,21 @@ def open_store(path: str, *, create: bool = True) -> Store:
     store = Store(path)
     _opened.append(store)
     return store
+
+
+def _nothing_at(path: str) -> bool:
+    """Whether nothing is at `path`, by the operating system's own answer: not found, or a
+    folder in the path that is a file. Any other failure to look (permission refused) is not
+    taken for "nothing there"; `Path.exists` raised it on Python 3.12 and hid it on 3.14."""
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    except ValueError:  # a path the operating system cannot take at all, such as one with NUL
+        return True
+    return False
 
 
 def _when(text: str | None, flag: str) -> datetime | None:
@@ -125,6 +142,12 @@ def seed(store: Store, fixtures: Path) -> tuple[int, int, int] | None:
     config = load_config()
     fleet = generate(config)
     real = showcase(fixtures) if fixtures.exists() else None
+    if real is None:
+        # Said, not silent: an installed package has no fixtures beside it (part of #73).
+        log.warning(
+            "no fixtures: the two showcase aircraft are left out of the seed",
+            extra={"fixtures": str(fixtures), "set": "UASW_FIXTURES or --fixtures"},
+        )
     with store.batch():
         held = store.holds()
         if any(held):

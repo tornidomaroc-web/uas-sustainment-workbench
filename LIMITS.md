@@ -449,7 +449,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   the demo around the seeded fleet's SYN-04 and refuses a store without it (`refused (409)`)
   instead of ending in a traceback; exporting a store of one's own logs is not supported.
   The default `--fixtures` is the folder beside the code when it exists, so a seed run from
-  any working folder includes the two showcase aircraft; `UASW_FIXTURES` still overrides it.
+  any working folder of a checkout, or of an editable install of one, includes the two
+  showcase aircraft; `UASW_FIXTURES` still overrides it. A package installed from a wheel has
+  no fixtures beside it: its seed falls back to `tests/fixtures` in the working folder and,
+  when there is none, leaves the showcase out with a warning in the log (the container sets
+  `UASW_FIXTURES`). A store path a command may not look at (a folder it cannot read) is not
+  taken for a missing store: the open refuses it (`refused (503)`).
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

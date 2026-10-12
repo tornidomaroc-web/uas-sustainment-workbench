@@ -23,6 +23,7 @@ error text, a path or a line ending.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sqlite3
@@ -31,6 +32,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -242,3 +244,44 @@ def test_export_static_refuses_a_store_without_the_sample_aircraft(tmp_path: Pat
     assert code == 1
     assert len(lines) == 1 and lines[0].startswith("refused (409): "), lines
     assert not site.exists()
+
+
+def test_a_store_path_that_cannot_be_looked_at_is_not_called_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Looking at the path is refused (a folder one may not read): that is not "nothing is
+    there", so no 404, and never the traceback `Path.exists` raised for it on Python 3.12;
+    the open is refused (503) as it was before. Made certain in this process by refusing
+    `os.stat` for one path, which is a folder, so the open fails as it would for real."""
+    from uas_workbench.service.cli import main
+
+    walled = tmp_path / "walled.sqlite"
+    walled.mkdir()
+    stat = os.stat
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == str(walled):
+            raise PermissionError(13, "permission refused", str(walled))
+        return stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refusing)
+    with pytest.raises(SystemExit) as code:
+        main(["--db", str(walled), "verify"])
+    monkeypatch.undo()
+    assert code.value.code == 1
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln and not ln.startswith("{")]
+    assert len(lines) == 1 and lines[0].startswith("refused (503): "), lines
+    assert walled.is_dir() and not any(walled.iterdir())
+
+
+def test_a_seed_without_fixtures_says_so(tmp_path: Path) -> None:
+    """An installed package has no fixtures beside it; its seed leaves the two showcase
+    aircraft out, and says so in the log instead of only in a count."""
+    db = tmp_path / "fleet.sqlite"
+    missing = tmp_path / "no-such-fixtures"
+    code, _, err = uasw(tmp_path, "--db", str(db), "seed", "--fixtures", str(missing))
+    assert code == 0, err
+    assert rows(db)[:2] == (7, 30)
+    logged = [json.loads(ln) for ln in err.splitlines() if ln.startswith("{")]
+    warned = [r for r in logged if r.get("level") == "WARNING"]
+    assert len(warned) == 1 and "showcase" in warned[0]["message"], logged
