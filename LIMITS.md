@@ -455,6 +455,27 @@ field-level tables. This file is about what that means for a maintenance tool.
   when there is none, leaves the showcase out with a warning in the log (the container sets
   `UASW_FIXTURES`). A store path a command may not look at (a folder it cannot read) is not
   taken for a missing store: the open refuses it (`refused (503)`).
+- **A store file damaged while `uasw serve` runs is refused, with nothing written.** SQLite
+  does not see a file changed outside it: its connections go on serving the pages they hold.
+  So the store looks at its file (one `stat`, about 6 µs here: which file, size, time of last
+  change, permissions) before every read and every write, and when the file changed and SQLite
+  did not make the change, it runs `PRAGMA quick_check` on a connection of its own. A file that
+  fails it (overwritten, truncated, pages overwritten) is refused on every route that reads or
+  writes the store, `/health` included, with 503 naming the cause; `/metrics`, which reads no
+  store, still answers. A file restored in place is checked again and, sound, served: every
+  connection is opened afresh, so no page read from the damaged file is served, and every kept
+  answer is computed again (it carries the connection generation in its label). A file
+  replaced or removed while the service runs is refused until the service is restarted, since
+  SQLite's side files belong to the file that was there (Windows refuses to replace or remove
+  a file the service holds open). A store made read-only is still read; its writes are refused
+  with 503. Anything else SQLite refuses on the file is a 503 with SQLite's sentence, never a
+  500. What this does not catch: a change landing within the same clock tick (about 15 ms on
+  Windows) as the change last seen, at the same size, is seen only at the next change; a
+  damaged file is looked at again once a second, so a restore is always seen within a second.
+  A legitimate change from outside (another `uasw` command's commit and checkpoint) costs one
+  `quick_check` and the connections opened afresh, besides the journal walk it already cost.
+  Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
+  last state the service read.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

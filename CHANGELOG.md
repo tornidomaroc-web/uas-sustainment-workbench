@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- A store file damaged while `uasw serve` runs is refused with 503 naming the cause, never
+  served from memory and never a 500 (part of #73). SQLite does not see a file changed
+  outside it, so a store overwritten, truncated or with its pages overwritten under a running
+  service was answered 200 on every read and 201 on every write (onto the damaged file), with
+  `/health` "ok"; truncated or overwritten, the first page read from disk gave a 500; and
+  restored from a good copy, 16 of 22 reads still answered 500 from the pages read meanwhile.
+  The store now looks at its file (one `stat`) before every read and write and, when it
+  changed outside SQLite, runs `PRAGMA quick_check`: damaged, replaced or removed, every route
+  that reads or writes the store answers 503 naming why, `/health` included, nothing written
+  (`StoreDamaged`); restored in place, every connection is opened afresh and every kept answer
+  computed again (labels carry a connection generation), and it serves and writes again.
+  Anything else SQLite refuses on the file is a 503 with SQLite's sentence. No response,
+  record, pack or hash changes on a sound store: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
+  stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, every GET on a
+  clean store and the exported site are byte for byte what they were with the clock masked.
 - A command that only reads refuses a store that does not exist, and tests that launch
   `uasw` run the code under test (part of #73). `uasw verify` given a mistyped `--db` made an
   empty store there and answered that its journal was intact, exit 0; `verify`, `records`,

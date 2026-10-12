@@ -65,12 +65,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sqlite3
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from uas_workbench.fleet.model import Aircraft, Fleet
@@ -149,6 +152,39 @@ class StoreBusy(Exception):
         self.detail = detail
 
 
+class StoreDamaged(Exception):
+    """The store file was changed while the store had it open, in a way SQLite did not make,
+    and does not pass SQLite's check; or it was replaced or removed (part of issue #73). Every
+    read and write is refused (the service answers 503 with the sentence) until the file is
+    restored in place; a replaced or removed file needs the service restarted."""
+
+    status = 503
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class _FileState:
+    """What one `stat` says of the store file: which file it is, its size, when it was last
+    changed and its permissions. SQLite's own writes to it are checkpoints."""
+
+    identity: tuple[int, int]
+    size: int
+    changed_ns: int
+    mode: int
+
+
+def _file_state(path: str) -> _FileState | None:
+    """The store file as it is now, or None when nothing is at `path`."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    return _FileState((st.st_dev, st.st_ino), st.st_size, st.st_mtime_ns, stat.S_IMODE(st.st_mode))
+
+
 def _busy(exc: sqlite3.OperationalError) -> bool:
     """Whether SQLite refused because another connection held the lock (the result code,
     never the message, which differs between builds)."""
@@ -193,10 +229,7 @@ class Store:
         # The writing connection, used under the write lock only. The lock is re-entrant: a
         # store in memory has this one connection, so its reads take the lock too, and a read
         # made while the lock is held (a write that reads first) must not wait for itself.
-        self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-        self._db.execute("PRAGMA foreign_keys = ON")
-        self._db.execute("PRAGMA synchronous = FULL")
+        self._db = self._open_writer()
         self._lock = threading.RLock()
         # One reading connection per thread, opened on the thread's first read and kept in
         # `_readers` so `close` can close every one of them; a thread finds its own, and the
@@ -213,6 +246,17 @@ class Store:
         self._since: tuple[int, int] | None = None
         self._closed = False
         self._batching = False  # inside `batch`: writes join its one transaction
+        # The store file as last seen, and what is wrong with it if anything (`_watch`). The
+        # generation moves when the file changed outside SQLite and passed the check: every
+        # connection opened before it is opened again before its next use, and it is part of
+        # every label, so no answer kept from a connection of an older generation is used.
+        self._file: _FileState | str | None = None
+        self._identity: tuple[int, int] | None = None
+        self._damaged: str | None = None
+        self._generation = 0
+        self._writer_generation = 0
+        self._watch_lock = threading.Lock()
+        self._checked_at = 0.0  # when the file was last checked (monotonic seconds)
         # An open writes only on a store that needs it (one 0.5.x left: the switch to WAL, the
         # journal table, the migration); each waits for another connection's write lock up to
         # the busy timeout and, past it, the open is refused with nothing written and every
@@ -230,6 +274,10 @@ class Store:
             if isinstance(exc, sqlite3.OperationalError) and _busy(exc):
                 raise StoreBusy(BUSY_OPEN) from exc
             raise
+        if path != ":memory:":
+            seen = _file_state(path)
+            self._file = seen
+            self._identity = seen.identity if seen is not None else None
         # The answers kept rather than computed on every call: the whole-ledger projection,
         # the first record that cannot be read (`readable`, behind /health) and the last walk
         # of the journal (`journal_state`, behind the records summaries), each labelled.
@@ -273,6 +321,94 @@ class Store:
 
     # ---- connections and snapshots ---------------------------------------------------
 
+    def _open_writer(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._path, check_same_thread=False)
+        connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA synchronous = FULL")
+        return connection
+
+    # ---- the store file, changed outside SQLite ---------------------------------------
+
+    def _watch(self) -> None:
+        """Before every read and every write on a file store: one `stat` of the store file.
+        SQLite does not see a file changed outside it, and its connections go on serving the
+        pages they hold in memory; so when the file is not as last seen, it is checked
+        (`_damage_in`). Damaged, replaced or removed, every read and write is refused as
+        `StoreDamaged` until the file changes again and passes; sound (a commit and checkpoint
+        by another connection, one of this store's own checkpoints, a file restored in place),
+        the generation moves, so every connection is opened afresh before its next use and
+        every kept answer is computed again. Takes a lock of its own, never the write lock."""
+        if self._labeller is None:
+            return
+        if self._damaged is None and self._seen() == self._file:
+            return
+        with self._watch_lock:
+            now = self._seen()
+            # A file's time of last change moves with the clock's tick (about 15 ms on
+            # Windows), so a restore landing within the tick of the damage, at the same size,
+            # looks unchanged: a damaged file is looked at again once a second regardless.
+            again = self._damaged is not None and time.monotonic() - self._checked_at >= 1.0
+            if now != self._file or again:
+                self._file = now
+                self._checked_at = time.monotonic()
+                self._damaged = self._damage_in(now)
+                if self._damaged is None:
+                    # Every label carries the generation, so no answer kept before is used.
+                    self._generation += 1
+            damaged = self._damaged
+        if damaged is not None:
+            raise StoreDamaged(damaged)
+
+    def _seen(self) -> _FileState | str | None:
+        try:
+            return _file_state(self._path)
+        except OSError as exc:
+            return f"cannot be looked at ({exc.strerror or exc})"
+
+    def _damage_in(self, now: _FileState | str | None) -> str | None:
+        """What is wrong with the store file as `now` describes it, or None when it is sound."""
+        if now is None:
+            return "the store file was removed while the service has it open; restart the service"
+        if isinstance(now, str):
+            return f"the store file {now}"
+        if now.identity != self._identity:
+            return (
+                "the store file was replaced while the service has it open; restart the "
+                "service to use the file now there"
+            )
+        uri = Path(self._path).resolve().as_uri() + "?mode=rw"
+        try:
+            check = sqlite3.connect(uri, uri=True)
+            try:
+                check.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+                rows = check.execute("PRAGMA quick_check(1)").fetchall()
+            finally:
+                check.close()
+        except sqlite3.Error as exc:
+            problem = str(exc)
+        else:
+            if rows == [("ok",)]:
+                return None
+            problem = str(rows[0][0]) if rows else "no answer"
+        return (
+            f"the store file was changed outside the service and fails SQLite's check "
+            f"({problem}); restore it from a good copy"
+        )
+
+    def _ready_to_write(self) -> None:
+        """Under the write lock, before a write that opens its own transaction: the file is
+        looked at, and the writing connection opened afresh when the file changed outside."""
+        if self._labeller is None or self._db.in_transaction:
+            return
+        self._watch()
+        if self._writer_generation != self._generation:
+            stale, self._db = self._db, self._open_writer()
+            self._writer_generation = self._generation
+            self._since = None
+            with contextlib.suppress(sqlite3.Error):
+                stale.close()
+
     def _open_reader(self) -> sqlite3.Connection:
         """A connection for reads on the store file: autocommit, so that `BEGIN` and
         `ROLLBACK` below bound exactly one read transaction; query-only, so nothing is ever
@@ -288,20 +424,33 @@ class Store:
         return connection
 
     def _reader(self) -> sqlite3.Connection:
-        """This thread's own reading connection, opened on its first read."""
+        """This thread's own reading connection, opened on its first read, and again when
+        the store file changed outside SQLite since it was opened (`_watch`)."""
         connection: sqlite3.Connection | None = getattr(self._local, "reader", None)
+        if connection is not None and self._local.generation != self._generation:
+            with self._readers_lock:
+                if connection in self._readers:
+                    self._readers.remove(connection)
+            with contextlib.suppress(sqlite3.Error):
+                connection.close()
+            connection = None
         if connection is None:
+            generation = self._generation
             connection = self._open_reader()
             self._local.reader = connection
+            self._local.generation = generation
         return connection
 
-    def _label(self) -> int:
-        """The label of the state the file holds now: the labelling connection's
-        `PRAGMA data_version`, which moves on every commit to the file by any connection and
-        on nothing else, read under its own lock so that no two threads step its statement."""
+    def _label(self, generation: int) -> int:
+        """The label of the state the file holds now, as seen by a connection of
+        `generation`: the labelling connection's `PRAGMA data_version`, which moves on every
+        commit to the file by any connection and on nothing else, read under its own lock so
+        that no two threads step its statement, with the generation above it, so a label of a
+        later generation is always the greater and never equal to an earlier one."""
         assert self._labeller is not None
         with self._label_lock:
-            return int(self._labeller.execute("PRAGMA data_version").fetchone()[0])
+            version = int(self._labeller.execute("PRAGMA data_version").fetchone()[0])
+        return (generation << 40) | version
 
     @contextlib.contextmanager
     def snapshot(self) -> Iterator[None]:
@@ -335,6 +484,7 @@ class Store:
                     self._local.depth = 0
                     self._local.snapshot = None
             return
+        self._watch()
         connection = self._reader()
         label = self._begin(connection)
         self._local.snapshot = self._capture(label)
@@ -354,12 +504,13 @@ class Store:
         label is read before and after the transaction's first read, and the transaction
         stands only when the two agree, so no commit landed between them and the state the
         transaction pinned is the one the label names."""
+        generation: int = self._local.generation
         for _ in range(1000):
-            before = self._label()
+            before = self._label(generation)
             connection.execute("BEGIN")
             # The first read pins the snapshot; a bare BEGIN pins nothing.
             connection.execute("PRAGMA data_version").fetchone()
-            if self._label() == before:
+            if self._label(generation) == before:
                 return before
             connection.execute("ROLLBACK")
         raise RuntimeError("the store never stood still long enough to read one state of it")
@@ -412,7 +563,7 @@ class Store:
         label says no connection committed since, so that version is as it was then."""
         if self._labeller is None:
             return _BeforeCommit(0, self._own_commits)
-        label = self._label()
+        label = self._label(self._writer_generation)
         if self._since is not None and self._since[1] == label:
             return _BeforeCommit(self._since[0], label)
         # The writing connection's version first, the label after it: a commit from outside
@@ -421,7 +572,7 @@ class Store:
         # other way round, it was in the version and not in the label, and the kept answers
         # of the state before it were moved on over it.
         outside = _data_version(self._db)
-        return _BeforeCommit(outside, self._label())
+        return _BeforeCommit(outside, self._label(self._writer_generation))
 
     def _after_commit(self, before: _BeforeCommit, head: str | None, entries: bool) -> None:
         """Under the write lock, after an own commit went through: move the kept answers on
@@ -447,7 +598,7 @@ class Store:
             self._own_commits += 1
             after, exact = self._own_commits, True
         else:
-            after = self._label()
+            after = self._label(self._writer_generation)
             outside = _data_version(self._db)
             exact = outside == before.outside
             self._since = (outside, after)
@@ -506,6 +657,7 @@ class Store:
 
     def add_aircraft(self, aircraft: Aircraft) -> None:
         with self._lock:
+            self._ready_to_write()
             before = self._before_commit()
             with self._committing():
                 self._db.execute(
@@ -531,6 +683,7 @@ class Store:
         text = json.dumps(record_to_json(record))
         try:
             with self._lock:
+                self._ready_to_write()
                 before = self._before_commit()
                 with self._committing():
                     if aircraft is not None:
@@ -569,6 +722,7 @@ class Store:
         with self._lock:
             if self._batching or self._db.in_transaction:
                 raise RuntimeError("a batch of writes cannot be nested")
+            self._ready_to_write()
             try:
                 self._db.execute("BEGIN" if self._labeller is None else "BEGIN IMMEDIATE")
             except sqlite3.OperationalError as exc:
@@ -617,6 +771,7 @@ class Store:
     def append_entry(self, entry: Entry) -> Entry:
         """Insert one entry and return it with its id. Validation is the ledger's job."""
         with self._lock:
+            self._ready_to_write()
             before = self._before_commit()
             with self._committing():
                 cursor = self._db.execute(
@@ -668,6 +823,7 @@ class Store:
             if self._labeller is None or self._db.in_transaction:
                 yield
                 return
+            self._ready_to_write()
             try:
                 self._db.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as exc:
