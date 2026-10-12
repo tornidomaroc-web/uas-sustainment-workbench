@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- A seed is one transaction, and no `uasw` command ends in a traceback on ordinary bad input
+  or state (closes #72). `uasw seed` and the seeding `uasw serve` does on first start wrote
+  about a hundred commits: a seed refused partway left part of the fleet, a second seed ended
+  in a `DuplicateFlight` traceback, and `uasw serve` did not seed a store with flights, so a
+  partial store stayed partial. A seed now runs in `Store.batch()`, which takes the store's
+  lock and SQLite's write transaction before it looks at the store and commits or rolls back
+  everything together: refused or failing partway it writes nothing, it writes only to a
+  store that holds nothing, `uasw seed` on any other store is one `refused (409)` line, and
+  two seeds of one new file at once seed it once; it holds the write lock about 10 ms where
+  its commits took about 0.4 s. A sweep of every command found more tracebacks, now each one
+  `refused (NNN)` line and exit 1: a store file that is not a database, is truncated, is a
+  directory, sits under a file, or is read-only when written (503); a `--at` or `--as-of`
+  that is not a date (422); an output path that cannot be written (422). No response, record,
+  pack or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
+  stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every GET on
+  a clean store is byte for byte what it was with the clock masked.
 - A store another connection holds is waited for, then refused whole, never with a traceback
   or a 500 after a commit (closes #69 and #70). An ingest writes a new aircraft's row and its
   flight in one transaction, where a writer taking the store between the two commits left a

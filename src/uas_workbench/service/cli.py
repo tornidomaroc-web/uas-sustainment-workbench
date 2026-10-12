@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sqlite3
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from uas_workbench.assistant import RefusedCall
@@ -47,20 +49,65 @@ READERS = {".ulg": read_ulog, ".bin": read_dataflash}
 _opened: list[Store] = []
 
 
+class Refused(Exception):
+    """A command refused on its input or on the state of its store: one
+    `refused (status): detail` line on stderr and exit 1 from `main`, never a traceback
+    (issue #72). The status is the one the service would answer."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
 def open_store(path: str) -> Store:
     if path != ":memory:":
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            detail = f"the store {path} cannot be opened: {exc.strerror or exc}"
+            raise Refused(503, detail) from exc
     store = Store(path)
     _opened.append(store)
     return store
 
 
-def seed(store: Store, fixtures: Path) -> None:
+def _when(text: str | None, flag: str) -> datetime | None:
+    """A date and time given on the command line, in UTC when it names no offset; refused
+    (422), as the service refuses a date it cannot read, when it is not one."""
+    if text is None:
+        return None
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError as exc:
+        detail = f"{flag} {text!r} is not a date and time in ISO 8601, such as 2026-09-01T09:00Z"
+        raise Refused(422, detail) from exc
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+
+
+def _write(path: Path, text: str) -> None:
+    """Write one output file, its folder made first; refused (422) when it cannot be."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise Refused(422, f"cannot write {path}: {exc.strerror or exc}") from exc
+
+
+def seed(store: Store, fixtures: Path) -> tuple[int, int, int] | None:
+    """Seed an empty store with the synthetic fleet and the showcase in one transaction
+    (`Store.batch`): a seed refused or failing partway writes nothing (issue #72). A store
+    that holds anything is left as it is and what it holds is returned; None when seeded."""
     config = load_config()
-    store.add_fleet(generate(config))
+    fleet = generate(config)
     real = showcase(fixtures) if fixtures.exists() else None
-    if real is not None:
-        store.add_fleet(real)
+    with store.batch():
+        held = store.holds()
+        if any(held):
+            return held
+        store.add_fleet(fleet)
+        if real is not None:
+            store.add_fleet(real)
     log.info(
         "seeded",
         extra={
@@ -70,10 +117,18 @@ def seed(store: Store, fixtures: Path) -> None:
             "showcase": real is not None,
         },
     )
+    return None
 
 
 def cmd_seed(args: argparse.Namespace) -> None:
-    seed(open_store(args.db), args.fixtures)
+    held = seed(open_store(args.db), args.fixtures)
+    if held is not None:
+        aircraft, flights, entries = held
+        raise Refused(
+            409,
+            f"the store already holds {aircraft} aircraft, {flights} flights and {entries} "
+            "entries; a seed writes only to an empty store, so nothing was written",
+        )
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -82,8 +137,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     from .app import create_app
 
     store = open_store(args.db)
-    if store.flight_count() == 0:
-        seed(store, args.fixtures)
+    seed(store, args.fixtures)  # an empty store only; one that holds anything is left as is
     uvicorn.run(create_app(store), host=args.host, port=args.port, log_config=None)
 
 
@@ -128,7 +182,12 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 def cmd_export_static(args: argparse.Namespace) -> None:
     from .static_export import export_static
 
-    out = export_static(open_store(args.db), args.out)
+    store = open_store(args.db)
+    try:
+        out = export_static(store, args.out)
+    except OSError as exc:
+        detail = f"cannot write the static site to {args.out}: {exc.strerror or exc}"
+        raise Refused(422, detail) from exc
     log.info("exported", extra={"out": str(out)})
 
 
@@ -141,9 +200,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
     from uas_workbench.assistant.recording import from_answer, save
 
     caller = service_caller(args.url)
-    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=UTC)
+    as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     backend = OllamaBackend(args.model, host=args.ollama)
     answer = ask(args.question, backend=backend, caller=caller, as_of=as_of)
     print(answer.text)
@@ -157,7 +214,10 @@ def cmd_ask(args: argparse.Namespace) -> None:
     print(f"Model {answer.model_tag} ({answer.model_digest[:12]}), as of {as_of.isoformat()}")
     if args.record:
         recording = from_answer(answer, datetime.now(UTC).replace(microsecond=0))
-        save(recording, args.record)
+        try:
+            save(recording, args.record)
+        except OSError as exc:
+            raise Refused(422, f"cannot write {args.record}: {exc.strerror or exc}") from exc
         log.info(
             "recorded", extra={"path": str(args.record), "grounded": answer.grounding.verified}
         )
@@ -192,16 +252,13 @@ def cmd_evidence(args: argparse.Namespace) -> None:
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
-    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=UTC)
+    as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     pack = build_pack(store, args.aircraft, load_config(), as_of=as_of, commit=current_commit())
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render_html(pack), encoding="utf-8")
+    _write(args.out, render_html(pack))
     written = [str(args.out)]
     if args.json:
         path = args.out.with_suffix(".json")
-        path.write_text(json.dumps(pack, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write(path, json.dumps(pack, indent=1, ensure_ascii=False) + "\n")
         written.append(str(path))
     log.info("evidence", extra={"aircraft_key": args.aircraft, "out": written})
     print(f"{pack['title']}: written to {', '.join(written)}. {pack['statement'][1]}")
@@ -219,16 +276,13 @@ def cmd_records(args: argparse.Namespace) -> None:
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
-    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=UTC)
+    as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     pack = build_records(store, args.aircraft, load_config(), as_of=as_of, commit=current_commit())
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render_records_html(pack), encoding="utf-8")
+    _write(args.out, render_records_html(pack))
     written = [str(args.out)]
     if args.json:
         path = args.out.with_suffix(".json")
-        path.write_text(json.dumps(pack, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write(path, json.dumps(pack, indent=1, ensure_ascii=False) + "\n")
         written.append(str(path))
     log.info("records", extra={"aircraft_key": args.aircraft, "out": written})
     print(
@@ -245,16 +299,13 @@ def cmd_fleet_records(args: argparse.Namespace) -> None:
     from uas_workbench.evidence import build_fleet_records, render_fleet_records_html
 
     store = open_store(args.db)
-    as_of = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(UTC)
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=UTC)
+    as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     summary = build_fleet_records(store, load_config(), as_of=as_of, commit=current_commit())
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render_fleet_records_html(summary), encoding="utf-8")
+    _write(args.out, render_fleet_records_html(summary))
     written = [str(args.out)]
     if args.json:
         path = args.out.with_suffix(".json")
-        path.write_text(json.dumps(summary, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write(path, json.dumps(summary, indent=1, ensure_ascii=False) + "\n")
         written.append(str(path))
     log.info("fleet records", extra={"aircraft": summary["counts"]["aircraft"], "out": written})
     print(
@@ -294,7 +345,7 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details:
 
     now = datetime.now(UTC).replace(microsecond=0)
     store = open_store(args.db)
-    at = datetime.fromisoformat(args.at) if args.at else now
+    at = _when(args.at, "--at") or now
     if at.tzinfo is None:
         at = at.replace(tzinfo=UTC)
     supersedes = getattr(args, "supersedes", None)
@@ -557,6 +608,16 @@ def main(argv: list[str] | None = None) -> None:
         # Another connection held the store's write lock past the busy timeout, at the open
         # (issue #70) or at a write: the service's 503, one line, nothing written.
         print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    except Refused as exc:
+        # Bad input, or a store in a state the command cannot use (issue #72): one line.
+        print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    except sqlite3.DatabaseError as exc:
+        # A store file that is not a database, is damaged, cannot be opened, or is read-only
+        # when written (issue #72): the service's 503, one line, nothing written.
+        db = getattr(args, "db", None)
+        print(f"refused (503): the store {db} cannot be read or written: {exc}", file=sys.stderr)
         sys.exit(1)
     except RefusedCall as exc:
         # The service refused a tool call of `uasw ask` (issue #46), or did not answer, or

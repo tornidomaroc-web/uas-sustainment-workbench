@@ -18,18 +18,21 @@ or a line ending.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
 import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from uas_workbench.ledger import Entry
 from uas_workbench.ledger.project import project
 from uas_workbench.service.store import Store
 
@@ -314,3 +317,136 @@ def test_a_write_to_a_read_only_store_is_one_refusal_line(
     assert code == 1
     assert len(lines) == 1 and lines[0].startswith("refused (503): "), lines
     assert counts(seeded) == before
+
+
+# ---- the batch: one transaction, nothing kept from inside it ---------------------------------
+
+SEEDER = """
+import pathlib, sys, time
+from uas_workbench.service.cli import main
+ready, go = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+ready.touch()
+deadline = time.monotonic() + 60
+while not go.exists():
+    if time.monotonic() > deadline:
+        sys.exit(3)
+    time.sleep(0.001)
+main(sys.argv[3:])
+"""
+
+
+def test_two_seeds_of_one_new_store_at_once_seed_it_once(tmp_path: Path) -> None:
+    """Two `uasw seed` processes started at one instant on one new file: the seed takes the
+    write lock before it looks at the store, so the second waits for the first, finds the
+    fleet there and is refused (409); the store holds one fleet, with the pinned head."""
+    db = tmp_path / "fleet.sqlite"
+    go = tmp_path / "go"
+    readies = [tmp_path / f"ready-{i}" for i in range(2)]
+    env = {k: v for k, v in os.environ.items() if k != "UASW_WRITE_TOKEN"}
+    procs = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                SEEDER,
+                str(r),
+                str(go),
+                "--db",
+                str(db),
+                "seed",
+                "--fixtures",
+                str(FIXTURES),
+            ],
+            cwd=tmp_path,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for r in readies
+    ]
+    try:
+        while not all(r.exists() for r in readies):
+            assert all(p.poll() is None for p in procs), "a seed process ended early"
+        go.touch()
+        outs = [p.communicate(timeout=180) for p in procs]
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+                p.communicate()
+    errs = [[ln for ln in e.strip().splitlines() if not ln.startswith("{")] for _, e in outs]
+    assert sorted(p.returncode for p in procs) == [0, 1], errs
+    refused = errs[[p.returncode for p in procs].index(1)]
+    assert len(refused) == 1 and refused[0].startswith("refused (409): "), refused
+    assert counts(db)[4] == SEEDED_HEAD
+
+
+def test_nothing_kept_from_inside_a_batch_outlives_it(empty: Store) -> None:
+    """Answers asked for inside a batch, by its own thread (which on a store in memory reads
+    the batch's own writes) and, on a file store, by another thread (which reads the state
+    before it and must not be handed a kept answer that counts the batch's uncommitted
+    link), are never kept past a rollback as if they described the store."""
+    CLI.seed(empty, FIXTURES)
+    assert_kept_equal_fresh(empty)
+    before = held(empty), empty.verify_journal()
+    beside: list[bool] = []
+    first = empty.entries()[0]
+    with pytest.raises(RuntimeError, match="roll it back"), empty.batch():
+        empty.append_entry(Entry(**{**first.__dict__, "id": None, "statement": "in a batch"}))
+        empty.projection()
+        empty.journal_state()
+        empty.readable()
+        if empty._labeller is not None:
+
+            def other() -> None:
+                beside.append(empty.journal_state() == empty.verify_journal())
+
+            reader = threading.Thread(None, other)
+            reader.start()
+            reader.join(30)
+            assert beside == [True]
+        raise RuntimeError("roll it back")
+    assert (held(empty), empty.verify_journal()) == before
+
+    assert_kept_equal_fresh(empty)
+
+
+def test_two_seeds_that_both_find_the_store_empty_cannot_both_go_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two stores on one new file (two connections each, as two processes) seed at once, each
+    held for up to a second right after it has looked at the store. The seed looks inside the
+    write transaction it opened before looking, so the second cannot look until the first has
+    committed: one seeds, the other finds the fleet and writes nothing. A seed that looked
+    before taking the lock would let both find the store empty."""
+    db = tmp_path / "fleet.sqlite"
+    first, second = Store(str(db)), Store(str(db))
+    looked = threading.Barrier(2)
+    holds = Store.holds
+
+    def slow(self: Store) -> tuple[int, int, int]:
+        found = holds(self)
+        with contextlib.suppress(threading.BrokenBarrierError):
+            looked.wait(timeout=1.0)
+        return found
+
+    monkeypatch.setattr(Store, "holds", slow)
+    outcomes: list[str] = []
+
+    def seeding(store: Store) -> None:
+        try:
+            outcomes.append("seeded" if CLI.seed(store, FIXTURES) is None else "held")
+        except Exception as exc:  # anything else is the failure this test is for
+            outcomes.append(type(exc).__name__)
+
+    threads = [threading.Thread(None, seeding, args=(s,)) for s in (first, second)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert sorted(outcomes) == ["held", "seeded"], outcomes
+    assert first.verify_journal().head == SEEDED_HEAD
+    for s in (first, second):
+        assert_kept_equal_fresh(s)
+        s.close()

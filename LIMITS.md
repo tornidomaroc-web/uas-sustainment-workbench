@@ -430,9 +430,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   to WAL and journals it, waits for another connection's write lock as every write does; past
   the busy timeout it is refused with one `refused (503)` line and exit 1, `uasw serve`
   included, with the file as it was, where it failed at once with a traceback (SQLite does not
-  apply the busy timeout to that switch, so the store retries it; issue #70). What stays:
-  `uasw seed` and the seeding `uasw serve` does on an empty store are many commits, so a seed
-  refused midway keeps the rows it wrote before the refusal.
+  apply the busy timeout to that switch, so the store retries it; issue #70). A seed, by
+  `uasw seed` or by `uasw serve` on its first start, is one transaction that takes the write
+  lock before it looks at the store: refused or failing partway it writes nothing, and it
+  writes only to a store that holds nothing, so `uasw seed` on any other store is one
+  `refused (409)` line naming what the store holds, and `uasw serve` leaves such a store as
+  it is (issue #72; before, a seed was about a hundred commits, a seed refused partway left
+  part of the fleet, a second seed ended in a traceback, and `uasw serve` seeded a store that
+  held aircraft but no flight). The seed holds the lock about 10 ms where its commits took
+  about 0.4 s on the machine measured. Two seeds of one new file at once seed it once.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the
