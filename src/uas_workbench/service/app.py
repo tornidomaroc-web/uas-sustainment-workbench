@@ -6,6 +6,7 @@ import dataclasses
 import gc
 import logging
 import os
+import sqlite3
 import tempfile
 import time
 import uuid
@@ -53,7 +54,7 @@ from .observability import (
     HTTP_LATENCY,
     HTTP_REQUESTS,
 )
-from .store import DuplicateFlight, Store, StoreBusy
+from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged
 
 logger = logging.getLogger("uasw.http")
 
@@ -774,6 +775,24 @@ def create_app(
         return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
 
     app.add_exception_handler(StoreBusy, busy)
+
+    async def damaged(request: Request, exc: Exception) -> JSONResponse:
+        """The store file changed outside the service and fails SQLite's check, or was
+        replaced or removed, while the service ran (part of issue #73): 503 naming it, on
+        every route that reads or writes the store, /health included, nothing written."""
+        assert isinstance(exc, StoreDamaged)
+        return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
+
+    app.add_exception_handler(StoreDamaged, damaged)
+
+    async def unusable(request: Request, exc: Exception) -> JSONResponse:
+        """Anything else SQLite refuses on the store file (it cannot be opened, written or
+        read): 503 with SQLite's sentence, never a 500; a write is rolled back with it."""
+        detail = f"the store cannot be read or written: {exc}"
+        logger.warning("store refused", extra={"detail": detail})
+        return JSONResponse(status_code=503, content={"detail": detail})
+
+    app.add_exception_handler(sqlite3.DatabaseError, unusable)
 
     def writer(request: Request) -> None:
         """Every write goes through here, POST /entries and POST /ingest, and so does

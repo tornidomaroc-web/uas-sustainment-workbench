@@ -63,7 +63,8 @@ def call(
         with urllib.request.urlopen(req, timeout=60) as r:
             status, text = r.status, r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
-        status, text = e.code, e.read().decode("utf-8")
+        with e:  # an error answer holds its response open until closed
+            status, text = e.code, e.read().decode("utf-8")
     try:
         return status, json.loads(text)
     except ValueError:
@@ -305,9 +306,18 @@ def test_a_reader_meets_the_damage_without_waiting_for_a_write_and_kept_answers_
     seeding.add_fleet(generate(load_config()))
     seeding.close()
     original = db.read_bytes()
+    copy = tmp_path / "copy.sqlite"
+    copy.write_bytes(original)
+    other_store = Store(str(copy))
+    held_entries = other_store.entry_count()
+    first = other_store.entries()[0]
+    other_store.append_entry(type(first)(**{**first.__dict__, "id": None, "statement": "copy"}))
+    other_store.close()
+    other = copy.read_bytes()
     store = Store(str(db))
     try:
         assert store.readable() is None and store.journal_state().ok
+        store.entries()  # this thread's connection now holds pages of the file as it was
         inside, release = threading.Event(), threading.Event()
 
         def hold() -> None:
@@ -335,9 +345,31 @@ def test_a_reader_meets_the_damage_without_waiting_for_a_write_and_kept_answers_
         assert not reader.is_alive(), "a read waited for the write lock"
         assert len(outcome) == 1 and isinstance(outcome[0], store_module.StoreDamaged), outcome
 
+        # Restored with its time of last change set back to the damaged file's (the same size
+        # too): it looks unchanged, as a restore within one clock tick of the damage does, and
+        # only the store's once-a-second second look finds it.
+        damaged_at = os.stat(db).st_mtime_ns
         db.write_bytes(original)
-        assert store.readable() is None
+        os.utime(db, ns=(damaged_at, damaged_at))
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                assert store.readable() is None
+                break
+            except store_module.StoreDamaged:
+                assert time.monotonic() < deadline, "not recovered after the restore"
+                time.sleep(0.1)
         assert store.journal_state() == store.verify_journal()
+        assert store.projection() == project(store.entries())
+        before = store.journal_state()
+
+        # Then a different good copy put in place (one more entry): nothing kept from the
+        # file before, and no page a connection held from it, is served.
+        db.write_bytes(other)
+        after = store.journal_state()
+        assert after == store.verify_journal()
+        assert after.length == before.length + 1 and after.head != before.head
+        assert store.entry_count() == len(store.entries()) == held_entries + 1
         assert store.projection() == project(store.entries())
     finally:
         store.close()

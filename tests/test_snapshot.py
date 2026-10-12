@@ -433,7 +433,7 @@ def own_write_meeting_an_outside_commit(
             outside(path)
         return value
 
-    monkeypatch.setattr(store, "_label", lambda: around(label))
+    monkeypatch.setattr(store, "_label", lambda generation: around(lambda: label(generation)))
     monkeypatch.setattr(store_module, "_data_version", lambda c: around(lambda: data_version(c)))
     store.append_entry(entry("SYN-02", "own"))
     monkeypatch.undo()

@@ -34,7 +34,7 @@ from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.ledger import UnreadableRecord
 
 from .observability import configure_logging
-from .store import DuplicateFlight, Store, StoreBusy
+from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged
 
 log = logging.getLogger("uasw.cli")
 
@@ -659,7 +659,7 @@ def main(argv: list[str] | None = None) -> None:
         # with the record named; never a traceback. `uasw verify` reports the same row.
         print(f"refused (503): {exc.detail}", file=sys.stderr)
         sys.exit(1)
-    except StoreBusy as exc:
+    except (StoreBusy, StoreDamaged) as exc:
         # Another connection held the store's write lock past the busy timeout, at the open
         # (issue #70) or at a write: the service's 503, one line, nothing written.
         print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
