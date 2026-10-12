@@ -10,11 +10,23 @@ the test opened, at the end of the module for one a module-scoped fixture opened
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 
 import pytest
+from child_code import check_children_run_this_code, pinned_pythonpath
 
 from uas_workbench.service.store import Store
+
+# Every `uasw` child a test launches runs the code under test, wherever it starts (part of
+# issue #73): the folder this process imported `uas_workbench` from goes first on PYTHONPATH,
+# every entry absolute, before any test runs; `children_run_this_code` checks it once.
+os.environ["PYTHONPATH"] = pinned_pythonpath(os.environ.get("PYTHONPATH"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def children_run_this_code() -> None:
+    check_children_run_this_code()
 
 
 def _closing_every_store() -> Iterator[None]:

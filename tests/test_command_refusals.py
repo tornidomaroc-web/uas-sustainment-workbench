@@ -237,7 +237,8 @@ SWEEP: list[tuple[str, int, list[str]]] = [
     ("seed into a file that is not a database", 503, ["--db", "{notdb}", "seed"]),
     ("verify a file that is not a database", 503, ["--db", "{notdb}", "verify"]),
     ("verify a truncated store", 503, ["--db", "{trunc}", "verify"]),
-    ("verify a store under a file", 503, ["--db", "{underfile}", "verify"]),
+    # A read command finds nothing at a path under a file and says so (part of #73).
+    ("verify a store under a file", 404, ["--db", "{underfile}", "verify"]),
     ("serve a file that is not a database", 503, ["--db", "{notdb}", "serve", "--port", "9"]),
     (
         "record with --at not a date",

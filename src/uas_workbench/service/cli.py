@@ -39,7 +39,21 @@ from .store import DuplicateFlight, Store, StoreBusy
 log = logging.getLogger("uasw.cli")
 
 DEFAULT_DB = os.environ.get("UASW_DB", "data/local/fleet.sqlite")
-DEFAULT_FIXTURES = Path(os.environ.get("UASW_FIXTURES", "tests/fixtures"))
+
+
+def _default_fixtures() -> Path:
+    """`UASW_FIXTURES` when set; else the fixtures beside this code (a checkout, or an editable
+    install of one), wherever the command is run from, where `tests/fixtures` in the working
+    folder left the showcase aircraft out of a seed run from elsewhere (part of issue #73);
+    else `tests/fixtures` in the working folder, as before."""
+    named = os.environ.get("UASW_FIXTURES")
+    if named:
+        return Path(named)
+    beside = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
+    return beside if beside.is_dir() else Path("tests/fixtures")
+
+
+DEFAULT_FIXTURES = _default_fixtures()
 READERS = {".ulg": read_ulog, ".bin": read_dataflash}
 
 
@@ -60,7 +74,17 @@ class Refused(Exception):
         self.detail = detail
 
 
-def open_store(path: str) -> Store:
+def open_store(path: str, *, create: bool = True) -> Store:
+    """The store at `path`, made there on first use by the commands that write (`seed`,
+    `serve`, `ingest`, `record`). A command that only reads passes `create=False` and is
+    refused (404) when nothing is at `path`, before any file or folder is made: a mistyped
+    `--db` made an empty store there, which `uasw verify` then called intact (issue #73)."""
+    if path != ":memory:" and not create and not Path(path).exists():
+        raise Refused(
+            404,
+            f"there is no store at {path}; a command that only reads does not make one, so "
+            "check the path, or seed or ingest to make the store",
+        )
     if path != ":memory:":
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +204,17 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 
 def cmd_export_static(args: argparse.Namespace) -> None:
-    from .static_export import export_static
+    from .static_export import SAMPLE_EVIDENCE_KEY, export_static
 
-    store = open_store(args.db)
+    store = open_store(args.db, create=False)
+    if store.get_aircraft(SAMPLE_EVIDENCE_KEY) is None:
+        # The static demo shows a sample pack and summary for the seeded fleet's SYN-04; a
+        # store without it ended in a KeyError traceback. One line, nothing written.
+        raise Refused(
+            409,
+            f"the static demo is built around the seeded fleet's {SAMPLE_EVIDENCE_KEY}, which "
+            "this store does not hold; export a seeded store",
+        )
     try:
         out = export_static(store, args.out)
     except OSError as exc:
@@ -248,7 +280,7 @@ def cmd_evidence(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_pack, render_html
 
-    store = open_store(args.db)
+    store = open_store(args.db, create=False)
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
@@ -272,7 +304,7 @@ def cmd_records(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_records, render_records_html
 
-    store = open_store(args.db)
+    store = open_store(args.db, create=False)
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
@@ -298,7 +330,7 @@ def cmd_fleet_records(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_fleet_records, render_fleet_records_html
 
-    store = open_store(args.db)
+    store = open_store(args.db, create=False)
     as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     summary = build_fleet_records(store, load_config(), as_of=as_of, commit=current_commit())
     _write(args.out, render_fleet_records_html(summary))
@@ -325,7 +357,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    result = open_store(args.db).verify_journal(args.head)
+    result = open_store(args.db, create=False).verify_journal(args.head)
     if result.migration is not None:
         m = result.migration
         print(f"link {m.seq}, recorded {m.recorded_utc}: {m.note}")
@@ -414,17 +446,17 @@ def cmd_record(args: argparse.Namespace) -> None:
     elif what == "time-in-service":
         _record_entry(args, args.aircraft, "time_in_service.set", before_s=args.hours * 3600.0)
     elif what == "retract":
-        target = open_store(args.db).entry(args.entry_id)
-        if target is None:
+        retracted = open_store(args.db, create=False).entry(args.entry_id)
+        if retracted is None:
             import sys
 
             print(f"refused (404): entry {args.entry_id} does not exist", file=sys.stderr)
             sys.exit(1)
         args.supersedes = args.entry_id
         args.statement = ""
-        _record_entry(args, target.subject, "retraction")
+        _record_entry(args, retracted.subject, "retraction")
     elif what == "history":
-        store = open_store(args.db)
+        store = open_store(args.db, create=False)
         dead = store.projection().superseded_by
         for e in store.entries(args.subject):
             if e.id in dead and not args.all:

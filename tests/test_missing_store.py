@@ -197,6 +197,9 @@ def test_uasw_fixtures_still_names_the_fixtures_when_set(tmp_path: Path) -> None
 def test_a_child_started_in_another_folder_runs_the_code_under_test(tmp_path: Path) -> None:
     from child_code import check_children_run_this_code, child_package, under_test
 
+    # The suite pinned it before any test ran: the code under test's folder first, absolute.
+    first = os.environ["PYTHONPATH"].split(os.pathsep)[0]
+    assert Path(first).is_absolute() and Path(first) == under_test().parent
     assert child_package(cwd=tmp_path) == under_test()
     check_children_run_this_code()
 

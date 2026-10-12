@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- A command that only reads refuses a store that does not exist, and tests that launch
+  `uasw` run the code under test (part of #73). `uasw verify` given a mistyped `--db` made an
+  empty store there and answered that its journal was intact, exit 0; `verify`, `records`,
+  `evidence`, `fleet-records`, `export-static`, `record history` and `record retract` now
+  refuse a path with nothing at it in one `refused (404)` line and make no file or folder,
+  while `seed`, `serve`, `ingest` and `record` still make the store on first use.
+  `export-static` on a store without the seeded fleet's SYN-04 ended in a `KeyError`
+  traceback and is now one `refused (409)` line. The default `--fixtures` is the folder
+  beside the code when it exists, so a seed run from another working folder keeps the two
+  showcase aircraft (9, not 7); `UASW_FIXTURES` still overrides it. Tests that launch `uasw`
+  processes ran whatever `uas_workbench` the child found first, so with a relative
+  `PYTHONPATH` and the child in another folder they checked another checkout's code;
+  `tests/child_code.py` puts the code under test first on `PYTHONPATH`, every entry
+  absolute, and the suite fails before any test when a child would still import other code.
+  No response, record, pack or hash changes: the SYN-04 evidence sample keeps
+  `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal
+  head stays `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, every GET on
+  a clean store and the exported site are byte for byte what they were with the clock masked.
 - A seed is one transaction, and no `uasw` command ends in a traceback on ordinary bad input
   or state (closes #72). `uasw seed` and the seeding `uasw serve` does on first start wrote
   about a hundred commits: a seed refused partway left part of the fleet, a second seed ended

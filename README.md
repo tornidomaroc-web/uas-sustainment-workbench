@@ -211,7 +211,9 @@ code, both verify alone; `uasw verify --head H`, given a head written down earli
 whether the records are unchanged since it, and fails on both. That is all the line says:
 unchanged since a head, never that the records are correct. A store written by 0.5.x is
 journaled when first opened, after a note that what came before it is not tamper-evident.
-Whatever the file holds, verifying reports a break and never crashes. `GET /journal/verify`
+Whatever the file holds, verifying reports a break and never crashes, and `uasw verify` given a
+path with no store at it says so (`refused (404)`) rather than making an empty store there and
+calling it intact; so do the other commands that only read. `GET /journal/verify`
 needs the write token, or comes from this machine when none is set, as the writes do: it
 writes nothing, but it reads every row on a call, and [LIMITS.md](LIMITS.md) gives the measured
 cost. The walk is a snapshot on the request thread's own reading connection, so a write made
