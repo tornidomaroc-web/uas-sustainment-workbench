@@ -4,7 +4,7 @@
 
 ## 0.6.1 (2026-10-13)
 
-What operators will see change: some `.bin` logs that 0.6.0 stored are now refused. A log
+What operators see change: some `.bin` logs that 0.6.0 stored are now refused. A log
 behind noise, or damaged inside, was read from the next sync pair pymavlink met and stored as a
 flight; it is now refused in one line or one 422 naming the offset, and nothing of it is
 stored. Its flight then adds no cycle, and its hours come back only as far as a later log's

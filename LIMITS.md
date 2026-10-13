@@ -87,6 +87,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   any 2.x: a release that frames differently fails `tests/test_dataflash_framing.py`.
   `POST /ingest` takes the write token or loopback, so the file is an operator's own or a
   trusted writer's.
+- **An upload is held in memory whole, and no log is refused for its size (issue #89).**
+  `POST /ingest` reads the uploaded file into memory at once to copy it to a temporary file,
+  on top of the copy Starlette spools to disk, so the service's memory rises by the size of
+  the upload while it is copied, and the disk holds it twice; neither the route nor
+  `uasw ingest` has a size limit. Measured on 2026-10-13 against a live `uasw serve` on
+  loopback (Windows, Python 3.12, one upload at a time): 200 MiB of zeros named `.bin` was
+  refused (422) in 1.1 s and raised the process's peak private memory from 688 MB to 871 MB;
+  the 80 MB ALFA log before it, accepted (201) in 0.9 s, from 566 MB to 688 MB, reading it
+  included. The route takes the write token or loopback, so only a writer, or a writer's
+  mistake, can raise it, and uploads sent at the same time add up.
 
 ## Limits of reconcile()
 
