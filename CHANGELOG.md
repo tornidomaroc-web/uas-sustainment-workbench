@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.6.1 (2026-10-13)
+
+What operators will see change: some `.bin` logs that 0.6.0 stored are now refused. A log
+behind noise, or damaged inside, was read from the next sync pair pymavlink met and stored as a
+flight; it is now refused in one line or one 422 naming the offset, and nothing of it is
+stored. Its flight then adds no cycle, and its hours come back only as far as a later log's
+lifetime counter covers them; the refusal says so, and issue #87 asks for a way to record such
+a flight by hand. A refused `uasw ingest` or `uasw record` on a path with nothing at it no
+longer leaves an empty store there. Two limits are open: a definition whose length disagrees
+with its own format still prints a line per message and is stored (#88), and `POST /ingest`
+holds the whole upload in memory with no size limit (#89). The version string is 0.6.1
+wherever it is reported; apart from it and the refusals above, every response on a clean store
+is what 0.6.0 gave, the SYN-04 evidence sample keeps
+`3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and a fresh seeded store's
+journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`.
+
 - `uasw ingest` and `uasw record` refused on a path with nothing at it make no store there
   (closes #83): each made an empty store first, which `uasw verify` then called intact.
   `ingest` reads its logs before it opens the store, so logs that are all refused leave an
