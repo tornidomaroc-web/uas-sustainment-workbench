@@ -447,8 +447,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   store that `uasw verify` called intact (issue #73). A write command given a mistyped
   `--db` makes a store there only when its write is accepted, since that is how a store is
   made: `ingest` reads its logs before it opens the store and opens it for the first log
-  that reads, and `record`, on a path with nothing at it, checks the entry against an empty
-  store before it makes the file, so a refusal (a file that is not a log, a date that is not
+  that reads (so an ingest whose logs are all refused prints only their 422 lines: it does
+  not report a store it could not open, 503, nor migrate a 0.5.x store; the first log that
+  reads does both), and `record`, on a path with nothing at it, checks the entry against an
+  empty store before it makes the file, so a refusal (a file that is not a log, a date that is not
   a date or is in the future, an aircraft, component or entry the store does not hold, a
   kind fleet.toml does not name) makes no store, side file or folder there, where it made
   an empty store that `uasw verify` called intact (issue #83). Nothing is removed to get
