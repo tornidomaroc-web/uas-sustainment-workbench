@@ -17,6 +17,7 @@ from uas_workbench.service.cli import main
 from uas_workbench.service.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
+LOG = next((FIXTURES / "px4").glob("*.ulg"))
 
 
 @pytest.fixture
@@ -49,8 +50,11 @@ def is_closed(store: Store) -> bool:
         # refused, exit 1, after the store was opened (an ingest whose logs are all refused
         # no longer opens it, issue #83)
         ["record", "inspection", "X-1", "annual", "--by", "A. Tester", "--statement", "done"],
+        # exit 1 for the file that is not a log, after the store was opened for the one that
+        # reads: the case that keeps `ingest` itself under this guard
+        ["ingest", "OWN-1", "{tmp}/notes.txt", "{log}"],
     ],
-    ids=["verify", "evidence", "record-refused"],
+    ids=["verify", "evidence", "record-refused", "ingest-partly-refused"],
 )
 def test_every_store_a_command_opens_is_closed_when_it_ends(
     tmp_path: Path, opened: list[Store], command: list[str]
@@ -58,7 +62,8 @@ def test_every_store_a_command_opens_is_closed_when_it_ends(
     db = str(tmp_path / "fleet.sqlite")
     (tmp_path / "notes.txt").write_text("not a log", encoding="utf-8")
     main(["--db", db, "seed", "--fixtures", str(FIXTURES)])
-    argv = ["--db", db, *(part.replace("{tmp}", str(tmp_path)) for part in command)]
+    filled = (p.replace("{tmp}", str(tmp_path)).replace("{log}", str(LOG)) for p in command)
+    argv = ["--db", db, *filled]
     with contextlib.suppress(SystemExit):
         main(argv)
     assert len(opened) >= 2, "seed and the command each open the store"
