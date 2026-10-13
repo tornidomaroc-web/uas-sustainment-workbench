@@ -73,9 +73,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   `Failed to parse` line on standard error and an `unpack requires` line on standard output
   for each message of that type it reads, then reads on, as it did before this check (measured:
   19 997 lines on each for 2 MB of such messages of a type the tool reads, interleaved with
-  others, and the log stored; about 990 on each, then a 422, when they run back to back).
-  A log cut short inside a message still reads. The walk is one more pass over the file, about 4 ns a byte here (0.33 s
-  for the 80 MB ALFA log, whose read went from 0.25 s to 0.58 s), with no list of offsets kept.
+  others, and the log stored; about 990 on each, then a 422, when they run back to back; issue
+  #88). A log cut short inside a message still reads. The walk is one more pass over the file,
+  about 4 ns a byte here (0.33 s for the 80 MB ALFA log, whose read went from 0.25 s to
+  0.58 s), with no list of offsets kept.
   A refused log may be a real flight, and nothing of it is counted, so items read less due
   than they are; the refusal says so. Its flight adds no cycle, and its hours come back only
   when a later log of the same aircraft carries the lifetime counter (`reconcile()`, to within
