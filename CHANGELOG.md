@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.6.0 (2026-10-13)
+
+What changed in behaviour is the store. Every ledger entry and flight record is linked into a
+hash-chained write journal that `uasw verify` and `GET /journal/verify` walk; the store file is
+in SQLite's WAL mode; each thread reads on a connection of its own, so a request served beside
+another no longer answers with the other query's rows (the known issue in the v0.5.2 notes);
+two writers, two threads or two processes, are checked one after the other; a seed is one
+transaction; and a store that is busy, damaged, missing or holds a record it cannot read, each
+of which ended in a traceback, a 500 or a wrong answer, is refused with one `refused (NNN)`
+line or a 503 (what remains of issue #73 is listed there). New are the draft
+records summaries against UAS.SPEC.050(1)(g), for one aircraft and for the fleet. The version
+string is 0.6.0 wherever it is reported (`/health`, the OpenAPI document, the evidence pack, the
+records summaries and their pages); apart from it and what each item names, every
+response on a clean store is what 0.5.2 gave, the SYN-04 evidence sample keeps
+`3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and a fresh seeded store's
+journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`. A store
+0.5.x wrote is journaled when 0.6.0 first opens it; a row 0.5.2 writes to it afterwards has no
+link and breaks the journal (`LIMITS.md`). `tests/test_version.py` now also holds the newest
+section of this file to the version the code reports, with its date.
+
 - CI runs the check job's steps on Windows too, on Python 3.12 and 3.14 (#67): the jobs
   `windows (3.12)` and `windows (3.14)`, beside check, container and browser on Linux.
 - A store file damaged while `uasw serve` runs is refused with 503 naming the cause, never
@@ -53,7 +73,8 @@
   two seeds of one new file at once seed it once; it holds the write lock about 10 ms where
   its commits took about 0.4 s. A sweep of every command found more tracebacks, now each one
   `refused (NNN)` line and exit 1: a store file that is not a database, is truncated, is a
-  directory, sits under a file, or is read-only when written (503); a `--at` or `--as-of`
+  directory, or is read-only when written (503), or sits under a file (503 for a command that
+  writes; a command that only reads answers 404, as for any path with nothing at it); a `--at` or `--as-of`
   that is not a date (422); an output path that cannot be written (422). No response, record,
   pack or hash changes: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal head
@@ -69,7 +90,8 @@
   busy timeout to the switch to WAL; the store now retries that switch within the busy
   timeout and, past it, the open is refused with one `refused (503)` line and exit 1, the
   file as it was and every connection the open made closed. Every write the store makes
-  refuses the same way (`StoreBusy`). LIMITS.md also says a folder a file-sync client keeps
+  refuses the same way, 503 with nothing written (`StoreBusy`, or `LedgerError` for a checked
+  ledger entry). LIMITS.md also says a folder a file-sync client keeps
   is not supported, beside the network file system it already ruled out. No response,
   record, pack or hash changes: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`, the seeded journal
@@ -92,11 +114,12 @@
   evidence sample keeps `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf`,
   the seeded journal head stays
   `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`, and every GET on a clean
-  store is byte for byte what it was with the clock masked. LIMITS.md says what stays: an
-  ingest that waits past the busy timeout still answers 500.
+  store is byte for byte what it was with the clock masked. An ingest that waited past the busy
+  timeout still answered 500 after this change; the item above made it a 503.
 - The concurrent-reads test opens one kept-alive connection per reader and one for its writer
   instead of a socket per request (1,696 for eight readers), counts the sockets it opens and
-  fails over readers + 3, so a suite run can no longer run out of local ports on a machine that
+  fails over readers + 3, plus one for each connection the service closed as idle (at most one
+  per reader), so a suite run can no longer run out of local ports on a machine that
   keeps a closed port reserved for a while; the live-service fixtures wait for the service on a
   wall-clock deadline of 120 s instead of a count of polls (issue #62). Test code only: no
   response, record, pack or hash changes.
@@ -140,10 +163,9 @@
   connection and two threads stepped the same prepared statement (closes #60; v0.5.2 is
   affected). The writing connection is used under the write lock only; every thread that reads
   opens a reading connection of its own on its first read and each read runs inside one read
-  transaction on it, closed with the store by `Store.close`; the kept journal result and
-  `/health` stay keyed on the writing connection's `PRAGMA data_version` under the write lock,
-  since on any other connection the store's own commits move it, and the kept projection is
-  computed on a connection of its own. `tests/test_concurrent_reads.py` runs 2, 4 and 8
+  transaction on it, closed with the store by `Store.close`; the kept journal result, what
+  `/health` holds and the projection are each labelled with the state they were computed from
+  (the records-summary item above says how). `tests/test_concurrent_reads.py` runs 2, 4 and 8
   reader threads through `uasw serve` in a process of its own with a writer posting meanwhile
   and compares every body with the single-threaded answer: on the version before, 23 to 39 of
   400 requests were wrong with 2 readers and 205 to 328 of 1,600 with 8; now 0 of 2,800. No
@@ -162,7 +184,7 @@
   The description of `GET /journal/verify` in `/openapi.json` now names the connection the
   walk runs on; no other response changes.
 - The store file is in SQLite's WAL mode, and `uasw verify` and `GET /journal/verify` walk the
-  journal on a second connection inside one read transaction, so a write issued during the
+  journal on the calling thread's own reading connection inside one read transaction, so a write issued during the
   walk lands at once (1.9 ms into a 100,000-link walk where it waited 3.86 s) and a reader on
   another connection no longer makes the store's commit fail with the database locked (closes
   #44). `PRAGMA synchronous` stays FULL and a second writer waits up to 5 s for the lock
@@ -188,7 +210,7 @@
   with the record named. The summary needs no token, so it never walks the journal on a call:
   the store keeps the last walk (`Store.journal_state()`, walked at startup and after another
   connection commits to the file, moved on by the store's own writes with no row read once
-  their commit has gone through), and `GET /journal/verify` and `uasw verify` stay guarded and
+  their commit has gone through); `GET /journal/verify` stays guarded, and it and `uasw verify`
   walk on demand. No response, record
   or hash changes: the SYN-04 evidence sample keeps
   `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and the seeded journal
@@ -237,13 +259,14 @@
   Python 3.13+ warns for an unclosed SQLite connection, and its helpers close what they
   open; since `tests/conftest.py` closes every test's stores, `test_cli_closes_its_store.py`
   checks on any Python that each store a command opened is closed when `main()` returns,
-  before that teardown; the suite is green in any module order and on Python 3.13 and 3.14.
+  before that teardown; the suite is green in any module order, and CI runs it on Python 3.12
+  and 3.14.
 - Every ledger entry and flight record is linked into a write journal in the transaction that
   writes it (`service/journal.py`, hashlib only): a sequence number, a SHA-256 over the row's
   canonical content, the previous link's hash and the link's own hash, one chain for both
   tables. `uasw verify [--head H]` and `GET /journal/verify?head=H` (guarded as the writes
-  are, token or loopback, since it holds the store's write lock while it reads every row:
-  3.9 s for 100,000 links, in `LIMITS.md`) walk it from the first link and report the head,
+  are, token or loopback, because it reads every row on every call, the costliest read the
+  service has: 2.4 s for 100,000 links, in `LIMITS.md`) walk it from the first link and report the head,
   the length and, on a break, the first bad sequence number and its kind (`sequence`,
   `duplicate`, `previous_hash`, `missing_row`, `content`, `link_hash`, `unjournaled`); so an
   entry edited, a flight deleted, a link inserted mid-chain or a row inserted with no link,
@@ -271,8 +294,8 @@
   every record on a call (4.1 ms with 128,718 entries, in `LIMITS.md`);
   every read that depends on the record answers 503 with the same sentence, as does a write
   judged against the projection, with nothing written; `uasw` prints `refused (503): ...` and
-  exits 1; and the evidence pack is still written, since part 2 of 0.6.0 puts the verify
-  result in it, with every value that depended on the record as `{"unknown": ...}`, every
+  exits 1; and the evidence pack is still written, since a damaged store is where a pack that
+  names the damage matters, with every value that depended on the record as `{"unknown": ...}`, every
   item it would have supported `not evidenced` for that reason, and the label saying so. The
   whole-ledger projection cache is keyed on SQLite's `data_version`, so an edit committed by
   another connection while the service runs is met on the next read, not hidden by a copy
