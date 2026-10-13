@@ -7,7 +7,9 @@ the file descriptor shows them (capfd here, never capsys). On 0.5.1 a 16-byte ju
 13 lines and a 16 MiB one 16.7 million, through POST /ingest as through `uasw ingest`.
 
 The refusal, its wording, what is stored (nothing) and the record of every readable log are the
-0.5.1 ones; the junk simply never reaches pymavlink. A log that begins behind noise still parses.
+0.5.1 ones; the junk simply never reaches pymavlink. A file that holds a definition but does not
+frame from its first byte (noise before a log, damage inside one) is refused too, by the framing
+check of issue #85 (tests/test_dataflash_framing.py).
 """
 
 from __future__ import annotations
@@ -143,31 +145,37 @@ def test_a_definition_pymavlink_could_not_decode_is_no_definition(
 # ---- what the check must not touch ---------------------------------------------------
 
 
-def test_a_log_behind_leading_noise_still_parses_to_the_same_record(tmp_path: Path) -> None:
-    """pymavlink skips what it cannot frame before the first definition, and so does the
-    check: a log with noise before it is the same record as the log alone. (pymavlink still
-    prints one line per noise byte, as on 0.5.1; LIMITS.md says so.)"""
-    (tmp_path / "clean").mkdir()
-    (tmp_path / "noisy").mkdir()
-    clean = small_log().write(tmp_path / "clean" / "log.bin")
-    expected = read_dataflash(clean, **ATTR)
-    assert expected.flight_time_s == pytest.approx(100.0)
-    noisy = tmp_path / "noisy" / "log.bin"
+def test_a_log_behind_leading_noise_is_refused_where_the_noise_begins(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Until issue #85 pymavlink skipped the noise with one line per byte and read the log
+    from the first sync pair it met. Now the framing check refuses the file at byte 0, with
+    nothing on stderr: bytes the autopilot did not write are not read past by a guess."""
+    clean = small_log().write(tmp_path / "log.bin")
+    assert read_dataflash(clean, **ATTR).flight_time_s == pytest.approx(100.0)
+    noisy = tmp_path / "noisy.bin"
     noisy.write_bytes(bytes(600) + clean.read_bytes())
-    assert read_dataflash(noisy, **ATTR) == expected
+    with pytest.raises(ValueError, match=r"^bytes at offset 0 do not frame as a DataFlash"):
+        read_dataflash(noisy, **ATTR)
+    assert capfd.readouterr().err == ""
 
 
-def test_a_false_definition_before_a_log_is_still_pymavlink_s_call(tmp_path: Path) -> None:
-    """A definition header that defines nothing, then a whole log: the check finds the log's
-    own definitions and hands the file to pymavlink, whose indexer stops at the false one and
-    refuses the file as it did on 0.5.1. The check never answers for a file pymavlink would
-    read any part of."""
+def test_a_false_definition_before_a_log_is_refused_by_the_framing_check(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """A definition header that defines nothing, then a whole log: pymavlink's indexer printed
+    one line at the false definition (length 0) and stopped there, and the reader refused the
+    file as definitions without data. The framing check stops at the same place, silently,
+    and says what it found (issue #85)."""
     false_first = tmp_path / "false_first.bin"
     false_first.write_bytes(
         FMT_SYNC + bytes(600) + small_log().write(tmp_path / "log.bin").read_bytes()
     )
-    with pytest.raises(ValueError, match=r"^holds format definitions but no recorded data$"):
+    with pytest.raises(
+        ValueError, match=r"^the format definition at offset 0 gives a length of 0 bytes"
+    ):
         read_dataflash(false_first, **ATTR)
+    assert capfd.readouterr().err == ""
 
 
 def test_definitions_without_data_are_still_refused_in_the_same_words(tmp_path: Path) -> None:
