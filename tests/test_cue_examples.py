@@ -109,7 +109,7 @@ def readme_examples() -> list[str]:
 
 # The newest released section and the number of cues it quotes. A release that makes a new
 # section the newest adds it here, with its count, 0 if it quotes none.
-RELEASED_CUES = {"0.5.1": 3, "0.5.2": 0}
+RELEASED_CUES = {"0.5.1": 3, "0.5.2": 0, "0.6.0 (2026-10-13)": 0}
 # A checked section's whole quotation of a cue the code no longer gives, kept on purpose to say
 # what changed: section heading -> the quoted cues. None today.
 HISTORICAL: dict[str, frozenset[str]] = {}
