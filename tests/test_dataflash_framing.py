@@ -30,8 +30,9 @@ import time
 from pathlib import Path
 
 import pytest
+from pymavlink import DFReader
 
-from uas_workbench.flight.ardupilot import read_dataflash
+from uas_workbench.flight.ardupilot import _check_framing, read_dataflash
 from uas_workbench.service.store import Store
 
 ATTR = {"licence": "CC0", "attribution": "synthetic"}
@@ -45,8 +46,13 @@ DEFINITION = b"\xa3\x95\x80" + struct.pack(
     "<BB4s16s64s", 0x80, 89, b"FMT", b"BBnNZ", b"Type,Length,Name,Format,Columns"
 )
 NOT_FRAMED = r"^bytes at offset (\d+) do not frame as a DataFlash message"
-UNNAMED = r"^a message at offset (\d+) has type (\d+), which no format definition names$"
+UNNAMED = r"^a message at offset (\d+) has type (\d+), which no format definition names; "
 TOO_SHORT = r"^the format definition at offset (\d+) gives a length of (\d+) bytes"
+# Every such refusal tells the operator what a refused log leaves out of the counts (#86).
+NOT_COUNTED = (
+    "; nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
+    "hours only as far as a later log's lifetime counter covers it"
+)
 
 
 def _noise(n: int) -> bytes:
@@ -118,6 +124,7 @@ def test_a_file_that_does_not_frame_is_refused_before_pymavlink_prints(
     match = re.match(pattern, str(refused.value))
     assert match, str(refused.value)
     assert low <= int(match.group(1)) <= high, str(refused.value)
+    assert str(refused.value).endswith(NOT_COUNTED), str(refused.value)
     assert _fd_lines(capfd) == []
 
 
@@ -229,6 +236,7 @@ def test_uasw_ingest_refuses_it_in_one_line_in_bounded_time(
     head = f"refused (422): log.bin: {PREFIX}"
     assert first[0].startswith(head), first
     assert re.match(pattern, first[0][len(head) :]), first
+    assert first[0].endswith(NOT_COUNTED), first
     assert not db.parent.exists()
     # Twice the start-up and 10 s more; on main the 4 MiB cases print about four million
     # lines and take three to four times the start-up on a fast machine.
@@ -318,6 +326,109 @@ def test_post_ingest_gives_the_command_s_answer_with_nothing_on_stderr(
         detail = body["detail"][len(PREFIX) :]
         match = re.match(pattern, detail)
         assert match and low <= int(match.group(1)) <= high, (name, detail)
+        assert detail.endswith(NOT_COUNTED), (name, detail)
         # The reader's own words, which the command's line carries after the same prefix.
         assert said == detail, name
     assert taken < 3 * startup + 20, (taken, startup)
+
+
+# ---- the rule is the installed pymavlink's -------------------------------------------------
+#
+# The check copies the indexer of pymavlink 2.4.50 (dfindexer.c, scan_offsets), and the
+# dependency allows any 2.x. So the copy is compared with the pymavlink installed, on damaged
+# copies of a real log: the check must refuse exactly the copies on which pymavlink prints
+# anything. A release that frames differently fails here instead of drifting unseen.
+
+
+def _pymavlink_speaks(path: Path, capfd: pytest.CaptureFixture[str]) -> bool:
+    capfd.readouterr()
+    reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
+    try:
+        while reader.recv_msg() is not None:
+            pass
+    finally:
+        reader.close()
+    return capfd.readouterr().err != ""
+
+
+def _midway(log: bytes) -> bytes:
+    """The log with one type's definition moved from the head to just before that type's first
+    message, as the ALFA logs define some types partway through."""
+    lengths: dict[int, int] = {0x80: 89}
+    defined: dict[int, int] = {}
+    first: dict[int, int] = {}
+    i = 0
+    while i + 3 < len(log):
+        if log[i + 2] == 0x80:
+            lengths[log[i + 3]] = log[i + 4]
+            defined[log[i + 3]] = i
+        first.setdefault(log[i + 2], i)
+        i += lengths[log[i + 2]]
+    kind = max((k for k in defined if k != 0x80 and k in first), key=lambda k: first[k])
+    at = defined[kind]
+    rest = log[:at] + log[at + 89 :]
+    to = first[kind] - 89
+    return rest[:to] + log[at : at + 89] + rest[to:]
+
+
+def _whole(log: bytes, near: int) -> bytes:
+    """The log cut at its last message boundary at or before `near`: bytes added after it begin
+    exactly where the indexer looks next, so the quiet tail is compared to the byte."""
+    lengths, i = {0x80: 89}, 0
+    while True:
+        if log[i + 2] == 0x80:
+            lengths[log[i + 3]] = log[i + 4]
+        if i + lengths[log[i + 2]] > near:
+            return log[:i]
+        i += lengths[log[i + 2]]
+
+
+def _header_only() -> bytes:
+    """A definition of the shortest length the indexer takes, 3, with no fields, and one such
+    message: pymavlink reads it without a word."""
+    three = b"\xa3\x95\x80" + struct.pack("<BB4s16s64s", 0xFE, 3, b"HDR", b"", b"")
+    return DEFINITION + three + b"\xa3\x95\xfe" + LOG.read_bytes()
+
+
+def _copies() -> list[bytes]:
+    """Damage the indexer sees. A definition whose length disagrees with its own format string
+    frames, and is pymavlink's parser's to report, not the indexer's (LIMITS.md)."""
+    log = _whole(LOG.read_bytes(), 60_000)
+    midway = _whole(_midway(LOG.read_bytes()), 60_000)
+    rng = random.Random(86)
+    out = [log, midway, bytes(3) + log, _header_only()[:60_000]]
+    out += [base + b"\xff" * n for base in (log, midway) for n in (526, 527, 528, 529)]
+    out += [_short_definition()[:60_000], _unnamed_type()[:60_000]]
+    for base in (log, midway):
+        for _ in range(12):
+            at, n = rng.randrange(len(base)), rng.choice((1, 2, 7, 300))
+            choice = rng.randrange(4)
+            if choice == 0:
+                out.append(base[:at] + rng.randbytes(n) + base[at + n :])
+            elif choice == 1:
+                out.append(base[:at] + rng.randbytes(n) + base[at:])
+            elif choice == 2:
+                out.append(base[:at] + base[at + n :])
+            else:
+                out.append(base[: len(base) - rng.randrange(400, 660)] + bytes(n) + base[-300:])
+    return out
+
+
+def test_the_check_refuses_exactly_where_the_installed_pymavlink_speaks(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    refused, spoke = [], []
+    for n, content in enumerate(_copies()):
+        path = tmp_path / f"{n}.bin"
+        path.write_bytes(content)
+        try:
+            _check_framing(path)
+            refused.append(False)
+        except ValueError:
+            refused.append(True)
+        spoke.append(_pymavlink_speaks(path, capfd))
+    assert refused == spoke, [
+        n for n, (r, s) in enumerate(zip(refused, spoke, strict=True)) if r != s
+    ]
+    # Both answers occur, so the comparison is not vacuous.
+    assert 5 < sum(refused) < len(refused) - 5, refused

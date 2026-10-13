@@ -17,6 +17,10 @@
   than its header. One definition then 4 MiB of zeros printed 4,193,778 `bad header` lines first;
   noise before a log, or damage inside one, was read past from the next sync pair and stored.
   Real logs read to the same records; the last 527 bytes of a log stay pymavlink's to skip.
+  The refusal says that nothing of the log is counted: its flight adds no cycle, and its hours
+  only as far as a later log's lifetime counter covers them (recording them by hand is issue
+  #87). A test compares the check with the pymavlink installed, so a release that frames
+  differently fails it.
 
 ## 0.6.0 (2026-10-13)
 

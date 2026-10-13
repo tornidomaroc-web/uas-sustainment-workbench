@@ -57,13 +57,18 @@ DEFINITION = re.compile(
 # format definition gives (89 for the definition of definitions, assumed before any is read).
 # Where the sync bytes are not, it prints a line and tries the next byte; at a type no definition
 # names, or a definition shorter than the 3-byte header, it prints a line and stops indexing. It
-# prints nothing for the last 528 bytes of a file of 528 bytes or more, the room it allows for a
-# block-logging page left partly written.
+# prints nothing for the last 527 bytes of a file of 528 bytes or more, the room it allows for a
+# block-logging page left partly written. tests/test_dataflash_framing.py checks this rule
+# against the pymavlink installed, so a release that changes it fails there.
 SYNC = (0xA3, 0x95)
 FMT_TYPE = 0x80
 FMT_LENGTH = 89
 HEADER = 3
 QUIET_TAIL = 528
+NOT_COUNTED = (
+    "nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
+    "hours only as far as a later log's lifetime counter covers it"
+)
 
 Sample = tuple[int, float]  # (TimeUS, value)
 
@@ -145,7 +150,12 @@ def _read(path: Path) -> _Log:
     # either: the file is refused here, in the words that case has always had, unopened.
     if not _holds_a_definition(path):
         raise ValueError("no DataFlash messages found")
-    _check_framing(path)
+    # A log refused here may be a real flight, where 0.6.0 stored part of it: the operator is
+    # told what that leaves out of the counts.
+    try:
+        _check_framing(path)
+    except ValueError as exc:
+        raise ValueError(f"{exc}; {NOT_COUNTED}") from None
     reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
     log = _Log()
     try:
