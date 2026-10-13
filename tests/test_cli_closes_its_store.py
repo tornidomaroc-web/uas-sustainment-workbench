@@ -46,9 +46,11 @@ def is_closed(store: Store) -> bool:
     [
         ["verify"],
         ["evidence", "SYN-04", "--out", "{tmp}/pack.html", "--as-of", "2026-10-01T00:00:00Z"],
-        ["ingest", "SYN-01", "{tmp}/notes.txt"],  # refused, exit 1
+        # refused, exit 1, after the store was opened (an ingest whose logs are all refused
+        # no longer opens it, issue #83)
+        ["record", "inspection", "X-1", "annual", "--by", "A. Tester", "--statement", "done"],
     ],
-    ids=["verify", "evidence", "ingest-refused"],
+    ids=["verify", "evidence", "record-refused"],
 )
 def test_every_store_a_command_opens_is_closed_when_it_ends(
     tmp_path: Path, opened: list[Store], command: list[str]
@@ -61,3 +63,18 @@ def test_every_store_a_command_opens_is_closed_when_it_ends(
         main(argv)
     assert len(opened) >= 2, "seed and the command each open the store"
     assert all(is_closed(s) for s in opened), "a store a command opened is still open"
+
+
+def test_a_record_refused_on_a_new_path_closes_the_store_it_checked_against(
+    tmp_path: Path, opened: list[Store]
+) -> None:
+    """On a path with nothing at it, `uasw record` checks the entry against an empty store in
+    memory before it makes the file (issue #83); refused, that store is closed too, and no
+    file is made."""
+    db = tmp_path / "new.sqlite"
+    argv = ["--db", str(db), "record", "inspection", "X-1", "annual"]
+    with contextlib.suppress(SystemExit):
+        main([*argv, "--by", "A. Tester", "--statement", "done"])
+    assert len(opened) == 1, "the empty store the entry was checked against"
+    assert all(is_closed(s) for s in opened), "a store a command opened is still open"
+    assert list(tmp_path.iterdir()) == []

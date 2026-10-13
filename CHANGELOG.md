@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `uasw ingest` and `uasw record` refused on a path with nothing at it make no store there
+  (closes #83): each made an empty store first, which `uasw verify` then called intact.
+  `ingest` reads its logs before it opens the store, so logs that are all refused leave an
+  existing store unopened too; `record` checks an entry against an empty store before it makes
+  the file. A write that is accepted makes the store as before, and nothing is ever removed.
+  `uasw --help` now says where the `--fixtures` default comes from, and LIMITS.md gives the
+  2.4 s walk where one line still said 3.9 s. No response, record, pack or hash changes.
+
 ## 0.6.0 (2026-10-13)
 
 What changed in behaviour is the store. Every ledger entry and flight record is linked into a
