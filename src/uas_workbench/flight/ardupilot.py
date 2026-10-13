@@ -52,6 +52,19 @@ DEFINITION = re.compile(
     re.DOTALL,
 )
 
+# How pymavlink's indexer frames a file (dfindexer.c, scan_offsets, pymavlink 2.4.50): from byte
+# 0, each message is the two sync bytes, its type and a body, its whole length the one the type's
+# format definition gives (89 for the definition of definitions, assumed before any is read).
+# Where the sync bytes are not, it prints a line and tries the next byte; at a type no definition
+# names, or a definition shorter than the 3-byte header, it prints a line and stops indexing. It
+# prints nothing for the last 528 bytes of a file of 528 bytes or more, the room it allows for a
+# block-logging page left partly written.
+SYNC = (0xA3, 0x95)
+FMT_TYPE = 0x80
+FMT_LENGTH = 89
+HEADER = 3
+QUIET_TAIL = 528
+
 Sample = tuple[int, float]  # (TimeUS, value)
 
 
@@ -81,6 +94,46 @@ def _holds_a_definition(path: Path) -> bool:
         return DEFINITION.search(data) is not None
 
 
+def _check_framing(path: Path) -> None:
+    """Refuse a file at the first place pymavlink's indexer would print a line, before it does
+    (issue #85): bytes that are not a message, a type no definition names, a definition shorter
+    than the header. The indexer prints one line per byte it cannot frame, from C, and then
+    reads on from the next sync pair it meets, which can sit inside another message's data, so
+    what it reads after damage is a guess. One pass over the mapped file, message by message,
+    keeping only the 256 lengths; every real log measured frames from its first byte to its
+    last, and the quiet tail pymavlink allows is left to it."""
+    with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        size = len(data)
+        lengths = bytearray(256)
+        lengths[FMT_TYPE] = FMT_LENGTH
+        # The indexer looks at an offset while a header fits after it, and speaks about it only
+        # outside the quiet tail: up to size - 528 in a file of 528 bytes or more.
+        end = size - QUIET_TAIL + 1 if size >= QUIET_TAIL else size - HEADER
+        first, second = SYNC
+        at = 0
+        while at < end:
+            if data[at] != first or data[at + 1] != second:
+                raise ValueError(
+                    f"bytes at offset {at} do not frame as a DataFlash message: noise, or "
+                    "damage inside the log"
+                )
+            kind = data[at + 2]
+            if kind == FMT_TYPE:
+                if at + 4 >= size:
+                    return  # a definition cut off by the end of the file: pymavlink's to read
+                if data[at + 4] < HEADER:
+                    raise ValueError(
+                        f"the format definition at offset {at} gives a length of "
+                        f"{data[at + 4]} bytes, shorter than the {HEADER}-byte message header"
+                    )
+                lengths[data[at + 3]] = data[at + 4]
+            if not lengths[kind]:
+                raise ValueError(
+                    f"a message at offset {at} has type {kind}, which no format definition names"
+                )
+            at += lengths[kind]
+
+
 def _read(path: Path) -> _Log:
     # pymavlink opens the file before it maps it, and leaves it open when an empty file cannot
     # be mapped; this refuses it first, in pymavlink's own words, so the ingest 422 is unchanged.
@@ -92,6 +145,7 @@ def _read(path: Path) -> _Log:
     # either: the file is refused here, in the words that case has always had, unopened.
     if not _holds_a_definition(path):
         raise ValueError("no DataFlash messages found")
+    _check_framing(path)
     reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
     log = _Log()
     try:

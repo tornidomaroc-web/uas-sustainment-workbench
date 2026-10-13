@@ -45,7 +45,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   case.** Definitions, parameters and boot text alone are refused. A ULog with data only in
   topics the tool does not read is parsed a second time, with every topic, to find that data;
   a large log of that kind is read in full twice.
-- **A damaged DataFlash file is loud before it is refused; a file that is no log is not.**
+- **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
   Python's stderr sees them. A `.bin` with no plausible format definition anywhere (a printable
@@ -53,12 +53,26 @@ field-level tables. This file is about what that means for a maintenance tool.
   it, whatever its size: 0 lines for 16 B to 16 MiB of zeros, text, every byte value or random
   bytes, measured 2026-10-04 through the reader, `POST /ingest` and `uasw ingest`, where 0.5.1
   wrote one line per byte (13 for 16 B, 16 776 689 for 16 MiB of zeros; fewer for random bytes,
-  whose chance headers stop the indexer early). A file that begins with a definition and runs
-  into bytes pymavlink cannot frame, a damaged log or a crafted file, still gets one line per
-  such byte before its 422 (1 048 049 for one definition and 1 MiB of zeros, as on 0.5.1), and
-  a log behind k bytes of noise still parses and still gets k `bad header` lines and two
-  `Skipped k bad bytes` lines (602 for 600 bytes of zeros before a fixture log). `POST /ingest`
-  takes the write token or loopback, so the file is an operator's own or a trusted writer's.
+  whose chance headers stop the indexer early). A file that holds a definition is then walked
+  message by message, as pymavlink's indexer walks it, and refused at the first place the
+  indexer would print a line: bytes that are not a message, a type no definition names, a
+  definition shorter than the 3-byte header (issue #85). So a definition followed by 4 MiB of
+  zeros is one refusal line, where 0.6.0 printed 4 193 778 lines in 15 s first, and noise before
+  a log, or a log damaged inside, is refused naming the offset, where 0.6.0 printed a line per
+  unframed byte and then stored a flight read from the next sync pair the indexer met, which can
+  sit inside another message's data. The rule is the indexer's own, so there is no threshold to
+  choose: in 800 damaged copies of two fixture logs (bytes overwritten, inserted, deleted, cut,
+  added at either end, a type planted) the check refused exactly the 566 copies on which
+  pymavlink printed anything, on 3.12 and 3.14, and every real log measured, the 3 fixture
+  excerpts and the 10 whole ALFA logs, frames from its first byte to its last and reads to the
+  same record as before. What it does not see: a damaged message body whose header is intact (a
+  DataFlash log carries no checksum, so pymavlink reads the wrong values as it did), and the
+  last 527 bytes of a file of 528 bytes or more, which pymavlink allows for a block-logging
+  page left partly written and reads without a word, as before. A log cut short inside a
+  message still reads. The walk is one more pass over the file, about 4 ns a byte here (0.33 s
+  for the 80 MB ALFA log, whose read went from 0.25 s to 0.58 s), with no list of offsets kept.
+  `POST /ingest` takes the write token or loopback, so the file is an operator's own or a
+  trusted writer's.
 
 ## Limits of reconcile()
 

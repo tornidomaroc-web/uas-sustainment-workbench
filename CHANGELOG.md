@@ -7,9 +7,16 @@
   `ingest` reads its logs before it opens the store, so logs that are all refused leave an
   existing store unopened too (so such an ingest neither reports a store it could not open nor
   migrates a 0.5.x store; the first log that reads does both); `record` checks an entry
-  against an empty store before it makes the file. A write that is accepted makes the store as before, and nothing is ever removed.
-  `uasw --help` now says where the `--fixtures` default comes from, and LIMITS.md gives the
-  2.4 s walk where one line still said 3.9 s. No response, record, pack or hash changes.
+  against an empty store before it makes the file. A write that is accepted makes the store as
+  before, and nothing is ever removed. `uasw --help` now says where the `--fixtures` default
+  comes from, and LIMITS.md gives the 2.4 s walk where one line still said 3.9 s. No response,
+  record, pack or hash changes.
+- A `.bin` that does not frame as DataFlash messages from its first byte is refused in one line
+  (`uasw ingest`) or one 422 (`POST /ingest`) naming the offset, before pymavlink reads it
+  (closes #85): bytes that are not a message, a type no definition names, a definition shorter
+  than its header. One definition then 4 MiB of zeros printed 4,193,778 `bad header` lines first;
+  noise before a log, or damage inside one, was read past from the next sync pair and stored.
+  Real logs read to the same records; the last 527 bytes of a log stay pymavlink's to skip.
 
 ## 0.6.0 (2026-10-13)
 
