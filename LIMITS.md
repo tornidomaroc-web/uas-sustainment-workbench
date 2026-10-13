@@ -279,15 +279,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   - *`GET /journal/verify` stays guarded as the writes are*, token or loopback, though it makes
     nothing wait: it is the costliest read the service has, every row on every call.
   - *One writer at a time, as before.* A second writer (`uasw record` beside a running service)
-    waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then fails with the database
-    locked; a refused commit is rolled back and moves nothing kept. A ledger entry takes that
+    waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then is refused with 503
+    (`StoreBusy`); a refused commit is rolled back and moves nothing kept. A ledger entry takes that
     lock before its check, so it is refused with 503 and nothing checked or written. SQLite's rollback journal
     had no wait at all, so that failure came at once.
   - *Durability is as it was.* `PRAGMA synchronous` is FULL, the WAL default: a journal link is
     on disk before the commit that wrote it returns. NORMAL would save one sync per commit and
     could lose the last commits to a power cut; the link is the record and is not traded.
   - *A reader on another connection sees a snapshot and makes the commit wait for nothing.*
-    `PRAGMA data_version`, which the kept journal result and `/health` key on, moves on a
+    `PRAGMA data_version`, which the kept journal result and `/health` are labelled with, moves on a
     commit from another connection and on nothing else (own commits, own rollbacks, another
     connection's rollback), under WAL as before. The walk that fills the kept result reads
     `data_version` and every row inside one read transaction, so a commit from another
