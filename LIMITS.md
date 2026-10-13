@@ -68,9 +68,22 @@ field-level tables. This file is about what that means for a maintenance tool.
   same record as before. What it does not see: a damaged message body whose header is intact (a
   DataFlash log carries no checksum, so pymavlink reads the wrong values as it did), and the
   last 527 bytes of a file of 528 bytes or more, which pymavlink allows for a block-logging
-  page left partly written and reads without a word, as before. A log cut short inside a
-  message still reads. The walk is one more pass over the file, about 4 ns a byte here (0.33 s
+  page left partly written and reads without a word, as before. Nor a definition whose length
+  disagrees with its own format string: such a file frames, and pymavlink's parser prints a
+  `Failed to parse` line on standard error and an `unpack requires` line on standard output
+  for each message of that type it reads, then reads on, as it did before this check (measured:
+  19 997 lines on each for 2 MB of such messages of a type the tool reads, interleaved with
+  others, and the log stored; about 990 on each, then a 422, when they run back to back).
+  A log cut short inside a message still reads. The walk is one more pass over the file, about 4 ns a byte here (0.33 s
   for the 80 MB ALFA log, whose read went from 0.25 s to 0.58 s), with no list of offsets kept.
+  A refused log may be a real flight, and nothing of it is counted, so items read less due
+  than they are; the refusal says so. Its flight adds no cycle, and its hours come back only
+  when a later log of the same aircraft carries the lifetime counter (`reconcile()`, to within
+  one 30 s flush). On the three fixture logs of one aircraft (2 322.8 s, 3 cycles), refusing
+  the middle one leaves 2 314.4 s and 2 cycles, and refusing the last leaves 572.4 s and 2
+  cycles until a later log arrives. No entry records such a flight's usage by hand yet (issue
+  #87). The rule is checked against the pymavlink installed, which the dependency allows to be
+  any 2.x: a release that frames differently fails `tests/test_dataflash_framing.py`.
   `POST /ingest` takes the write token or loopback, so the file is an operator's own or a
   trusted writer's.
 
