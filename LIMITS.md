@@ -445,7 +445,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   `record retract`, which needs an entry, refuse a path with nothing at it in one
   `refused (404)` line and make no file or folder, where a mistyped `--db` made an empty
   store that `uasw verify` called intact (issue #73). A write command given a mistyped
-  `--db` still makes a store there, as it must to make one at all. `export-static` builds
+  `--db` makes a store there only when its write is accepted, since that is how a store is
+  made: `ingest` reads its logs before it opens the store and opens it for the first log
+  that reads, and `record`, on a path with nothing at it, checks the entry against an empty
+  store before it makes the file, so a refusal (a file that is not a log, a date that is not
+  a date or is in the future, an aircraft, component or entry the store does not hold, a
+  kind fleet.toml does not name) makes no store, side file or folder there, where it made
+  an empty store that `uasw verify` called intact (issue #83). Nothing is removed to get
+  there, so a refusal never deletes or alters a store another process made meanwhile. An
+  accepted entry is checked again against the store it opens, as every append is; if
+  another process made and wrote that store between the two checks, the second check is
+  the one that counts. `seed` and `serve` make the store on a new path as before. `export-static` builds
   the demo around the seeded fleet's SYN-04 and refuses a store without it (`refused (409)`)
   instead of ending in a traceback; exporting a store of one's own logs is not supported.
   The default `--fixtures` is the folder beside the code when it exists, so a seed run from
@@ -608,7 +618,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   head moved; one edit made in the file, one walk, and the break shown from then on; one
   outside commit landing inside an open snapshot, zero walks for that snapshot and one for the
   next. What the summary shows is exactly what `uasw verify` would compute of that state,
-  including the 3.9 s a 100,000-link store costs the one walk after an outside commit, which
+  including the 2.4 s a 100,000-link store costs the one walk after an outside commit, which
   lands on the first reader after it and on no write.
 - **The fleet records summary is the per-aircraft summaries, read in one state, and nothing
   more.** `uasw fleet-records` and `GET /fleet/records` build each row with `build_records` and

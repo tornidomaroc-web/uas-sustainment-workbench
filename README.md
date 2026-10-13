@@ -213,7 +213,9 @@ unchanged since a head, never that the records are correct. A store written by 0
 journaled when first opened, after a note that what came before it is not tamper-evident.
 Whatever the file holds, verifying reports a break and never crashes, and `uasw verify` given a
 path with no store at it says so (`refused (404)`) rather than making an empty store there and
-calling it intact; so do the other commands that only read. A running service whose store
+calling it intact; so do the other commands that only read, and `uasw ingest` or
+`uasw record` refused on such a path makes no store there either: a store is made by a write
+that is accepted, or by `uasw seed` and `uasw serve`. A running service whose store
 file is overwritten, truncated, replaced or removed from outside refuses every read and write
 of the store with 503 naming the cause, `/health` included, rather than serving what it held
 in memory; restored in place, it serves the restored file, provided the service had no writes

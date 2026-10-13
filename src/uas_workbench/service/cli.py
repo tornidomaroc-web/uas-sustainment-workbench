@@ -12,12 +12,14 @@
     uasw verify [--head H]  # the write journal: unchanged since a head, or the first bad link
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
-(showcase excerpts, default tests/fixtures).
+(showcase excerpts; default the tests/fixtures folder beside the code in a checkout or an
+editable install, else tests/fixtures in the working folder).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import sqlite3
@@ -76,7 +78,8 @@ class Refused(Exception):
 
 def open_store(path: str, *, create: bool = True) -> Store:
     """The store at `path`, made there on first use by the commands that write (`seed`,
-    `serve`, `ingest`, `record`). A command that only reads passes `create=False` and is
+    `serve`, `ingest`, `record`); `ingest` and `record` check their input first, so one that
+    is refused makes nothing (issue #83). A command that only reads passes `create=False` and is
     refused (404) when nothing is at `path`, before any file or folder is made: a mistyped
     `--db` made an empty store there, which `uasw verify` then called intact (issue #73).
     Only "nothing is there" is a 404: a path that cannot be looked at (a folder one may not
@@ -96,6 +99,12 @@ def open_store(path: str, *, create: bool = True) -> Store:
     store = Store(path)
     _opened.append(store)
     return store
+
+
+def _new(path: str) -> bool:
+    """Whether a command that writes would make the store at `path`: nothing is there. Such a
+    command checks its input before it opens the store, so a refusal makes nothing there."""
+    return path != ":memory:" and _nothing_at(path)
 
 
 def _nothing_at(path: str) -> bool:
@@ -191,7 +200,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def cmd_ingest(args: argparse.Namespace) -> None:
     import sys
 
-    store = open_store(args.db)
+    # Opened for the first log that reads, so logs that are all refused make no store on a
+    # path with nothing at it (issue #83).
+    store: Store | None = None
     refused = 0
     for path in args.logs:
         suffix = path.suffix.lower()
@@ -210,6 +221,8 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             print(f"refused (422): {path}: {detail}", file=sys.stderr)
             refused += 1
             continue
+        if store is None:
+            store = open_store(args.db)
         try:
             # The aircraft's row, when it is new, and the flight: one transaction (issue #69).
             store.add_log(args.aircraft, record)
@@ -399,32 +412,40 @@ def _record_entry(args: argparse.Namespace, subject: str, kind_: str, **details:
     from uas_workbench.ledger import NOTE, Entry, LedgerError, append
 
     now = datetime.now(UTC).replace(microsecond=0)
-    store = open_store(args.db)
-    at = _when(args.at, "--at") or now
-    if at.tzinfo is None:
-        at = at.replace(tzinfo=UTC)
+    given = _when(args.at, "--at")
     supersedes = getattr(args, "supersedes", None)
-    if supersedes is not None and not args.at and kind_ != "retraction":
-        # A correction keeps the date of the entry it corrects; without --at, that date.
-        target = store.entry(supersedes)
-        if target is not None:
-            at = target.occurred_utc
-    entry = Entry(
-        id=None,
-        subject=subject,
-        kind=kind_,
-        occurred_utc=at,
-        recorded_utc=now,
-        entered_by=args.by,
-        statement=getattr(args, "statement", "") or "",
-        details={k: v for k, v in details.items() if v is not None},
-        supersedes=supersedes,
-        reason=getattr(args, "reason", None),
-        synthetic=False,
-    )
     config = load_config()
+
+    def attempt(store: Store) -> Entry:
+        at = given or now
+        if supersedes is not None and not args.at and kind_ != "retraction":
+            # A correction keeps the date of the entry it corrects; without --at, that date.
+            corrected = store.entry(supersedes)
+            if corrected is not None:
+                at = corrected.occurred_utc
+        entry = Entry(
+            id=None,
+            subject=subject,
+            kind=kind_,
+            occurred_utc=at,
+            recorded_utc=now,
+            entered_by=args.by,
+            statement=getattr(args, "statement", "") or "",
+            details={k: v for k, v in details.items() if v is not None},
+            supersedes=supersedes,
+            reason=getattr(args, "reason", None),
+            synthetic=False,
+        )
+        return append(store, entry, policy=config.life, now=now, tolerance_s=config.tolerance_s)
+
     try:
-        stored = append(store, entry, policy=config.life, now=now, tolerance_s=config.tolerance_s)
+        if _new(args.db):
+            # Nothing is at the path: check the entry against an empty store first, so a
+            # refusal makes no store there (issue #83); one that is accepted makes the store
+            # and is checked again against it, as every append is.
+            with contextlib.closing(Store(":memory:")) as empty:
+                attempt(empty)
+        stored = attempt(open_store(args.db))
     except LedgerError as exc:
         print(f"refused ({exc.status}): {exc.detail}", file=sys.stderr)
         sys.exit(1)
