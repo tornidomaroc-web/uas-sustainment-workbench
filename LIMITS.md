@@ -526,14 +526,38 @@ field-level tables. This file is about what that means for a maintenance tool.
   a file the service holds open). A store made read-only is still read; its writes are refused
   with 503. Anything else SQLite refuses on the file is a 503 with SQLite's sentence, never a
   500. What this does not catch: a change landing within the same clock tick (about 15 ms on
-  Windows) as the change last seen, at the same size, is seen only at the next change; a
-  damaged file is looked at again once a second, so a restore is always seen within a second.
-  A legitimate change from outside (another `uasw` command's commit and checkpoint) costs one
-  `quick_check` and the connections opened afresh, besides the journal walk it already cost;
-  so does each of the service's own checkpoints (about one per 1000 pages written), after
-  which every kept answer, the journal walk included, is computed again on its next read. The
-  check is about 2 ms per MB of store here (18 ms at 9 MB); a damaged store is checked at most
-  once a second, however many requests meet it.
+  Windows) as the change last seen, at the same size, is seen only at the next change, which
+  may be the store's own next checkpoint; a damaged file is looked at again once a second, so
+  a restore is always seen within a second. Nor damage to a page the `-wal` file holds a newer
+  copy of: SQLite reads that page from the `-wal` file, so the check passes, and the next
+  checkpoint writes the page over the damage (measured on 0.6.1 as on this version: pages
+  overwritten that the `-wal` file held passed the check; any page it did not hold failed it).
+  The store makes the only changes it makes to its file while open itself (issue #79): its
+  writing connection never checkpoints on its own (`wal_autocheckpoint` is 0), and the store
+  folds the WAL into the file every 200 of its own commits and after each batch, with
+  `PRAGMA wal_checkpoint(PASSIVE)`, which waits for no reader. The file is looked at right
+  before and right after it, under the lock every look takes; a change between the two is
+  checked once, by the writer, so damage landing during the checkpoint is refused as before,
+  and a file that passes is recorded as seen with nothing else done: no connection is opened
+  afresh and no kept answer is computed again. So a change from outside that lands during the
+  store's own checkpoint and passes the check (a copy restored in place) is served without the
+  connections opened afresh; restore a store with the service stopped, as above. Before, SQLite
+  checkpointed on the commit that took the WAL past about 1,000 pages, and on nearly every
+  commit while readers kept the WAL from starting over, and each such checkpoint looked like a
+  change from outside. Measured on Windows (Python 3.12 and 3.14, 2026-10-14; 3,000 writes
+  through one store, two threads reading the kept answers all along): 15 checks and no
+  connection reopened, where 0.6.1 made 146 to 156 checks, each followed by every connection
+  opened afresh and the kept answers computed again; the two threads read 4.6 to 5.3 times as
+  often, the slowest read in a thousand took 74 to 91 ms instead of about 306 ms, and the
+  `-wal` file ended at 18 to 22 MiB instead of 45 MiB. A legitimate change from outside
+  (another `uasw` command's commit and the checkpoint its close runs) is still one: one
+  `quick_check` and the connections opened afresh, besides the journal walk its commit costs
+  anyway (ten `uasw record` processes beside one store: ten checks and ten reopenings, on 0.6.1
+  and on this version), since one `stat` cannot tell another connection's checkpoint from a
+  file restored in place. The check is about 2 ms per MB of store here (18 ms at 9 MB); while it
+  runs, every other read and write that meets the change waits for it, the store's own
+  checkpoint included, since a read let through meanwhile could read a damaged file; a damaged
+  store is checked at most once a second, however many requests meet it.
   Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
   last state the service read.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
