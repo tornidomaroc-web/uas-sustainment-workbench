@@ -123,6 +123,9 @@ AIRCRAFT_COLUMNS = "key, label, source, synthetic, licence, attribution"
 # How long a write waits for another writer's lock before it fails. Writes take milliseconds;
 # a second writer is `uasw record` beside a running service, or two services on one file.
 BUSY_TIMEOUT_MS = 5000
+# How many of the store's own commits the WAL takes before the store folds it into the file
+# (`_checkpoint`): about the 1,000 pages SQLite checkpoints at, at a few pages a write.
+CHECKPOINT_COMMITS = 200
 # A checked write refused because another writer held the store past that wait (`writing`).
 BUSY = (
     "another write held the store for longer than this one waits; nothing was written, "
@@ -168,7 +171,8 @@ class StoreDamaged(Exception):
 @dataclass(frozen=True)
 class _FileState:
     """What one `stat` says of the store file: which file it is, its size, when it was last
-    changed and its permissions. SQLite's own writes to it are checkpoints."""
+    changed and its permissions. SQLite's own writes to it are checkpoints: the store's own,
+    which it makes and looks for itself (`_checkpoint`), and any other connection's."""
 
     identity: tuple[int, int]
     size: int
@@ -246,6 +250,7 @@ class Store:
         self._since: tuple[int, int] | None = None
         self._closed = False
         self._batching = False  # inside `batch`: writes join its one transaction
+        self._uncheckpointed = 0  # own commits since the last own checkpoint (`_checkpoint`)
         # The store file as last seen, and what is wrong with it if anything (`_watch`). The
         # generation moves when the file changed outside SQLite and passed the check: every
         # connection opened before it is opened again before its next use, and it is part of
@@ -326,6 +331,9 @@ class Store:
         connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
+        # The store folds the WAL into the file itself (`_checkpoint`), so that it knows each
+        # change it makes to the file (issue #79).
+        connection.execute("PRAGMA wal_autocheckpoint = 0")
         return connection
 
     # ---- the store file, changed outside SQLite ---------------------------------------
@@ -336,9 +344,10 @@ class Store:
         pages they hold in memory; so when the file is not as last seen, it is checked
         (`_damage_in`). Damaged, replaced or removed, every read and write is refused as
         `StoreDamaged` until the file changes again and passes; sound (a commit and checkpoint
-        by another connection, one of this store's own checkpoints, a file restored in place),
-        the generation moves, so every connection is opened afresh before its next use and
-        every kept answer is computed again. Takes a lock of its own, never the write lock."""
+        by another connection, a file restored in place), the generation moves, so every
+        connection is opened afresh before its next use and every kept answer is computed
+        again. The store's own checkpoints are looked at as it makes them (`_checkpoint`), under
+        the same lock. Takes a lock of its own, never the write lock."""
         if self._labeller is None:
             return
         if self._damaged is None and self._seen() == self._file:
@@ -639,6 +648,9 @@ class Store:
             self._projection.value = (after, projection[1])
         else:
             self._projection.value = None
+        self._uncheckpointed += 1
+        if self._uncheckpointed >= CHECKPOINT_COMMITS:
+            self._checkpoint()
 
     def add_fleet(self, fleet: Fleet) -> None:
         for aircraft in fleet.aircraft:
@@ -748,6 +760,7 @@ class Store:
                 self._journal.value = None
                 self._unreadable.value = None
                 self._projection.value = None
+            self._checkpoint()
 
     def holds(self) -> tuple[int, int, int]:
         """How many aircraft, flights and entries the store holds, read in one snapshot."""
@@ -770,6 +783,44 @@ class Store:
             if _busy(exc):
                 raise StoreBusy(BUSY) from exc
             raise
+
+    def _checkpoint(self) -> None:
+        """Under the write lock, after an own commit and once the kept answers have moved on:
+        every `CHECKPOINT_COMMITS` own commits, and after a batch, fold the WAL into the store
+        file (`PRAGMA wal_checkpoint(PASSIVE)`, which waits for no reader and leaves alone
+        what a reader still reads). The writing connection never checkpoints on its own
+        (`wal_autocheckpoint` is 0), so this is the only change the store makes to its file
+        while it is open (issue #79): SQLite checkpointed on the commit that took the WAL past
+        about 1,000 pages, which was the store's own and looked like a change from outside,
+        and on nearly every commit while readers kept the WAL from starting over.
+
+        The file is looked at right before and right after, under the lock every look at it
+        takes, so no other thread meets the change as one from outside; a reader that meets it
+        waits for this verdict, as for any other. A change between the two looks is checked
+        once, here (`_damage_in`): a change from outside landing during the checkpoint is in
+        that file too, so damage is refused from then on, as before. Sound, the file is
+        recorded as seen and nothing else happens: no generation moves, no connection is
+        opened afresh and no kept answer is computed again, since SQLite made the change and
+        every connection of the store sees it through SQLite. A file that changed before the
+        first look, which no look has met yet, or that is refused, is not written to: the
+        checkpoint waits for the next commit, whose look checks that change as from outside.
+        A checkpoint SQLite refuses is left for the next one."""
+        if self._labeller is None or self._db.in_transaction:
+            self._uncheckpointed = 0
+            return
+        with self._watch_lock:
+            before = self._seen()
+            if self._damaged is not None or before != self._file:
+                return
+            self._uncheckpointed = 0
+            with contextlib.suppress(sqlite3.Error):
+                self._db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+            after = self._seen()
+            if after == before:
+                return
+            self._damaged = self._damage_in(after)
+            self._file = after
+            self._checked_at = time.monotonic()
 
     # ---- the ledger ------------------------------------------------------------------
 
