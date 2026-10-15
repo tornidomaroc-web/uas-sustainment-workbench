@@ -6,11 +6,13 @@
   writing connection no longer checkpoints on its own; the store folds the WAL into its file
   every 200 of its own commits and after each batch, looks at the file right before and right
   after, and checks a change between the two once, on the writer, with no connection opened
-  afresh and no kept answer computed again. Before, each checkpoint SQLite made on the store's
-  commits, on nearly every commit while readers kept the WAL from starting over, cost a check
-  that every read meeting it waited for, every connection opened afresh and the journal walked
-  again: 146 to 156 in 3,000 writes with two threads reading, now 15 checks and none of the
-  rest. A change from outside, another `uasw` command's commit and checkpoint included, is
+  afresh and no kept answer computed again. Its checkpoint waits for the reads already under
+  way to end, so the whole WAL is folded and starts over; one that waits for no reader let the
+  `-wal` file grow with every write while threads kept reading. Before, each checkpoint SQLite
+  made on the store's commits, on nearly every commit while readers kept the WAL from starting
+  over, cost a check that every read meeting it waited for, every connection opened afresh and
+  the journal walked again: 113 to 227 in 6,000 writes with two threads reading, now 30 checks
+  and none of the rest, the `-wal` file at 3.7 MiB. A change from outside, another `uasw` command's commit and checkpoint included, is
   checked as before. LIMITS.md also says that damage to a page the `-wal` file holds a newer
   copy of passes the check (on 0.6.1 too). No response, record, pack or hash changes.
 
