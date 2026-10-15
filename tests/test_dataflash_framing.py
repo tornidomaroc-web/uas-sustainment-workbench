@@ -274,22 +274,35 @@ def test_a_misfit_definition_in_the_quiet_tail_is_refused_and_a_fitting_one_is_n
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     """pymavlink says nothing of bytes in the last 527 that do not frame, but it still reads
-    every definition it frames there, and fails on its messages. So the walk goes on through
-    the tail while the bytes frame, and refuses a misfit definition there as anywhere else; a
-    definition that fits, followed by bytes that do not frame, is left to pymavlink."""
+    every definition it frames there, and fails on its messages. Its indexer skips such bytes
+    one at a time and frames again at the next sync pair, so the walk does the same, and
+    refuses a misfit definition there as anywhere else, after such bytes too; a definition
+    that fits, followed by bytes that do not frame, is left to pymavlink."""
     log = LOG.read_bytes()
     expected = read_dataflash(LOG, **ATTR)
     fits = tmp_path / "fits" / LOG.name
     fits.parent.mkdir()
     fits.write_bytes(log + _defined(0xFE, 4, b"QQQ", b"B") + b"\xff" * 300)
     assert read_dataflash(fits, **ATTR) == expected
-    misfit = tmp_path / "misfit" / LOG.name
-    misfit.parent.mkdir()
-    misfit.write_bytes(log + _defined(0xFE, 7, b"QQQ", b"B") + b"\xa3\x95\xfe" + bytes(4))
-    with pytest.raises(ValueError) as refused:
-        read_dataflash(misfit, **ATTR)
-    match = re.match(MISFIT, str(refused.value))
-    assert match and int(match.group(1)) == LOG_SIZE, str(refused.value)
+    # (name, bytes after the log, pattern, offset named)
+    cases = [
+        ("misfit", _defined(0xFE, 7, b"QQQ", b"B") + b"\xa3\x95\xfe" + bytes(4), MISFIT, 0),
+        (
+            "misfit-after-noise",
+            b"\xff" * 10 + _defined(0xFE, 7, b"QQQ", b"B") + b"\xa3\x95\xfe" + bytes(4),
+            MISFIT,
+            10,
+        ),
+        ("unsized-after-noise", b"\xff" * 10 + _defined(0xFE, 4, b"QQQ", b"x"), UNSIZED, 10),
+    ]
+    for name, after, pattern, offset in cases:
+        path = tmp_path / name / LOG.name
+        path.parent.mkdir()
+        path.write_bytes(log + after)
+        with pytest.raises(ValueError) as refused:
+            read_dataflash(path, **ATTR)
+        match = re.match(pattern, str(refused.value))
+        assert match and int(match.group(1)) == LOG_SIZE + offset, (name, str(refused.value))
     assert _fd_lines(capfd) == []
 
 
@@ -567,6 +580,9 @@ def _copies() -> list[bytes]:
         for after in (b"", b"\xa3\x95\xfe" + bytes(length - 3), b"\xff" * 300):
             out.append(log + _defined(0xFE, length, b"QQQ", b"I") + after)
             out.append(DEFINITION + _defined(0xFE, length, b"QQQ", b"I") + after + log)
+        # Noise inside the tail, then the definition and a message of its type.
+        message = b"\xa3\x95\xfe" + bytes(max(length - 3, 0))
+        out.append(log + b"\xff" * 10 + _defined(0xFE, length, b"QQQ", b"I") + message)
     for base in (log, midway):
         for _ in range(12):
             at, n = rng.randrange(len(base)), rng.choice((1, 2, 7, 300))

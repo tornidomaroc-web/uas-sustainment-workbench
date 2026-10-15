@@ -11,7 +11,8 @@
   refused even with no message of its type after it; a format character pymavlink has no size
   for is refused there too. All 1,413 definitions in the 13 real logs fit, and their records
   are unchanged. A log stored earlier that holds such a definition stays stored; sending it
-  again is now this refusal, where it was logged as already stored.
+  again is now this refusal, where `POST /ingest` answered 409 "already stored" and
+  `uasw ingest` logged it as already stored and exited 0.
 - A log over 512 MiB is refused, and an upload is no longer held whole in memory (closes
   #89). `POST /ingest` answers 413 and `uasw ingest` prints `refused (413)` with the same
   sentence, before any reader opens the log; `UASW_MAX_LOG_MIB` sets another whole number of
