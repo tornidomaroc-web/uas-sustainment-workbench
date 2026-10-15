@@ -66,17 +66,31 @@ field-level tables. This file is about what that means for a maintenance tool.
   pymavlink printed anything, on 3.12 and 3.14, and every real log measured, the 3 fixture
   excerpts and the 10 whole ALFA logs, frames from its first byte to its last and reads to the
   same record as before. What it does not see: a damaged message body whose header is intact (a
-  DataFlash log carries no checksum, so pymavlink reads the wrong values as it did), and the
-  last 527 bytes of a file of 528 bytes or more, which pymavlink allows for a block-logging
-  page left partly written and reads without a word, as before. Nor a definition whose length
-  disagrees with its own format string: such a file frames, and pymavlink's parser prints a
-  `Failed to parse` line on standard error and an `unpack requires` line on standard output
-  for each message of that type it reads, then reads on, as it did before this check (measured:
-  19 997 lines on each for 2 MB of such messages of a type the tool reads, interleaved with
-  others, and the log stored; about 990 on each, then a 422, when they run back to back; issue
-  #88). A log cut short inside a message still reads. The walk is one more pass over the file,
-  about 4 ns a byte here (0.33 s for the 80 MB ALFA log, whose read went from 0.25 s to
-  0.58 s), with no list of offsets kept.
+  DataFlash log carries no checksum, so pymavlink reads the wrong values as it did), and bytes
+  that do not frame in the last 527 bytes of a file of 528 bytes or more, which pymavlink
+  allows for a block-logging page left partly written and reads past without a word, as
+  before. Every format definition the walk frames, in that tail too, is refused when its
+  length is not 3 plus the size of its own format, or its format holds a character pymavlink
+  has no size for (issue #88), naming its offset: "the format definition at offset N gives a
+  length of L bytes, where its format needs M". Such a file frames, and pymavlink's parser
+  printed a `Failed to parse` line on standard error and an `unpack requires` line on standard
+  output for each message of that type it read, then read on (measured on 0.6.1: 19 997 lines
+  on each for 2 MB of such messages of a type the tool reads, interleaved with others, and the
+  log stored; about 990 on each, then a 422, when they run back to back); an unknown format
+  character was already a 422, after one line on standard output. The definition is refused
+  even when no message of its type follows and pymavlink would say nothing: a length the
+  format does not give is not what a logger writes, and all 1 413 definitions in the 13 real
+  logs give exactly 3 plus their format's size. In 600 copies of the fixture logs with
+  definitions' lengths or format characters changed, misfit definitions planted before and
+  inside the tail, and the damage above, the check refused exactly the 443 on which the
+  installed pymavlink printed anything or held such a definition, on 3.12 and 3.14. A log
+  stored before this check that holds such a definition stays stored and counted, and its
+  store verifies as before; nothing reads the file again, but sending it again is now this
+  refusal (422, exit 1), where 0.6.1 logged that it was already stored and exited 0. A log cut
+  short inside a message still reads. The walk is one more pass over the file, about 4 ns a
+  byte here (0.33 s for the 80 MB ALFA log, whose read went from 0.25 s to 0.58 s; checking
+  its 140 definitions adds nothing measurable, and a file of nothing but definitions walks at
+  about 7 ns a byte), with no list of offsets kept.
   A refused log may be a real flight, and nothing of it is counted, so items read less due
   than they are; the refusal says so. Its flight adds no cycle, and its hours come back only
   when a later log of the same aircraft carries the lifetime counter (`reconcile()`, to within

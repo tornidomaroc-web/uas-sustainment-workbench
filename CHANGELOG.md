@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A `.bin` holding a format definition whose length is not 3 plus the size of its own format
+  is refused in one line (`uasw ingest`, exit 1) or one 422 (`POST /ingest`) naming the
+  definition's offset, before pymavlink reads it, and nothing is stored (closes #88). Before,
+  pymavlink printed a line on standard error and one on standard output for every message of
+  that type it read (19,997 on each for 2 MB) and the log was stored. The same walk that frames
+  the file (#85) checks each definition it meets, the quiet tail included, and a definition is
+  refused even with no message of its type after it; a format character pymavlink has no size
+  for is refused there too. All 1,413 definitions in the 13 real logs fit, and their records
+  are unchanged. A log stored earlier that holds such a definition stays stored; sending it
+  again is now this refusal, where it was logged as already stored.
 - A log over 512 MiB is refused, and an upload is no longer held whole in memory (closes
   #89). `POST /ingest` answers 413 and `uasw ingest` prints `refused (413)` with the same
   sentence, before any reader opens the log; `UASW_MAX_LOG_MIB` sets another whole number of

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import mmap
 import re
+import struct
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -65,6 +66,15 @@ FMT_TYPE = 0x80
 FMT_LENGTH = 89
 HEADER = 3
 QUIET_TAIL = 528
+# A definition's format string: 16 bytes after the header, its type, its length and its name,
+# read to the first NUL. Each character's size is that of pymavlink's struct for it, so a
+# definition fits when its length is the header plus their sum, as a logger writes it.
+FORMAT_AT = HEADER + 6
+FORMAT_SIZE = 16
+CHAR_SIZE = {
+    ord(char): struct.calcsize("<" + code)
+    for char, (code, _, _) in DFReader.FORMAT_TO_STRUCT.items()
+}
 NOT_COUNTED = (
     "nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
     "hours only as far as a later log's lifetime counter covers it"
@@ -99,14 +109,41 @@ def _holds_a_definition(path: Path) -> bool:
         return DEFINITION.search(data) is not None
 
 
+def _check_fits(data: mmap.mmap, at: int) -> None:
+    """Refuse the whole format definition at `at` unless its length is the header plus the size
+    of its format (issue #88). pymavlink frames by the length and unpacks by the format, so
+    when they disagree it fails on every message of that type it reads, printing a line on
+    stderr and one on stdout for each, and reads on; a character it has no size for makes it
+    raise. All 1,413 definitions in the 13 real logs measured fit."""
+    need = HEADER
+    for char in data[at + FORMAT_AT : at + FORMAT_AT + FORMAT_SIZE]:
+        if not char:
+            break
+        size = CHAR_SIZE.get(char)
+        if size is None:
+            shown = repr(chr(char)) if 0x20 <= char < 0x7F else f"byte {char:#04x}"
+            raise ValueError(
+                f"the format definition at offset {at} gives the format character {shown}, "
+                "which pymavlink has no size for"
+            )
+        need += size
+    if data[at + 4] != need:
+        raise ValueError(
+            f"the format definition at offset {at} gives a length of {data[at + 4]} bytes, "
+            f"where its format needs {need}"
+        )
+
+
 def _check_framing(path: Path) -> None:
     """Refuse a file at the first place pymavlink's indexer would print a line, before it does
     (issue #85): bytes that are not a message, a type no definition names, a definition shorter
     than the header. The indexer prints one line per byte it cannot frame, from C, and then
     reads on from the next sync pair it meets, which can sit inside another message's data, so
-    what it reads after damage is a guess. One pass over the mapped file, message by message,
-    keeping only the 256 lengths; every real log measured frames from its first byte to its
-    last, and the quiet tail pymavlink allows is left to it."""
+    what it reads after damage is a guess. Every definition the walk frames is refused too
+    when its length is not its format's (issue #88). One pass over the mapped file, message by
+    message, keeping only the 256 lengths; every real log measured frames from its first byte
+    to its last. In the quiet tail pymavlink allows, bytes that do not frame end the walk
+    without a word, as they end pymavlink's; a definition framed there is still checked."""
     with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
         size = len(data)
         lengths = bytearray(256)
@@ -114,10 +151,13 @@ def _check_framing(path: Path) -> None:
         # The indexer looks at an offset while a header fits after it, and speaks about it only
         # outside the quiet tail: up to size - 528 in a file of 528 bytes or more.
         end = size - QUIET_TAIL + 1 if size >= QUIET_TAIL else size - HEADER
+        last = size - HEADER
         first, second = SYNC
         at = 0
-        while at < end:
+        while at < last:
             if data[at] != first or data[at + 1] != second:
+                if at >= end:
+                    return
                 raise ValueError(
                     f"bytes at offset {at} do not frame as a DataFlash message: noise, or "
                     "damage inside the log"
@@ -126,13 +166,18 @@ def _check_framing(path: Path) -> None:
             if kind == FMT_TYPE:
                 if at + 4 >= size:
                     return  # a definition cut off by the end of the file: pymavlink's to read
-                if data[at + 4] < HEADER:
+                if data[at + 4] < HEADER and at < end:
                     raise ValueError(
                         f"the format definition at offset {at} gives a length of "
                         f"{data[at + 4]} bytes, shorter than the {HEADER}-byte message header"
                     )
+                # pymavlink reads a definition only when the whole of it is in the file.
+                if at + lengths[FMT_TYPE] <= size:
+                    _check_fits(data, at)
                 lengths[data[at + 3]] = data[at + 4]
             if not lengths[kind]:
+                if at >= end:
+                    return
                 raise ValueError(
                     f"a message at offset {at} has type {kind}, which no format definition names"
                 )
