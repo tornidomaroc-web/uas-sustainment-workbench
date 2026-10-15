@@ -425,10 +425,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   the correction and (11, 2, 95) after; `tests/test_snapshot.py` on the version before).
   What is still not promised: the board's responses (`/aircraft`, `/aircraft/{key}` and its
   due list, `/fleet/due`, `/fleet/findings`, `/fleet/grounded-flights`, `/entries`,
-  `/components`, the gauges behind `/metrics`) and the static export's `fleet.json` are built
-  from several reads with no snapshot around them, so one can straddle a write that lands
-  between two of its reads, as it always could; none of them carries a journal head or a
-  hash that names one state, and each is rebuilt on the next request. The three answers the
+  `/components`) and the static export's `fleet.json` are built from several reads with no
+  snapshot around them, so one can straddle a write that lands between two of its reads, as
+  it always could; none of them carries a journal head or a hash that names one state, and
+  each is rebuilt on the next request. The gauges behind `/metrics` are one snapshot at one
+  time for every aircraft (issue #92), refreshed one at a time, so the last refresh set is
+  the newest state a refresh read. The three answers the
   store keeps rather than computes on every call, the kept journal result behind the records
   summaries, what `/health` holds and the whole-ledger projection, are each labelled with
   the state they were computed from; a snapshot uses one only when its label is the
@@ -480,6 +482,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   as a read on a closed connection is, and a closed store is one file, as before. A store in
   memory has one connection: a snapshot there holds the write lock for its length, so threads
   read one at a time and a write issued during a summary waits for it and lands after it.
+- **A write through the service still reads the whole ledger three times.** Validation reads
+  it, the gauges read and fold it once for the whole fleet, and the answer's whole-ledger
+  projection, which the write made stale, is read and folded once more (and used by the next
+  write's validation), so a write costs about the size of the ledger, no longer that times
+  the number of aircraft (issue #92: each aircraft's due list read and folded it twice).
+  Measured through `uasw serve` (Windows, Python 3.12.10, 2026-10-15; `POST /entries` one
+  after another, seeded fleet of nine aircraft): 506 ms a write at 3,000 entries before, 94 ms
+  now; 1.80 s at 10,000 before, 0.31 s now. The board's own responses (`/aircraft`,
+  `/fleet/due` and the rest above) still read and fold the ledger twice per aircraft per
+  request, as before (18 folds for `/aircraft` on the seeded fleet). A store in memory holds its one lock for the whole refresh, where it
+  took it once per read before.
 - **Two entries appended at once are checked one after the other, through one store or from
   two processes.** An entry is checked against the records and then written, and the check
   and the write hold the store's write lock together, so a second request served beside the
@@ -601,9 +614,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   file restored in place. The check is about 2 ms per MB of store here (18 ms at 9 MB); while it
   runs, every other read and write that meets the change waits for it, the store's own
   checkpoint included, since a read let through meanwhile could read a damaged file; a damaged
-  store is checked at most once a second, however many requests meet it.
+  store is checked at most once a second, however many requests meet it. The checkpoint's
+  wait for an older read holds the store's write lock, so the write that runs it, and every
+  write through the service sent meanwhile, answer only when that read ends or the busy
+  timeout passes; then the checkpoint is left for the next one and the writes are answered
+  as usual. Measured through `uasw serve` (Windows, Python 3.12.10, 2026-10-15; a reader in
+  another process begun before the 200th write): held 3 s, the 200th write and one sent
+  0.3 s after it answered 201 in 3.4 s and 3.1 s; held 8 s, in 5.6 s and 5.3 s; `/health`,
+  `/aircraft` and `/metrics` sent meanwhile answered in 10 to 70 ms, and a `uasw record` run
+  meanwhile recorded its entry; no 500, every write in the ledger and the journal intact,
+  on this version as on the one before.
   Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
-  last state the service read.
+  state the service read after its last write or ingest; a commit from outside is in them
+  from the service's next write on.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

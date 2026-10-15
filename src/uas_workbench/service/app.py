@@ -9,6 +9,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 import uuid
 from collections import Counter
@@ -658,41 +659,53 @@ def fleet_grounded(
 
 
 NOT_KNOWN = float("nan")  # a gauge that cannot be computed, never 0
+# Held by one refresh of the gauges at a time, from before it reads the store until its last
+# gauge is set, so the refreshes set the gauges in the order they read the store.
+_REFRESHING = threading.Lock()
 
 
 def refresh_gauges(store: Store, config: FleetConfig) -> None:
     """Recompute every gauge from the store. A record the store cannot read (issue #43) is
     named in the log, once per record; the aircraft whose state it leaves unknown count as
     unknown, and a count no aircraft can be left out of (findings by kind, due items by
-    state) is NaN rather than a number computed without the record."""
-    FLIGHTS_STORED.set(store.flight_count())
-    kinds: Counter[str] = Counter()
-    statuses: Counter[str] = Counter()
-    states: Counter[str] = Counter()
-    problems: dict[str, UnreadableRecord] = {}
-    findings_known = due_known = True
-    for aircraft in store.aircraft():
-        try:
-            result, _ = reconcile_view(store, aircraft, config)
-            kinds.update(f.kind for f in result.findings)
-        except UnreadableRecord as exc:
-            problems[exc.detail] = exc
-            findings_known = False
-        try:
-            due, state, _ = due_view(store, aircraft, config)
-            statuses[state.status if is_known(state.status) else "unknown"] += 1
-            states.update(i.state for i in due.items)
-        except UnreadableRecord as exc:
-            problems[exc.detail] = exc
-            statuses["unknown"] += 1
-            due_known = False
-    for kind in ("unlogged_flight", "counter_mismatch"):
-        FINDINGS.labels(kind=kind).set(kinds.get(kind, 0) if findings_known else NOT_KNOWN)
-    for status in (*config.states, "unknown"):
-        AIRCRAFT_BY_STATUS.labels(status=status).set(statuses.get(status, 0))
-    for state_name in DUE_ORDER:
-        count = states.get(state_name, 0) if due_known else NOT_KNOWN
-        DUE_ITEMS.labels(state=state_name).set(count)
+    state) is NaN rather than a number computed without the record.
+
+    Every aircraft is computed at one time and in one snapshot, so the whole ledger is read
+    once and folded at that time once for the fleet (issue #92): each due list was its own
+    read at its own "now", which read and folded the ledger twice per aircraft after every
+    write. The snapshot takes no write lock. One refresh runs at a time (`_REFRESHING`): two
+    writes answered at once each refresh after their commit, and the one that read the store
+    first set its gauges last, so the older state's stood."""
+    with _REFRESHING, store.snapshot():
+        at = datetime.now(UTC)
+        FLIGHTS_STORED.set(store.flight_count())
+        kinds: Counter[str] = Counter()
+        statuses: Counter[str] = Counter()
+        states: Counter[str] = Counter()
+        problems: dict[str, UnreadableRecord] = {}
+        findings_known = due_known = True
+        for aircraft in store.aircraft():
+            try:
+                result, _ = reconcile_view(store, aircraft, config)
+                kinds.update(f.kind for f in result.findings)
+            except UnreadableRecord as exc:
+                problems[exc.detail] = exc
+                findings_known = False
+            try:
+                due, state, _ = due_view(store, aircraft, config, at)
+                statuses[state.status if is_known(state.status) else "unknown"] += 1
+                states.update(i.state for i in due.items)
+            except UnreadableRecord as exc:
+                problems[exc.detail] = exc
+                statuses["unknown"] += 1
+                due_known = False
+        for kind in ("unlogged_flight", "counter_mismatch"):
+            FINDINGS.labels(kind=kind).set(kinds.get(kind, 0) if findings_known else NOT_KNOWN)
+        for status in (*config.states, "unknown"):
+            AIRCRAFT_BY_STATUS.labels(status=status).set(statuses.get(status, 0))
+        for state_name in DUE_ORDER:
+            count = states.get(state_name, 0) if due_known else NOT_KNOWN
+            DUE_ITEMS.labels(state=state_name).set(count)
     for problem in problems.values():
         logger.warning(
             "stored record cannot be read",

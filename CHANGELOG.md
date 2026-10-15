@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A write through the service no longer reads and folds the whole ledger twice per aircraft
+  for the `/metrics` gauges (closes #92): the gauges are computed in one snapshot at one
+  time for the whole fleet, one read and one fold, and one refresh runs at a time, so two
+  writes answered at once can no longer leave the older state's gauges standing. Through
+  `uasw serve` on the seeded fleet a `POST /entries` took 506 ms at 3,000 entries and 1.80 s
+  at 10,000; now 94 ms and 0.31 s (Windows, Python 3.12). Gauge values and every response
+  are unchanged.
 - A `.bin` holding a format definition whose length is not 3 plus the size of its own format
   is refused in one line (`uasw ingest`, exit 1) or one 422 (`POST /ingest`) naming the
   definition's offset, before pymavlink reads it, and nothing is stored (closes #88). Before,
