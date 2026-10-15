@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- A log over 512 MiB is refused, and an upload is no longer held whole in memory (closes
+  #89). `POST /ingest` answers 413 and `uasw ingest` prints `refused (413)` with the same
+  sentence, before any reader opens the log; `UASW_MAX_LOG_MIB` sets another whole number of
+  MiB (twice the largest real log read here, 246 MB), and one that is not a whole number
+  above 0 is refused (422) before the command or the service starts. The service checks the
+  write token, then the declared length, before reading a byte of the body, and counts a
+  body with no declared length as it arrives; before, FastAPI read the whole form to disk
+  before the write check ran. The route copies the upload a MiB at a time: 200 MiB raised
+  the service's peak memory 4 MB, not 211 MB; an accepted 80 MB DataFlash log still raises
+  it about 120 MB, which is pymavlink's index of it. A copy that fails answers 503 and
+  removes its temporary file, which it left behind before. No response, record, pack or
+  hash changes.
 - The store's own checkpoints are no longer taken for changes from outside (closes #79). Its
   writing connection no longer checkpoints on its own; the store folds the WAL into its file
   every 200 of its own commits and after each batch, looks at the file right before and right
