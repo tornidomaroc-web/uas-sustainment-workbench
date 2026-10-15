@@ -111,9 +111,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   spooled copy and the reader's own file). Every temporary file was gone after each request,
   refused, accepted, cut off by the client or failing to copy (a copy that fails answers 503);
   a service terminated while a reader has the file open leaves that one file behind (by
-  construction, not measured). An upload without the write token is now refused (401 or 403)
-  before its body is read; before, FastAPI read the whole form, spooling the file to disk,
-  before the write check ran.
+  construction, not measured). An upload, or an entry, without the write token is now
+  refused (401 or 403) before its body is read; before, FastAPI read the whole form,
+  spooling the file to disk, or the whole JSON body into memory (300 MiB to `POST /entries`
+  raised the peak about 950 MB), before the write check ran. A writer's own entry has no
+  size limit: FastAPI still reads it whole into memory.
 
 ## Limits of reconcile()
 

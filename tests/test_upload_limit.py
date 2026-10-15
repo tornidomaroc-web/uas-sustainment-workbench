@@ -237,16 +237,66 @@ def test_a_body_with_no_declared_length_is_refused_once_it_passes_the_limit(
 def test_a_declared_length_cannot_carry_more_than_it_declares(limited: Live) -> None:
     head = form_head("understated", "big.bin")
     with connect(limited.port) as s:
-        s.sendall(request_head(1000))
-        # The service may close the connection once its declared body is read; whatever it
-        # answers, nothing past the declared length is read as a log.
+        s.sendall(request_head(len(head) + 1000))
+        # The service may close the connection once its declared body is read.
         with contextlib.suppress(OSError):
             s.sendall(head + bytes(LIMIT + ALLOWANCE + 1) + FORM_TAIL)
-        with contextlib.suppress(OSError, StopIteration, IndexError):
-            read_answer(s)
+        status, body = read_answer(s)
+    # Only the declared bytes are read: a file part cut short, so no log. Had the bytes past
+    # the declared length been handed on, the count would have passed the limit: 413.
+    assert (status, body) == (
+        422,
+        '{"detail":[{"type":"missing","loc":["body","log"],"msg":"Field required","input":null}]}',
+    )
     assert limited.get("/aircraft/understated") == 404
     assert limited.get("/health") == 200
     assert limited.temp_left() == []
+
+
+def test_the_http_server_hands_on_no_more_than_a_body_declares() -> None:
+    """UploadGuard counts what the HTTP server hands it, so a body longer than it declares
+    relies on the server stopping at the declared length; held here for the installed
+    uvicorn, not assumed."""
+    import asyncio
+
+    import uvicorn
+
+    async def counting(scope: Any, receive: Any, send: Any) -> None:
+        assert scope["type"] == "http"
+        total, more = 0, True
+        while more:
+            message = await receive()
+            total += len(message.get("body", b""))
+            more = message.get("more_body", False)
+        text = str(total).encode()
+        headers = [(b"content-length", str(len(text)).encode())]
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        await send({"type": "http.response.body", "body": text})
+
+    server = uvicorn.Server(
+        uvicorn.Config(counting, host="127.0.0.1", port=0, lifespan="off", log_config=None)
+    )
+    thread = threading.Thread(None, asyncio.run, args=(server.serve(),), daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 30
+        while not server.started:
+            assert time.monotonic() < deadline, "uvicorn never started"
+            time.sleep(0.05)
+        port = server.servers[0].sockets[0].getsockname()[1]
+        with connect(port) as s:
+            s.sendall(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n")
+            with contextlib.suppress(OSError):
+                s.sendall(bytes(1000 + LIMIT))
+            status, body = read_answer(s)
+        # The app was handed the 1000 bytes declared; the rest is read as the next request,
+        # which the server refuses (400) on the same connection, if it arrived in time.
+        handed, _, after = body.partition("HTTP/1.1 ")
+        assert (status, handed) == (200, "1000")
+        assert after[:3] in ("", "400"), after
+    finally:
+        server.should_exit = True
+        thread.join(30)
 
 
 def test_an_upload_without_the_token_is_refused_before_its_body_is_read(limited: Live) -> None:
@@ -258,6 +308,38 @@ def test_an_upload_without_the_token_is_refused_before_its_body_is_read(limited:
     assert "UASW_WRITE_TOKEN" in body
     assert limited.get("/aircraft/no-token") == 404
     assert limited.temp_left() == []
+
+
+def test_an_entry_without_the_token_is_refused_before_its_body_is_read(limited: Live) -> None:
+    """FastAPI reads a JSON body whole into memory before the write check runs: 300 MiB sent
+    to POST /entries without the token raised the service's peak memory about 950 MB before
+    its 401. The headers alone are answered now."""
+    with connect(limited.port) as s:
+        s.sendall(
+            b"POST /entries HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+            b"Content-Length: %d\r\n\r\n" % (300 << 20)
+        )
+        status, body = read_answer(s)
+    assert status == 401, body
+    assert "UASW_WRITE_TOKEN" in body
+
+
+def test_every_write_that_takes_a_body_is_checked_before_its_body_is_read() -> None:
+    from fastapi.routing import APIRoute
+
+    from uas_workbench.service.app import WRITE_BODIES
+
+    app = create_app(Store(":memory:"), write_token=TOKEN)
+    writes = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.body_field is not None
+        and any(
+            d.call is not None and d.call.__name__ == "writer" for d in route.dependant.dependencies
+        )
+    }
+    assert writes == WRITE_BODIES
 
 
 def test_a_client_that_goes_away_mid_upload_leaves_no_temporary_file(limited: Live) -> None:

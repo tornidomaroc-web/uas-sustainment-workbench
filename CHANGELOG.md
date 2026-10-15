@@ -12,8 +12,10 @@
   before the write check ran. The route copies the upload a MiB at a time: 200 MiB raised
   the service's peak memory 4 MB, not 211 MB; an accepted 80 MB DataFlash log still raises
   it about 120 MB, which is pymavlink's index of it. A copy that fails answers 503 and
-  removes its temporary file, which it left behind before. No response, record, pack or
-  hash changes.
+  removes its temporary file, which it left behind before. `POST /entries` checks the write
+  token before reading its body too: FastAPI read a JSON body whole into memory first, so
+  300 MiB sent without the token raised the service's peak memory about 950 MB before its
+  401; now 0 MB. No response, record, pack or hash changes.
 - The store's own checkpoints are no longer taken for changes from outside (closes #79). Its
   writing connection no longer checkpoints on its own; the store folds the WAL into its file
   every 200 of its own commits and after each batch, looks at the file right before and right
