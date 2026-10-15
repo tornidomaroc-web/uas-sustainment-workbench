@@ -142,8 +142,9 @@ def _check_framing(path: Path) -> None:
     what it reads after damage is a guess. Every definition the walk frames is refused too
     when its length is not its format's (issue #88). One pass over the mapped file, message by
     message, keeping only the 256 lengths; every real log measured frames from its first byte
-    to its last. In the quiet tail pymavlink allows, bytes that do not frame end the walk
-    without a word, as they end pymavlink's; a definition framed there is still checked."""
+    to its last. In the quiet tail pymavlink allows, bytes that do not frame are skipped one at
+    a time without a word, as its indexer skips them, so a definition it frames there after
+    them is still checked."""
     with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
         size = len(data)
         lengths = bytearray(256)
@@ -157,7 +158,8 @@ def _check_framing(path: Path) -> None:
         while at < last:
             if data[at] != first or data[at + 1] != second:
                 if at >= end:
-                    return
+                    at += 1
+                    continue
                 raise ValueError(
                     f"bytes at offset {at} do not frame as a DataFlash message: noise, or "
                     "damage inside the log"
