@@ -6,6 +6,7 @@ import dataclasses
 import gc
 import logging
 import os
+import shutil
 import sqlite3
 import tempfile
 import time
@@ -30,6 +31,7 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from uas_workbench import __version__
 from uas_workbench.fleet import FleetConfig, load_config
@@ -46,6 +48,7 @@ from uas_workbench.life.engine import counted
 from uas_workbench.life.grounded import KIND as GROUNDED_KIND
 from uas_workbench.life.grounded import GroundedFlight, GroundedFlights, grounded_flights
 
+from .limits import FORM_ALLOWANCE, max_log_mib, too_large
 from .observability import (
     AIRCRAFT_BY_STATUS,
     DUE_ITEMS,
@@ -739,16 +742,90 @@ def _remove(path: Path) -> None:
     logger.warning("temporary upload not removed", extra={"path": str(path)})
 
 
+# The upload is copied to its temporary file this much at a time, never whole (issue #89).
+COPY_PIECE = 1 << 20
+
+
+def _copied(log: UploadFile, suffix: str) -> Path:
+    """The upload in a temporary file of its own, copied a piece at a time. A copy that fails
+    (the disk is full, the folder cannot be written) removes what it wrote and answers 503."""
+    path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            path = Path(tmp.name)
+            shutil.copyfileobj(log.file, tmp, COPY_PIECE)
+    except BaseException as exc:
+        if path is not None:
+            _remove(path)
+        if isinstance(exc, OSError):
+            detail = f"the upload could not be copied to a temporary file: {exc.strerror or exc}"
+            raise HTTPException(503, detail) from exc
+        raise
+    return path
+
+
+class UploadGuard:
+    """POST /ingest's body, checked as it arrives (issue #89). FastAPI reads a form body to the
+    end (Starlette spools a file part to disk) before the route's dependencies run, so the
+    write check, and any size check in the route, came after every byte was received, even
+    from a client without the token. Here, before the first byte of the body is read: the
+    write check, then the declared length against the limit; then the bytes are counted as
+    they are read, so a body with no declared length is refused once it passes the limit
+    (one longer than it declares is cut at its declared length by the HTTP server). A refusal
+    is raised into the form parser, which closes the parts it spooled."""
+
+    def __init__(
+        self, app: ASGIApp, check: Callable[[Request], None], cap: int, detail: str
+    ) -> None:
+        self.app = app
+        self.check = check
+        self.cap = cap
+        self.detail = detail
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/ingest":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        started = False
+        seen = 0
+
+        async def counted() -> Message:
+            nonlocal started, seen
+            if not started:
+                started = True
+                self.check(request)
+                declared = request.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > self.cap:
+                    raise HTTPException(413, self.detail)
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > self.cap:
+                    raise HTTPException(413, self.detail)
+            return message
+
+        await self.app(scope, counted, send)
+
+
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
 def create_app(
-    store: Store, config: FleetConfig | None = None, write_token: str | None = None
+    store: Store,
+    config: FleetConfig | None = None,
+    write_token: str | None = None,
+    log_limit_mib: int | None = None,
 ) -> FastAPI:
     """`write_token`: the bearer token writes must carry; None reads UASW_WRITE_TOKEN from the
-    environment; with neither set, writes are accepted from loopback addresses only."""
+    environment; with neither set, writes are accepted from loopback addresses only.
+    `log_limit_mib`: the size limit on one log; None reads UASW_MAX_LOG_MIB (a ValueError when
+    it is not a whole number above 0), else 512 MiB (service/limits.py)."""
     cfg = config or load_config()
     token = write_token if write_token is not None else os.environ.get("UASW_WRITE_TOKEN") or None
+    limit_mib = log_limit_mib if log_limit_mib is not None else max_log_mib()
+    limit = limit_mib << 20
+    over_limit = too_large(limit_mib)
     app = FastAPI(
         title="UAS Sustainment Workbench",
         version=__version__,
@@ -810,6 +887,9 @@ def create_app(
                 f"writes are accepted from this machine only and this request came from {host}; "
                 "set UASW_WRITE_TOKEN on the service to allow writes with a token",
             )
+
+    # Inside `observe` (middleware added later runs first), so its refusals are logged too.
+    app.add_middleware(UploadGuard, check=writer, cap=limit + FORM_ALLOWANCE, detail=over_limit)
 
     @app.middleware("http")
     async def observe(
@@ -1079,22 +1159,24 @@ def create_app(
         attribution: Annotated[str, Form()] = "unknown",
     ) -> FlightOut:
         """Parse one log into a flight record. The raw log is read once and not kept."""
+        if log.size is not None and log.size > limit:
+            # Over the limit, within the allowance UploadGuard reads for the form's fields.
+            raise HTTPException(413, over_limit)
         suffix = Path(log.filename or "").suffix.lower()
         reader = READERS.get(suffix)
         if reader is None:
             raise HTTPException(422, f"unsupported file type {suffix!r}; expected .ulg or .bin")
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(log.file.read())
-            path = Path(tmp.name)
+        path = _copied(log, suffix)
         record: FlightRecord | None = None
         error = ""
         try:
             record = reader(path, licence=licence, attribution=attribution)
         except Exception as exc:
             error = str(exc)
-        # The failed parser's file handle lives in the exception's traceback; it is released
-        # once the except block ends, so the temp file is removed only now.
-        _remove(path)
+        finally:
+            # The failed parser's file handle lives in the exception's traceback; it is
+            # released once the except block ends, so the temp file is removed only now.
+            _remove(path)
         if record is None:
             raise HTTPException(422, f"not a readable PX4 ULog or ArduPilot DataFlash log: {error}")
         record = dataclasses.replace(record, log_ref=Path(log.filename or "upload").stem)

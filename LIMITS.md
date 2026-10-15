@@ -87,16 +87,33 @@ field-level tables. This file is about what that means for a maintenance tool.
   any 2.x: a release that frames differently fails `tests/test_dataflash_framing.py`.
   `POST /ingest` takes the write token or loopback, so the file is an operator's own or a
   trusted writer's.
-- **An upload is held in memory whole, and no log is refused for its size (issue #89).**
-  `POST /ingest` reads the uploaded file into memory at once to copy it to a temporary file,
-  on top of the copy Starlette spools to disk, so the service's memory rises by the size of
-  the upload while it is copied, and the disk holds it twice; neither the route nor
-  `uasw ingest` has a size limit. Measured on 2026-10-13 against a live `uasw serve` on
-  loopback (Windows, Python 3.12, one upload at a time): 200 MiB of zeros named `.bin` was
-  refused (422) in 1.1 s and raised the process's peak private memory from 688 MB to 871 MB;
-  the 80 MB ALFA log before it, accepted (201) in 0.9 s, from 566 MB to 688 MB, reading it
-  included. The route takes the write token or loopback, so only a writer, or a writer's
-  mistake, can raise it, and uploads sent at the same time add up.
+- **A log over 512 MiB is refused, and a log under it is still read whole by its reader
+  (issue #89).** `POST /ingest` and `uasw ingest` refuse a log over the limit (413, the same
+  sentence on both) before any reader opens it; `UASW_MAX_LOG_MIB` sets another whole number
+  of MiB, for the service when it starts and for each command. The default is twice the
+  largest real log read here (246 MB of PX4 ULog; the largest ALFA DataFlash log is 80 MB).
+  The upload itself is copied a MiB at a time and no longer adds its size to the service's
+  memory, but reading a log still costs memory by its size, on the command line as through
+  the service: pymavlink's index of a DataFlash log is about 1.5 bytes per byte, so a
+  DataFlash log at the limit can take some 0.8 GB while it is read, and uploads read at the
+  same time add up. A lower limit is the only bound on that. Measured on 2026-10-15 against a
+  live `uasw serve` on loopback (Windows, Python 3.12, rise in the process's peak private
+  memory, main before the change against this change): 200 MiB of zeros named `.bin`,
+  refused (422) as no log in about 0.9 s, rose 211 MB before and 4 MB now, two at once
+  422 MB and 6 MB; the 80 MB ALFA log, accepted (201) in 0.9 s, rose 122 MB before and
+  121 MB now, two different ones at once 210 MB and 207 MB, which is the reader's index, not
+  the upload; 600 MiB declaring its length was read whole and refused (422) in 2.9 s, rising
+  630 MB, and is now refused (413) in 0.3 s without its body being read. A body that declares
+  no length is counted as it arrives and refused once it passes the limit and 1 MiB for the
+  form's other fields, so up to 513 MiB of it is spooled to disk before the 413 (2.0 s for
+  600 MiB here), then deleted. One that declares less than it sends is cut at what it declares
+  by the HTTP server. The disk holds an accepted upload twice while it is read (Starlette's
+  spooled copy and the reader's own file). Every temporary file was gone after each request,
+  refused, accepted, cut off by the client or failing to copy (a copy that fails answers 503);
+  a service terminated while a reader has the file open leaves that one file behind (by
+  construction, not measured). An upload without the write token is now refused (401 or 403)
+  before its body is read; before, FastAPI read the whole form, spooling the file to disk,
+  before the write check ran.
 
 ## Limits of reconcile()
 

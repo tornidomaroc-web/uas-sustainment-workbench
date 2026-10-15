@@ -13,7 +13,8 @@
 
 Environment: UASW_DB (SQLite path, default data/local/fleet.sqlite), UASW_FIXTURES
 (showcase excerpts; default the tests/fixtures folder beside the code in a checkout or an
-editable install, else tests/fixtures in the working folder).
+editable install, else tests/fixtures in the working folder), UASW_MAX_LOG_MIB (the size
+limit on one log for `ingest` and `serve`, default 512).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from uas_workbench.flight.ardupilot import read_dataflash
 from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.ledger import UnreadableRecord
 
+from .limits import max_log_mib, too_large
 from .observability import configure_logging
 from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged
 
@@ -192,9 +194,20 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     from .app import create_app
 
+    limit_mib = _log_limit()
     store = open_store(args.db)
     seed(store, args.fixtures)  # an empty store only; one that holds anything is left as is
-    uvicorn.run(create_app(store), host=args.host, port=args.port, log_config=None)
+    app = create_app(store, log_limit_mib=limit_mib)
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None)
+
+
+def _log_limit() -> int:
+    """The size limit on one log in MiB; one that cannot be read is refused (422) before
+    anything is opened (issue #89)."""
+    try:
+        return max_log_mib()
+    except ValueError as exc:
+        raise Refused(422, str(exc)) from exc
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
@@ -204,7 +217,14 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     # path with nothing at it (issue #83).
     store: Store | None = None
     refused = 0
+    limit_mib = _log_limit()
     for path in args.logs:
+        if _size(path) > limit_mib << 20:
+            # The refusal POST /ingest gives a log over the limit (issue #89), before the
+            # reader opens it.
+            print(f"refused (413): {path}: {too_large(limit_mib)}", file=sys.stderr)
+            refused += 1
+            continue
         suffix = path.suffix.lower()
         reader = READERS.get(suffix)
         if reader is None:
@@ -237,6 +257,14 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         log.info("ingested", extra={"aircraft_key": args.aircraft, "log_ref": record.log_ref})
     if refused:
         sys.exit(1)
+
+
+def _size(path: Path) -> int:
+    """The file's size; 0 for a path that cannot be looked at, which its reader refuses."""
+    try:
+        return path.stat().st_size
+    except (OSError, ValueError):
+        return 0
 
 
 def cmd_export_static(args: argparse.Namespace) -> None:
