@@ -787,8 +787,13 @@ class Store:
     def _checkpoint(self) -> None:
         """Under the write lock, after an own commit and once the kept answers have moved on:
         every `CHECKPOINT_COMMITS` own commits, and after a batch, fold the WAL into the store
-        file (`PRAGMA wal_checkpoint(PASSIVE)`, which waits for no reader and leaves alone
-        what a reader still reads). The writing connection never checkpoints on its own
+        file (`PRAGMA wal_checkpoint(RESTART)`). It waits, up to the busy timeout, for the
+        snapshots begun before the last commit to end, which are reads already under way;
+        snapshots begun meanwhile read the folded file and are not waited for. So the whole WAL
+        is folded and the next commit starts it over. A checkpoint that waits for no reader
+        (`PASSIVE`) is folded whole only when no snapshot is open, which threads reading
+        without pause rarely leave: the `-wal` file then grew with every write, without
+        bound. The writing connection never checkpoints on its own
         (`wal_autocheckpoint` is 0), so this is the only change the store makes to its file
         while it is open (issue #79): SQLite checkpointed on the commit that took the WAL past
         about 1,000 pages, which was the store's own and looked like a change from outside,
@@ -814,7 +819,7 @@ class Store:
                 return
             self._uncheckpointed = 0
             with contextlib.suppress(sqlite3.Error):
-                self._db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+                self._db.execute("PRAGMA wal_checkpoint(RESTART)").fetchall()
             after = self._seen()
             if after == before:
                 return

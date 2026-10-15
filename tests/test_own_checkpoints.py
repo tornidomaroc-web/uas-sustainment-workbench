@@ -26,6 +26,8 @@ import importlib
 import os
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -313,4 +315,49 @@ def test_another_process_writing_beside_the_store_is_still_a_change_from_outside
     assert done.returncode == 0, done.stderr
     assert store.entry_count() == held + 1
     assert counted.checks == 1 and counted.moves == 1, (counted.checks, counted.moves)
+    assert_kept_equal_fresh(store)
+
+
+def test_the_wal_starts_over_while_threads_keep_reading(
+    store_and_file: tuple[Path, Store],
+) -> None:
+    """Two threads reading without pause keep some snapshot open nearly all the time. The
+    store's own checkpoint waits for the snapshots older than its last commit to end, so the
+    WAL is folded whole and the next commit starts it over: the `-wal` file stays within a few
+    checkpoints' worth of writes, where a checkpoint that waits for no reader left it growing
+    with every write (84 MiB after 6,000 writes, against 6 MiB on 0.6.1)."""
+    db, store = store_and_file
+    wal = Path(f"{db}-wal")
+    first = store.entries()[0]
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            while not stop.is_set():
+                with store.snapshot():
+                    store.entry_count()
+                    store.projection()
+                    time.sleep(0.002)
+        except BaseException as exc:
+            failures.append(exc)
+
+    readers = [threading.Thread(None, read) for _ in range(2)]
+    for reader in readers:
+        reader.start()
+    sizes = []
+    try:
+        for i in range(EVERY * 20):
+            store.append_entry(Entry(**{**first.__dict__, "id": None, "statement": f"{i} {LONG}"}))
+            sizes.append(wal.stat().st_size)
+    finally:
+        stop.set()
+        for reader in readers:
+            reader.join()
+    assert not failures, failures
+    # The WAL as the first own checkpoint found it: one checkpoint's worth of writes.
+    one = sizes[EVERY - 1]
+    assert max(sizes) <= 4 * one, (
+        f"the WAL grew to {max(sizes)} bytes, {max(sizes) / one:.1f} checkpoints' worth"
+    )
     assert_kept_equal_fresh(store)

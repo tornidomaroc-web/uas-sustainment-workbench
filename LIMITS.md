@@ -535,7 +535,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   The store makes the only changes it makes to its file while open itself (issue #79): its
   writing connection never checkpoints on its own (`wal_autocheckpoint` is 0), and the store
   folds the WAL into the file every 200 of its own commits and after each batch, with
-  `PRAGMA wal_checkpoint(PASSIVE)`, which waits for no reader. The file is looked at right
+  `PRAGMA wal_checkpoint(RESTART)`, which waits, up to the busy timeout, for the reads already
+  under way on a state older than its last commit to end (reads begun meanwhile are not waited
+  for), so the whole WAL is folded and the next commit starts it over. One that waits for no
+  reader (`PASSIVE`) folds it whole only at a moment no read is open, which threads reading
+  without pause rarely leave, and the `-wal` file then grew with every write, without bound
+  (84 MiB after 6,000 writes beside two such threads). The file is looked at right
   before and right after it, under the lock every look takes; a change between the two is
   checked once, by the writer, so damage landing during the checkpoint is refused as before,
   and a file that passes is recorded as seen with nothing else done: no connection is opened
@@ -544,12 +549,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   connections opened afresh; restore a store with the service stopped, as above. Before, SQLite
   checkpointed on the commit that took the WAL past about 1,000 pages, and on nearly every
   commit while readers kept the WAL from starting over, and each such checkpoint looked like a
-  change from outside. Measured on Windows (Python 3.12 and 3.14, 2026-10-14; 3,000 writes
-  through one store, two threads reading the kept answers all along): 15 checks and no
-  connection reopened, where 0.6.1 made 146 to 156 checks, each followed by every connection
-  opened afresh and the kept answers computed again; the two threads read 4.6 to 5.3 times as
-  often, the slowest read in a thousand took 74 to 91 ms instead of about 306 ms, and the
-  `-wal` file ended at 18 to 22 MiB instead of 45 MiB. A legitimate change from outside
+  change from outside. Measured on Windows (Python 3.12, 2026-10-14; 6,000 writes through one
+  store, two threads each reading in snapshots, without pause or holding each for 20 ms): 30
+  checks, every checkpoint folding the whole WAL, and no connection reopened, where 0.6.1 made
+  113 and 227 checks, each followed by every connection opened afresh and the kept answers
+  computed again; the two threads read 2.5 to 2.9 times as often, and the `-wal` file stayed at
+  3.7 MiB where 0.6.1 left it at 6.0 and 19 MiB. A legitimate change from outside
   (another `uasw` command's commit and the checkpoint its close runs) is still one: one
   `quick_check` and the connections opened afresh, besides the journal walk its commit costs
   anyway (ten `uasw record` processes beside one store: ten checks and ten reopenings, on 0.6.1
