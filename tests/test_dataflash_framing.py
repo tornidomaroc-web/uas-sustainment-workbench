@@ -15,6 +15,13 @@ and then stored a flight read from wherever the indexer found the next sync pair
 sit inside another message's data. Each is now refused in one line, naming the offset where
 the framing breaks, and nothing reaches pymavlink. Every real log in the fixtures and the ten
 ALFA logs they were cut from frame from their first byte to their last (measured, issue #85).
+
+A format definition whose length is not 3 plus the size of its own format frames, and the
+indexer passes it; pymavlink's parser then fails on every message of that type it reads,
+printing a line on stderr and one on stdout for each, and the log was stored (issue #88). So
+the same walk refuses every definition it frames whose length disagrees with its format, or
+whose format holds a character pymavlink has no size for, naming its offset. All 1,413
+definitions in the 13 real logs give exactly 3 plus their format's size.
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ PREFIX = "not a readable PX4 ULog or ArduPilot DataFlash log: "
 FIXTURES = Path(__file__).parent / "fixtures"
 REAL = sorted((FIXTURES / "alfa").glob("*.bin"))
 LOG = REAL[0]
+LOG_SIZE = LOG.stat().st_size
 MiB = 1 << 20
 # One format definition: the definition of FMT itself, as an autopilot writes it first.
 DEFINITION = b"\xa3\x95\x80" + struct.pack(
@@ -47,7 +55,9 @@ DEFINITION = b"\xa3\x95\x80" + struct.pack(
 )
 NOT_FRAMED = r"^bytes at offset (\d+) do not frame as a DataFlash message"
 UNNAMED = r"^a message at offset (\d+) has type (\d+), which no format definition names; "
-TOO_SHORT = r"^the format definition at offset (\d+) gives a length of (\d+) bytes"
+TOO_SHORT = r"^the format definition at offset (\d+) gives a length of (\d+) bytes, shorter than"
+MISFIT = r"^the format definition at offset (\d+) gives a length of (\d+) bytes, where its format "
+UNSIZED = r"^the format definition at offset (\d+) gives the format character '.', which pymavlink "
 # Every such refusal tells the operator what a refused log leaves out of the counts (#86).
 NOT_COUNTED = (
     "; nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
@@ -87,6 +97,92 @@ def _short_definition() -> bytes:
     return DEFINITION + bad + LOG.read_bytes()
 
 
+def _defined(kind: int, length: int, name: bytes, fmt: bytes) -> bytes:
+    """A format definition of type `kind` giving `length`, whatever its format needs."""
+    return b"\xa3\x95\x80" + struct.pack("<BB4s16s64s", kind, length, name, fmt, b"Value")
+
+
+def _misfit_read_type() -> bytes:
+    """Issue #88's first file: the real log, then a type the tool reads (BAT) defined with a
+    length of 3 where its one-byte format needs 4, then 20,000 such 3-byte messages, each
+    followed by a valid 89-byte message (2.0 MB). pymavlink printed 19,997 lines on each
+    stream, and the log was stored."""
+    return (
+        LOG.read_bytes() + _defined(0xFE, 3, b"BAT", b"B") + (b"\xa3\x95\xfe" + DEFINITION) * 20_000
+    )
+
+
+def _misfit_back_to_back() -> bytes:
+    """Issue #88's second file, scaled down: a type the tool does not read defined too short,
+    500 of its messages back to back, then the real log. pymavlink printed 500 lines on each
+    stream and stored the log; with 100,000 it printed about 990 on each, then failed on
+    Python's recursion limit, one level per message, which 500 stay under."""
+    misfit = _defined(0xFD, 3, b"XYZ", b"B")
+    return DEFINITION + misfit + b"\xa3\x95\xfd" * 500 + LOG.read_bytes()
+
+
+def _lengthened() -> tuple[bytes, int]:
+    """The real log with the first definition of a type it has messages of made one byte
+    longer than its format: the log, and that definition's offset."""
+    log = LOG.read_bytes()
+    lengths: dict[int, int] = {0x80: 89}
+    defined: dict[int, int] = {}
+    i = 0
+    while i < len(log):
+        kind = log[i + 2]
+        if kind == 0x80:
+            lengths[log[i + 3]] = log[i + 4]
+            defined.setdefault(log[i + 3], i)
+        elif kind in defined:
+            at = defined[kind]
+            return log[: at + 4] + bytes([log[at + 4] + 1]) + log[at + 5 :], at
+        i += lengths[kind]
+    raise AssertionError("no type with messages")
+
+
+LENGTHENED, LENGTHENED_AT = _lengthened()
+
+
+# (name, bytes, pattern of the reader's refusal, lowest and highest offset it may name)
+MISFIT_CASES: list[tuple[str, bytes, str, int, int]] = [
+    (
+        "a read type defined too short, then its messages",
+        _misfit_read_type(),
+        MISFIT,
+        LOG_SIZE,
+        LOG_SIZE,
+    ),
+    (
+        "an unread type defined too short, its messages back to back",
+        _misfit_back_to_back(),
+        MISFIT,
+        89,
+        89,
+    ),
+    (
+        "a real log with a definition one byte too long",
+        LENGTHENED,
+        MISFIT,
+        LENGTHENED_AT,
+        LENGTHENED_AT,
+    ),
+    (
+        "a misfit definition of a type with no message",
+        DEFINITION + _defined(0xFE, 7, b"QQQ", b"B") + LOG.read_bytes(),
+        MISFIT,
+        89,
+        89,
+    ),
+    (
+        "a format character pymavlink has no size for",
+        DEFINITION + _defined(0xFE, 4, b"BAT", b"x") + b"\xa3\x95\xfe\x00" + LOG.read_bytes(),
+        UNSIZED,
+        89,
+        89,
+    ),
+]
+
+
 # (name, bytes, pattern of the reader's refusal, lowest and highest offset it may name)
 REFUSED: list[tuple[str, bytes, str, int, int]] = [
     ("one definition then 4 MiB of zeros", DEFINITION + bytes(4 * MiB), NOT_FRAMED, 89, 89),
@@ -96,12 +192,15 @@ REFUSED: list[tuple[str, bytes, str, int, int]] = [
     ("a real log damaged in the middle", _damaged(50_000, 300), NOT_FRAMED, 49_998, 50_299),
     ("a real log with a type no definition names", _unnamed_type(), UNNAMED, 50_000, 50_255),
     ("a definition shorter than its header", _short_definition(), TOO_SHORT, 89, 89),
+    *MISFIT_CASES,
 ]
 IDS = [r[0] for r in REFUSED]
 
 
 def _fd_lines(capfd: pytest.CaptureFixture[str]) -> list[str]:
-    return capfd.readouterr().err.splitlines()
+    """Lines on either stream: pymavlink's parser prints its struct errors on stdout."""
+    out = capfd.readouterr()
+    return out.out.splitlines() + out.err.splitlines()
 
 
 # ---- the reader --------------------------------------------------------------------------
@@ -171,6 +270,29 @@ def test_bytes_in_pymavlink_s_quiet_tail_are_left_to_it(
     assert _fd_lines(capfd) == []
 
 
+def test_a_misfit_definition_in_the_quiet_tail_is_refused_and_a_fitting_one_is_not(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """pymavlink says nothing of bytes in the last 527 that do not frame, but it still reads
+    every definition it frames there, and fails on its messages. So the walk goes on through
+    the tail while the bytes frame, and refuses a misfit definition there as anywhere else; a
+    definition that fits, followed by bytes that do not frame, is left to pymavlink."""
+    log = LOG.read_bytes()
+    expected = read_dataflash(LOG, **ATTR)
+    fits = tmp_path / "fits" / LOG.name
+    fits.parent.mkdir()
+    fits.write_bytes(log + _defined(0xFE, 4, b"QQQ", b"B") + b"\xff" * 300)
+    assert read_dataflash(fits, **ATTR) == expected
+    misfit = tmp_path / "misfit" / LOG.name
+    misfit.parent.mkdir()
+    misfit.write_bytes(log + _defined(0xFE, 7, b"QQQ", b"B") + b"\xa3\x95\xfe" + bytes(4))
+    with pytest.raises(ValueError) as refused:
+        read_dataflash(misfit, **ATTR)
+    match = re.match(MISFIT, str(refused.value))
+    assert match and int(match.group(1)) == LOG_SIZE, str(refused.value)
+    assert _fd_lines(capfd) == []
+
+
 # ---- the command and the API, each in a process of its own ---------------------------------
 #
 # Lines are counted from the child's stderr written to a file, so a flood costs disk, not this
@@ -184,16 +306,17 @@ def _child_env() -> dict[str, str]:
     return env | {"PYTHONWARNINGS": "ignore"}
 
 
-def _uasw(cwd: Path, *args: str) -> tuple[int, int, list[str], float]:
-    """Exit code, stderr line count, the first five stderr lines, seconds taken."""
-    err = cwd / "stderr.txt"
+def _uasw(cwd: Path, *args: str) -> tuple[int, int, list[str], float, int]:
+    """Exit code, stderr line count, the first five stderr lines, seconds taken, stdout line
+    count (pymavlink's parser prints there)."""
+    err, out = cwd / "stderr.txt", cwd / "stdout.txt"
     started = time.monotonic()
-    with err.open("wb") as sink:
+    with err.open("wb") as sink, out.open("wb") as said:
         code = subprocess.run(
             [sys.executable, "-m", "uas_workbench.service.cli", *args],
             cwd=cwd,
             env=_child_env(),
-            stdout=subprocess.DEVNULL,
+            stdout=said,
             stderr=sink,
             timeout=600,
         ).returncode
@@ -204,8 +327,11 @@ def _uasw(cwd: Path, *args: str) -> tuple[int, int, list[str], float]:
             count += 1
             if count <= 5:
                 first.append(line.decode("utf-8", "replace").rstrip("\r\n"))
+    with out.open("rb") as lines:
+        out_count = sum(1 for _ in lines)
     err.unlink()
-    return code, count, first, taken
+    out.unlink()
+    return code, count, first, taken, out_count
 
 
 @pytest.fixture(scope="module")
@@ -230,9 +356,11 @@ def test_uasw_ingest_refuses_it_in_one_line_in_bounded_time(
     path = tmp_path / "log.bin"
     path.write_bytes(content)
     db = tmp_path / "new" / "fleet.sqlite"
-    code, count, first, taken = _uasw(tmp_path, "--db", str(db), "ingest", "OWN-1", "log.bin")
+    code, count, first, taken, out_count = _uasw(
+        tmp_path, "--db", str(db), "ingest", "OWN-1", "log.bin"
+    )
     assert code == 1
-    assert count == 1, (count, first)
+    assert (count, out_count) == (1, 0), (count, out_count, first)
     head = f"refused (422): log.bin: {PREFIX}"
     assert first[0].startswith(head), first
     assert re.match(pattern, first[0][len(head) :]), first
@@ -248,9 +376,9 @@ def test_uasw_ingest_of_a_real_log_with_a_quiet_tail_stores_it_and_prints_nothin
 ) -> None:
     (tmp_path / LOG.name).write_bytes(LOG.read_bytes() + b"\xff" * 300)
     db = tmp_path / "fleet.sqlite"
-    code, count, first, _ = _uasw(tmp_path, "--db", str(db), "ingest", "OWN-1", LOG.name)
+    code, count, first, _, out_count = _uasw(tmp_path, "--db", str(db), "ingest", "OWN-1", LOG.name)
     # The one line is the command's own log of the ingest, as for any log it stores.
-    assert (code, count) == (0, 1), first
+    assert (code, count, out_count) == (0, 1, 0), first
     assert json.loads(first[0])["message"] == "ingested", first
     store = Store(str(db))
     try:
@@ -284,7 +412,7 @@ for path in sys.argv[2:]:
     except ValueError as exc:
         said = str(exc)
     answers.append([r.status_code, r.json(), said])
-print(json.dumps({"answers": answers, "count": store.flight_count(),
+print("RESULT " + json.dumps({"answers": answers, "count": store.flight_count(),
                   "leftover": [p.name for p in Path(uploads).iterdir()]}))
 store.close()
 """
@@ -316,7 +444,10 @@ def test_post_ingest_gives_the_command_s_answer_with_nothing_on_stderr(
             foreign += not line.startswith(b"{")
     assert done.returncode == 0
     assert foreign == 0, f"{foreign} lines on stderr that are not the service's log"
-    result = json.loads(done.stdout)
+    said_lines = done.stdout.splitlines()
+    results = [line for line in said_lines if line.startswith(b"RESULT ")]
+    assert len(results) == len(said_lines) == 1, f"{len(said_lines) - 1} lines on stdout"
+    result = json.loads(results[0][len(b"RESULT ") :])
     assert result["count"] == 0 and result["leftover"] == []
     for (name, _, pattern, low, high), (status, body, said) in zip(
         REFUSED, result["answers"], strict=True
@@ -337,18 +468,45 @@ def test_post_ingest_gives_the_command_s_answer_with_nothing_on_stderr(
 # The check copies the indexer of pymavlink 2.4.50 (dfindexer.c, scan_offsets), and the
 # dependency allows any 2.x. So the copy is compared with the pymavlink installed, on damaged
 # copies of a real log: the check must refuse exactly the copies on which pymavlink prints
-# anything. A release that frames differently fails here instead of drifting unseen.
+# anything, on either stream, or holds a definition whose length its own struct for that
+# format does not give. A release that frames or sizes formats differently fails here instead
+# of drifting unseen.
 
 
-def _pymavlink_speaks(path: Path, capfd: pytest.CaptureFixture[str]) -> bool:
+def _pymavlink_objects(path: Path, capfd: pytest.CaptureFixture[str]) -> bool:
+    """Whether the installed pymavlink prints anything on either stream reading the file, or
+    fails, or indexes a format definition whose length is not 3 plus the size pymavlink's own
+    struct for that format gives (the damage of issue #88, which it reports only when it
+    parses a message of that type)."""
     capfd.readouterr()
-    reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
     try:
+        reader = DFReader.DFReader_binary(str(path), zero_time_base=True)
+    except Exception:
+        capfd.readouterr()
+        return True
+    misfit = False
+    try:
+        data = path.read_bytes()
+        fmt = reader.formats[0x80]
+        for ofs in reader.offsets[0x80]:
+            body = data[ofs + 3 : ofs + fmt.len]
+            if len(body) + 3 < fmt.len:
+                break
+            e = struct.unpack(fmt.msg_struct, body)
+            f = DFReader.DFFormat(
+                e[0],
+                DFReader.null_term(e[2]),
+                e[1],
+                DFReader.null_term(e[3]),
+                DFReader.null_term(e[4]),
+            )
+            misfit |= f.len != 3 + struct.calcsize(f.msg_struct)
         while reader.recv_msg() is not None:
             pass
     finally:
         reader.close()
-    return capfd.readouterr().err != ""
+    said = capfd.readouterr()
+    return misfit or said.out != "" or said.err != ""
 
 
 def _midway(log: bytes) -> bytes:
@@ -391,14 +549,24 @@ def _header_only() -> bytes:
 
 
 def _copies() -> list[bytes]:
-    """Damage the indexer sees. A definition whose length disagrees with its own format string
-    frames, and is pymavlink's parser's to report, not the indexer's (LIMITS.md)."""
+    """Damage the indexer sees, and definitions whose length disagrees with their format, which
+    frame and which pymavlink's parser reports (issue #88): before the quiet tail and inside
+    it, with messages of their type and without, too short and too long, and a format
+    character pymavlink has no size for."""
     log = _whole(LOG.read_bytes(), 60_000)
     midway = _whole(_midway(LOG.read_bytes()), 60_000)
     rng = random.Random(86)
     out = [log, midway, bytes(3) + log, _header_only()[:60_000]]
     out += [base + b"\xff" * n for base in (log, midway) for n in (526, 527, 528, 529)]
     out += [_short_definition()[:60_000], _unnamed_type()[:60_000]]
+    # The first case is the read type's, 2 MB; the loop below has its shape at 60 kB. The last,
+    # a format character with no size, makes pymavlink's constructor raise and leave its
+    # mapping of the file open, which fails a later test; the tests above cover it.
+    out += [case[1] for case in MISFIT_CASES[1:4]]
+    for length in (3, 4, 5, 7):
+        for after in (b"", b"\xa3\x95\xfe" + bytes(length - 3), b"\xff" * 300):
+            out.append(log + _defined(0xFE, length, b"QQQ", b"I") + after)
+            out.append(DEFINITION + _defined(0xFE, length, b"QQQ", b"I") + after + log)
     for base in (log, midway):
         for _ in range(12):
             at, n = rng.randrange(len(base)), rng.choice((1, 2, 7, 300))
@@ -426,7 +594,7 @@ def test_the_check_refuses_exactly_where_the_installed_pymavlink_speaks(
             refused.append(False)
         except ValueError:
             refused.append(True)
-        spoke.append(_pymavlink_speaks(path, capfd))
+        spoke.append(_pymavlink_objects(path, capfd))
     assert refused == spoke, [
         n for n, (r, s) in enumerate(zip(refused, spoke, strict=True)) if r != s
     ]
