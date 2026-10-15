@@ -195,7 +195,7 @@ an append or an ingest that waits more than 5 s for another write is refused wit
 nothing written (an ingest's new aircraft and its flight are one write);
 `GET /entries` and `GET /components` read the history with superseded entries
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
-set, and an upload without it is refused before its body is read; what that does not
+set, and a write without it is refused before its body is read; what that does not
 protect against is in [LIMITS.md](LIMITS.md).
 
 **A write journal that makes a change to the file visible.** Append-only in the application

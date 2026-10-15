@@ -764,15 +764,22 @@ def _copied(log: UploadFile, suffix: str) -> Path:
     return path
 
 
+# The writes whose body FastAPI reads before their write check runs: a JSON body whole into
+# memory, a form's file part spooled to disk. UploadGuard runs the check first; a test holds
+# every route behind the write check that takes a body to this set.
+WRITE_BODIES = frozenset({"/entries", "/ingest"})
+
+
 class UploadGuard:
-    """POST /ingest's body, checked as it arrives (issue #89). FastAPI reads a form body to the
-    end (Starlette spools a file part to disk) before the route's dependencies run, so the
-    write check, and any size check in the route, came after every byte was received, even
-    from a client without the token. Here, before the first byte of the body is read: the
-    write check, then the declared length against the limit; then the bytes are counted as
-    they are read, so a body with no declared length is refused once it passes the limit
-    (one longer than it declares is cut at its declared length by the HTTP server). A refusal
-    is raised into the form parser, which closes the parts it spooled."""
+    """A write's body, checked as it arrives (issue #89). FastAPI reads a request body to the
+    end (a JSON body into memory, a form's file part spooled to disk) before the route's
+    dependencies run, so the write check, and any size check in the route, came after every
+    byte was received, even from a client without the token. Here, before the first byte of
+    the body is read: the write check; for POST /ingest, then the declared length against the
+    limit, and the bytes are counted as they are read, so a body with no declared length is
+    refused once it passes the limit (one longer than it declares is cut at its declared
+    length by the HTTP server, which a test holds). A refusal is raised into the form parser,
+    which closes the parts it spooled."""
 
     def __init__(
         self, app: ASGIApp, check: Callable[[Request], None], cap: int, detail: str
@@ -783,10 +790,15 @@ class UploadGuard:
         self.detail = detail
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/ingest":
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] not in WRITE_BODIES
+        ):
             await self.app(scope, receive, send)
             return
         request = Request(scope)
+        capped = scope["path"] == "/ingest"
         started = False
         seen = 0
 
@@ -796,10 +808,10 @@ class UploadGuard:
                 started = True
                 self.check(request)
                 declared = request.headers.get("content-length", "")
-                if declared.isdigit() and int(declared) > self.cap:
+                if capped and declared.isdigit() and int(declared) > self.cap:
                     raise HTTPException(413, self.detail)
             message = await receive()
-            if message["type"] == "http.request":
+            if capped and message["type"] == "http.request":
                 seen += len(message.get("body", b""))
                 if seen > self.cap:
                     raise HTTPException(413, self.detail)
