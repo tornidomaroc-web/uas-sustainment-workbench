@@ -593,10 +593,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   reader (`PASSIVE`) folds it whole only at a moment no read is open, which threads reading
   without pause rarely leave, and the `-wal` file then grew with every write, without bound
   (84 MiB after 6,000 writes beside two such threads). The file is looked at right
-  before and right after it, under the lock every look takes; a change between the two is
-  checked once, by the writer, so damage landing during the checkpoint is refused as before,
-  and a file that passes is recorded as seen with nothing else done: no connection is opened
-  afresh and no kept answer is computed again. So a change from outside that lands during the
+  before and right after it, under the lock every look takes, and checked once, by the
+  writer, when the two looks differ and whenever the checkpoint had own commits to fold,
+  whether or not they differ: the checkpoint's write stamps the file with the system clock,
+  whose tick is about 15 ms on Windows, and one that writes no page past the end of the file
+  within the tick of the change last seen leaves both looks equal (issue #95: measured on
+  Windows, the two looks were 12 to 66 ms apart at the same size; with no check run then,
+  damage landing during such a checkpoint was served, the next read meeting SQLite's own
+  "database disk image is malformed" rather than the 503 naming the cause). So damage landing
+  during the checkpoint is refused, and a file that passes is recorded as seen with nothing
+  else done: no connection is opened afresh and no kept answer is computed again. A
+  checkpoint with nothing to fold (no own commit since the last) that leaves the file as last
+  seen is not checked. So a change from outside that lands during the
   store's own checkpoint and passes the check (a copy restored in place) is served without the
   connections opened afresh; restore a store with the service stopped, as above. Before, SQLite
   checkpointed on the commit that took the WAL past about 1,000 pages, and on nearly every
