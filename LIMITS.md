@@ -127,7 +127,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   no length is counted as it arrives and refused once it passes the limit and 1 MiB for the
   form's other fields, so up to 513 MiB of it is spooled to disk before the 413 (2.0 s for
   600 MiB here), then deleted. One that declares less than it sends is cut at what it declares
-  by the HTTP server. The disk holds an accepted upload twice while it is read (Starlette's
+  by the HTTP server, and the bytes past that length are the next request on the connection,
+  answered on their own (issue #99). A refusal answered from the headers alone (413 on the
+  declared length, 401 or 403 without the token) leaves the connection open: the HTTP server
+  reads and drops the body the client goes on sending, none of it reaching the service, and
+  the next request on the connection is answered. The service does not close a connection on
+  a refusal: a connection closed with bytes unread is reset, and on Windows a reset discards
+  what the client has not read yet, the refusal with it (measured here with 2 MiB unread at
+  the close: the client read nothing in 42 of 50 tries, on Python 3.12 and 3.14 alike). The
+  disk holds an accepted upload twice while it is read (Starlette's
   spooled copy and the reader's own file). Every temporary file was gone after each request,
   refused, accepted, cut off by the client or failing to copy (a copy that fails answers 503);
   a service terminated while a reader has the file open leaves that one file behind (by

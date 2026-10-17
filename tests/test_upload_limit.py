@@ -11,11 +11,17 @@ The tests here run against a live `uasw serve` where the defect shows on the wir
 that waits for a body never sent, a peak in the server's own memory read from the operating
 system) and in process where the answer alone is the contract. Each live service writes its
 temporary files to a folder of its own, which must be empty once a request is answered.
+
+On the wire each answer is read on its own, exactly as long as it declares, and the bytes a
+request sends past its declared length are the next request on the connection, answered on
+its own (issue #99). Reading until the connection closed, after a surplus of bytes the HTTP
+server could only refuse (400) before closing, raced that close: the surplus still unread at
+the close resets the connection, and on Windows a reset discards what the client has not
+read yet, so the test saw the 400 in the body it compared, or nothing at all.
 """
 
 from __future__ import annotations
 
-import contextlib
 import errno
 import os
 import socket
@@ -29,7 +35,7 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,34 +90,47 @@ def chunk(data: bytes) -> bytes:
     return b"%x\r\n%s\r\n" % (len(data), data)
 
 
-def read_answer(s: socket.socket) -> tuple[int, str]:
-    """The status and body of the one answer on `s`; fails the test if none comes in time."""
-    data = b""
-    try:
-        while b"\r\n\r\n" not in data:
-            got = s.recv(65536)
-            if not got:
-                break
-            data += got
-        head, _, body = data.partition(b"\r\n\r\n")
-        lines = head.decode("latin-1").split("\r\n")
-        length = next(
-            int(line.split(":", 1)[1])
-            for line in lines
-            if line.lower().startswith("content-length:")
-        )
-        while len(body) < length:
-            got = s.recv(65536)
-            if not got:
-                break
-            body += got
-    except TimeoutError:
-        pytest.fail(f"no answer within {ANSWER_WITHIN_S} s: the service waited for the body")
-    return int(lines[0].split()[1]), body.decode()
+class Wire:
+    """One client connection to a port on loopback: bytes go out as sent, and answers are read
+    one at a time, each exactly as long as its Content-Length says, so the bytes of a next
+    answer on the connection are the next read, never the tail of this one. A connection that
+    ends, or is reset, before an answer is complete fails the test, whatever came before."""
 
+    def __init__(self, port: int) -> None:
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=ANSWER_WITHIN_S)
+        self.reader: BinaryIO = self.sock.makefile("rb")
 
-def connect(port: int) -> socket.socket:
-    return socket.create_connection(("127.0.0.1", port), timeout=ANSWER_WITHIN_S)
+    def __enter__(self) -> Wire:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.reader.close()
+        self.sock.close()
+
+    def send(self, data: bytes) -> None:
+        self.sock.sendall(data)
+
+    def answer(self) -> tuple[int, str]:
+        """The status and body of the next answer; fails the test if none comes in time."""
+        try:
+            head = b""
+            while not head.endswith(b"\r\n\r\n"):
+                line = self.reader.readline()
+                assert line, f"the connection closed before the answer was complete: {head!r}"
+                head += line
+            lines = head.decode("latin-1").split("\r\n")
+            length = next(
+                int(line.split(":", 1)[1])
+                for line in lines
+                if line.lower().startswith("content-length:")
+            )
+            body = self.reader.read(length)
+        except TimeoutError:
+            pytest.fail(f"no answer within {ANSWER_WITHIN_S} s: the service waited for the body")
+        except ConnectionResetError:
+            pytest.fail("the connection was reset before the answer was read")
+        assert len(body) == length, f"the connection closed inside the answer: {body!r}"
+        return int(lines[0].split()[1]), body.decode()
 
 
 @dataclass
@@ -208,11 +227,32 @@ def test_a_declared_length_over_the_limit_is_refused_before_any_body_is_sent(
 ) -> None:
     head = form_head("over-declared", "big.bin")
     length = len(head) + LIMIT + ALLOWANCE + len(FORM_TAIL)
-    with connect(limited.port) as s:
-        s.sendall(request_head(length))  # the headers only: no byte of the body follows
-        status, body = read_answer(s)
+    with Wire(limited.port) as w:
+        w.send(request_head(length))  # the headers only: no byte of the body follows
+        status, body = w.answer()
     assert (status, body) == (413, f'{{"detail":"{DETAIL}"}}')
     assert limited.get("/aircraft/over-declared") == 404
+    assert limited.temp_left() == []
+
+
+def test_a_body_refused_from_its_headers_is_dropped_and_the_connection_stays_open(
+    limited: Live,
+) -> None:
+    """A refusal answered from the headers alone does not close the connection: the body the
+    client goes on sending is read and dropped by the HTTP server, none of it reaching the
+    service, and the next request on the connection is answered. A connection closed with
+    bytes unread is reset, and on Windows a reset discards what the client has not read yet,
+    so closing on a refusal could cost the client the refusal itself (issue #99)."""
+    head = form_head("dropped", "big.bin")
+    body = head + bytes(LIMIT + ALLOWANCE) + FORM_TAIL
+    with Wire(limited.port) as w:
+        w.send(request_head(len(body)))
+        assert w.answer() == (413, f'{{"detail":"{DETAIL}"}}')  # before a byte of the body
+        w.send(body)  # the body anyway, as a client that does not read before it has sent
+        w.send(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        status, _ = w.answer()
+    assert status == 200
+    assert limited.get("/aircraft/dropped") == 404
     assert limited.temp_left() == []
 
 
@@ -224,31 +264,37 @@ def test_a_body_with_no_declared_length_is_refused_once_it_passes_the_limit(
     # refusal must come from counting, and every byte sent is read, so the service closes
     # the connection cleanly after its answer.
     rest = LIMIT + ALLOWANCE + 1 - len(head)
-    with connect(limited.port) as s:
-        s.sendall(request_head(None) + chunk(head))
+    with Wire(limited.port) as w:
+        w.send(request_head(None) + chunk(head))
         for start in range(0, rest, 256 << 10):
-            s.sendall(chunk(bytes(min(256 << 10, rest - start))))
-        status, body = read_answer(s)
+            w.send(chunk(bytes(min(256 << 10, rest - start))))
+        status, body = w.answer()
     assert (status, body) == (413, f'{{"detail":"{DETAIL}"}}')
     assert limited.get("/aircraft/over-chunked") == 404
     assert limited.temp_left() == []
 
 
 def test_a_declared_length_cannot_carry_more_than_it_declares(limited: Live) -> None:
+    """The bytes past a declared length are the next request on the connection, not more of
+    this one. The first request's file part is cut at its declared length (422, no log); the
+    next, declared over the limit, is refused from its headers (413). Had the bytes past the
+    first length been handed on as its body, their count would have passed the limit: 413
+    first, and no second answer."""
     head = form_head("understated", "big.bin")
-    with connect(limited.port) as s:
-        s.sendall(request_head(len(head) + 1000))
-        # The service may close the connection once its declared body is read.
-        with contextlib.suppress(OSError):
-            s.sendall(head + bytes(LIMIT + ALLOWANCE + 1) + FORM_TAIL)
-        status, body = read_answer(s)
-    # Only the declared bytes are read: a file part cut short, so no log. Had the bytes past
-    # the declared length been handed on, the count would have passed the limit: 413.
-    assert (status, body) == (
+    next_head = form_head("understated-next", "big.bin")
+    next_body = next_head + bytes(LIMIT + ALLOWANCE + 1) + FORM_TAIL
+    with Wire(limited.port) as w:
+        w.send(request_head(len(head) + 1000) + head + bytes(1000))
+        w.send(request_head(len(next_body)) + next_body)
+        first = w.answer()
+        second = w.answer()
+    assert first == (
         422,
         '{"detail":[{"type":"missing","loc":["body","log"],"msg":"Field required","input":null}]}',
     )
+    assert second == (413, f'{{"detail":"{DETAIL}"}}')
     assert limited.get("/aircraft/understated") == 404
+    assert limited.get("/aircraft/understated-next") == 404
     assert limited.get("/health") == 200
     assert limited.temp_left() == []
 
@@ -256,7 +302,8 @@ def test_a_declared_length_cannot_carry_more_than_it_declares(limited: Live) -> 
 def test_the_http_server_hands_on_no_more_than_a_body_declares() -> None:
     """UploadGuard counts what the HTTP server hands it, so a body longer than it declares
     relies on the server stopping at the declared length; held here for the installed
-    uvicorn, not assumed."""
+    uvicorn, not assumed. The bytes past the length are the next request, answered on its
+    own: an app that counts what it is handed is handed 1000, then the next request's body."""
     import asyncio
 
     import uvicorn
@@ -284,16 +331,13 @@ def test_the_http_server_hands_on_no_more_than_a_body_declares() -> None:
             assert time.monotonic() < deadline, "uvicorn never started"
             time.sleep(0.05)
         port = server.servers[0].sockets[0].getsockname()[1]
-        with connect(port) as s:
-            s.sendall(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n")
-            with contextlib.suppress(OSError):
-                s.sendall(bytes(1000 + LIMIT))
-            status, body = read_answer(s)
-        # The app was handed the 1000 bytes declared; the rest is read as the next request,
-        # which the server refuses (400) on the same connection, if it arrived in time.
-        handed, _, after = body.partition("HTTP/1.1 ")
-        assert (status, handed) == (200, "1000")
-        assert after[:3] in ("", "400"), after
+        with Wire(port) as w:
+            w.send(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n" + bytes(1000))
+            w.send(
+                b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % LIMIT + bytes(LIMIT)
+            )
+            assert w.answer() == (200, "1000")
+            assert w.answer() == (200, str(LIMIT))
     finally:
         server.should_exit = True
         thread.join(30)
@@ -301,9 +345,9 @@ def test_the_http_server_hands_on_no_more_than_a_body_declares() -> None:
 
 def test_an_upload_without_the_token_is_refused_before_its_body_is_read(limited: Live) -> None:
     head = form_head("no-token", "small.bin")
-    with connect(limited.port) as s:
-        s.sendall(request_head(len(head) + LIMIT // 2 + len(FORM_TAIL), token=None))
-        status, body = read_answer(s)
+    with Wire(limited.port) as w:
+        w.send(request_head(len(head) + LIMIT // 2 + len(FORM_TAIL), token=None))
+        status, body = w.answer()
     assert status == 401, body
     assert "UASW_WRITE_TOKEN" in body
     assert limited.get("/aircraft/no-token") == 404
@@ -314,12 +358,12 @@ def test_an_entry_without_the_token_is_refused_before_its_body_is_read(limited: 
     """FastAPI reads a JSON body whole into memory before the write check runs: 300 MiB sent
     to POST /entries without the token raised the service's peak memory about 950 MB before
     its 401. The headers alone are answered now."""
-    with connect(limited.port) as s:
-        s.sendall(
+    with Wire(limited.port) as w:
+        w.send(
             b"POST /entries HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
             b"Content-Length: %d\r\n\r\n" % (300 << 20)
         )
-        status, body = read_answer(s)
+        status, body = w.answer()
     assert status == 401, body
     assert "UASW_WRITE_TOKEN" in body
 
@@ -344,9 +388,9 @@ def test_every_write_that_takes_a_body_is_checked_before_its_body_is_read() -> N
 
 def test_a_client_that_goes_away_mid_upload_leaves_no_temporary_file(limited: Live) -> None:
     head = form_head("gone", "half.bin")
-    with connect(limited.port) as s:
-        s.sendall(request_head(len(head) + LIMIT + len(FORM_TAIL)) + head)
-        s.sendall(bytes(LIMIT * 3 // 4))  # past the 1 MB Starlette keeps in memory
+    with Wire(limited.port) as w:
+        w.send(request_head(len(head) + LIMIT + len(FORM_TAIL)) + head)
+        w.send(bytes(LIMIT * 3 // 4))  # past the 1 MB Starlette keeps in memory
     assert limited.get("/aircraft/gone") == 404
     assert limited.temp_left() == []
 
@@ -354,9 +398,9 @@ def test_a_client_that_goes_away_mid_upload_leaves_no_temporary_file(limited: Li
 def test_an_accepted_log_leaves_no_temporary_file(limited: Live) -> None:
     head = form_head("accepted-01", ALFA[0].name)
     data = ALFA[0].read_bytes()
-    with connect(limited.port) as s:
-        s.sendall(request_head(len(head) + len(data) + len(FORM_TAIL)) + head + data + FORM_TAIL)
-        status, body = read_answer(s)
+    with Wire(limited.port) as w:
+        w.send(request_head(len(head) + len(data) + len(FORM_TAIL)) + head + data + FORM_TAIL)
+        status, body = w.answer()
     assert status == 201, body
     assert limited.get("/aircraft/accepted-01") == 200
     assert limited.temp_left() == []
@@ -448,14 +492,14 @@ def test_an_upload_is_copied_without_being_held_in_memory(default: Live, tmp_pat
     # A launcher's own peak is a few MB; the interpreter that serves holds far more.
     assert before > 40 << 20, f"measured a process of {before} bytes, not the service"
     head = form_head("held", "zeros.ulg")
-    with connect(default.port) as s:
-        s.settimeout(120)
-        s.sendall(request_head(len(head) + size + len(FORM_TAIL)) + head)
+    with Wire(default.port) as w:
+        w.sock.settimeout(120)
+        w.send(request_head(len(head) + size + len(FORM_TAIL)) + head)
         piece = bytes(1 << 20)
         for _ in range(size >> 20):
-            s.sendall(piece)
-        s.sendall(FORM_TAIL)
-        status, body = read_answer(s)
+            w.send(piece)
+        w.send(FORM_TAIL)
+        status, body = w.answer()
     assert status == 422, body
     rise = peak_memory(pid) - before
     assert rise < size // 2, (
