@@ -91,6 +91,19 @@ def apart(db: Path) -> None:
     os.utime(db, ns=(t, t))
 
 
+def restored(db: Path, store: Store, good: bytes) -> None:
+    """`good` written in place, its time of last change set two seconds past the later of
+    what it is now and what the store last saw. A restore within the clock tick of the change
+    last seen, at the same size, is served within a second (LIMITS.md); these cases are about
+    one that is seen, and the change last seen is a damage planted some milliseconds before
+    (set apart by `apart`, so two seconds past its own tick) or the store's own checkpoint."""
+    db.write_bytes(good)
+    seen = store._file
+    last = seen.changed_ns if isinstance(seen, STORE._FileState) else 0
+    t = max(os.stat(db).st_mtime_ns, last) + 2_000_000_000
+    os.utime(db, ns=(t, t))
+
+
 def file_state(db: Path) -> tuple[int, int]:
     st = os.stat(db)
     return st.st_size, st.st_mtime_ns
@@ -262,9 +275,10 @@ def test_damage_landing_during_the_stores_own_work_on_its_file_is_still_refused(
         store.entry_count()
     with pytest.raises(STORE.StoreDamaged):
         store.append_entry(Entry(**{**first.__dict__, "id": None, "statement": "after"}))
-    # Restored in place, it serves the restored file, and every kept answer is fresh.
-    db.write_bytes(original)
-    os.utime(db)
+    # Restored in place, it serves the restored file, and every kept answer is fresh. The
+    # restore is set apart from the change last seen (`restored`): the damage's own stamp, or
+    # the checkpoint's write some milliseconds before, whose clock tick it shared some runs.
+    restored(db, store, original)
     assert store.entry_count() == len(store.entries())
     assert_kept_equal_fresh(store)
 
@@ -316,9 +330,8 @@ def test_damage_landing_in_the_clock_tick_of_the_stores_own_checkpoint_is_refuse
         store.entry_count()
     with pytest.raises(STORE.StoreDamaged):
         store.append_entry(Entry(**{**first.__dict__, "id": None, "statement": "after"}))
-    # Restored in place, it serves the restored file, and every kept answer is fresh.
-    db.write_bytes(original)
-    os.utime(db)
+    # Restored in place and set apart from the change last seen, it serves the restored file.
+    restored(db, store, original)
     assert store.entry_count() == len(store.entries())
     assert_kept_equal_fresh(store)
 
@@ -351,8 +364,7 @@ def test_after_own_checkpoints_damage_and_restore_are_seen_as_before(
         with pytest.raises(STORE.StoreDamaged):
             store.readable()
         generation = store._generation
-        db.write_bytes(good)
-        os.utime(db)
+        restored(db, store, good)
         assert store.entry_count() == held
         assert store._generation == generation + 1
         assert_kept_equal_fresh(store)
