@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Damage landing during the store's own checkpoint is refused whatever the clock says
+  (closes #95). The checkpoint's write stamps the store file with the system clock, whose
+  tick is about 15 ms on Windows, and a checkpoint that wrote no page past the end of the
+  file within the tick of the change last seen left the file looking as last seen, so no
+  check ran and the damage was served: the next read met SQLite's "database disk image is
+  malformed" rather than the 503 naming the cause. Only the unreleased store that folds its
+  own WAL (below) was open to it. The store now checks its file after every checkpoint that
+  folded own commits, whether or not its two looks differ; that is the one check such a
+  checkpoint already cost, and nothing on the read path changes. Measured on main 382767a
+  (Windows): the two looks were 12 to 66 ms apart at the same size in 60 of 60 runs of the
+  test, which passed every run with the machine's clock ticking at about 1 ms. The test's
+  other failure was its own: a restore landing within the tick of the damage, at the same
+  size, is served within a second, as LIMITS.md says; the tests now set each restore apart.
+  No response, record, pack or hash changes.
 - A write through the service no longer reads and folds the whole ledger twice per aircraft
   for the `/metrics` gauges (closes #92): the gauges are computed in one snapshot at one
   time for the whole fleet, one read and one fold, and one refresh runs at a time, so two

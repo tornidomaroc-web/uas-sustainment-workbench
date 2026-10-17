@@ -750,6 +750,8 @@ class Store:
             try:
                 yield
                 self._db.commit()
+                # One own commit for the checkpoint below to fold, however many writes it held.
+                self._uncheckpointed += 1
             except BaseException:
                 self._db.rollback()
                 raise
@@ -801,27 +803,34 @@ class Store:
 
         The file is looked at right before and right after, under the lock every look at it
         takes, so no other thread meets the change as one from outside; a reader that meets it
-        waits for this verdict, as for any other. A change between the two looks is checked
-        once, here (`_damage_in`): a change from outside landing during the checkpoint is in
-        that file too, so damage is refused from then on, as before. Sound, the file is
-        recorded as seen and nothing else happens: no generation moves, no connection is
-        opened afresh and no kept answer is computed again, since SQLite made the change and
-        every connection of the store sees it through SQLite. A file that changed before the
-        first look, which no look has met yet, or that is refused, is not written to: the
-        checkpoint waits for the next commit, whose look checks that change as from outside.
-        A checkpoint SQLite refuses is left for the next one."""
-        if self._labeller is None or self._db.in_transaction:
+        waits for this verdict, as for any other. The file is checked once, here
+        (`_damage_in`), when the two looks differ and whenever the checkpoint had own commits
+        to fold, whether or not the looks differ: the checkpoint's write stamps the file with
+        the system clock, whose tick is about 15 ms on Windows, and one that writes no page
+        past the end of the file within the tick of the change last seen leaves both looks
+        equal (issue #95). A change from outside landing during the checkpoint is in that file
+        too, so damage is refused from then on, as before. Sound, the file is recorded as seen
+        and nothing else happens: no generation moves, no connection is opened afresh and no
+        kept answer is computed again, since SQLite made the change and every connection of
+        the store sees it through SQLite. A file that changed before the first look, which no
+        look has met yet, or that is refused, is not written to: the checkpoint waits for the
+        next commit, whose look checks that change as from outside. A checkpoint SQLite
+        refuses is left for the next one, and with nothing to fold (no own commit since the
+        last one) a file that looks as last seen is not checked."""
+        if self._labeller is None:
             self._uncheckpointed = 0
+            return
+        if self._db.in_transaction:
             return
         with self._watch_lock:
             before = self._seen()
             if self._damaged is not None or before != self._file:
                 return
-            self._uncheckpointed = 0
+            folded, self._uncheckpointed = self._uncheckpointed, 0
             with contextlib.suppress(sqlite3.Error):
                 self._db.execute("PRAGMA wal_checkpoint(RESTART)").fetchall()
             after = self._seen()
-            if after == before:
+            if after == before and not folded:
                 return
             self._damaged = self._damage_in(after)
             self._file = after
