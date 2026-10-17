@@ -610,9 +610,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   damage landing during such a checkpoint was served, the next read meeting SQLite's own
   "database disk image is malformed" rather than the 503 naming the cause). So damage landing
   during the checkpoint is refused, and a file that passes is recorded as seen with nothing
-  else done: no connection is opened afresh and no kept answer is computed again. A
-  checkpoint with nothing to fold (no own commit since the last) that leaves the file as last
-  seen is not checked. So a change from outside that lands during the
+  else done: no connection is opened afresh and no kept answer is computed again. Every
+  checkpoint the store runs has own commits to fold, since it runs one every 200 of them and
+  after each committed batch, so every one is followed by the check (`_checkpoint` still
+  carries a guard for a checkpoint with nothing to fold, which no store on a file reaches).
+  So a change from outside that lands during the
   store's own checkpoint and passes the check (a copy restored in place) is served without the
   connections opened afresh; restore a store with the service stopped, as above. Before, SQLite
   checkpointed on the commit that took the WAL past about 1,000 pages, and on nearly every
