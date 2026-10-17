@@ -59,7 +59,8 @@ class Counted:
         self.generation = store._generation
         self.walks = 0
         self.checks = 0
-        walk, check = JOURNAL.verify, store._damage_in
+        self.checkpoints = 0
+        walk, check, checkpoint = JOURNAL.verify, store._damage_in, store._checkpoint
 
         def counted_walk(*args: Any, **kwargs: Any) -> Any:
             self.walks += 1
@@ -69,8 +70,13 @@ class Counted:
             self.checks += 1
             return check(now)
 
+        def counted_checkpoint() -> None:
+            self.checkpoints += 1
+            checkpoint()
+
         monkeypatch.setattr(JOURNAL, "verify", counted_walk)
         monkeypatch.setattr(store, "_damage_in", counted_check)
+        monkeypatch.setattr(store, "_checkpoint", counted_checkpoint)
 
     @property
     def moves(self) -> int:
@@ -160,7 +166,10 @@ def test_the_stores_own_checkpoints_move_no_generation_and_walk_nothing(
         f"{changes} of the store's own checkpoints"
     )
     assert counted.walks == 0, f"{counted.walks} journal walks after own writes"
-    assert counted.checks <= changes
+    # One check per own checkpoint, whether or not its write moved the file's size or time
+    # of last change (within one clock tick of the change before it, it moves neither).
+    assert counted.checkpoints >= changes
+    assert counted.checks == counted.checkpoints, (counted.checks, counted.checkpoints)
     assert_kept_equal_fresh(store)
 
 
@@ -185,10 +194,12 @@ def test_a_commit_never_changes_the_store_file_and_the_stores_own_checkpoint_doe
 
 class _Planting:
     """The writing connection, with a change from outside planted at one moment of the
-    store's own work on it: inside its commit, or inside its own checkpoint."""
+    store's own work on it: inside its commit, or inside its own checkpoint; and, given
+    `after`, that run right after the checkpoint statement, before the store looks again."""
 
-    def __init__(self, connection: Any, moment: str, plant: Any) -> None:
+    def __init__(self, connection: Any, moment: str, plant: Any, after: Any = None) -> None:
         self._connection, self._moment, self._plant = connection, moment, plant
+        self._after = after
         self.planted = False
 
     def _now(self) -> None:
@@ -199,6 +210,10 @@ class _Planting:
     def execute(self, sql: str, *args: Any) -> Any:
         if self._moment == "checkpoint" and sql.startswith("PRAGMA wal_checkpoint"):
             self._now()
+            cursor = self._connection.execute(sql, *args)
+            if self._after is not None:
+                self._after()
+            return cursor
         return self._connection.execute(sql, *args)
 
     def __getattr__(self, name: str) -> Any:
@@ -243,6 +258,60 @@ def test_damage_landing_during_the_stores_own_work_on_its_file_is_still_refused(
     finally:
         store._db = writer
     assert planting.planted, f"no {moment} of the store's own ran to plant the damage in"
+    with pytest.raises(STORE.StoreDamaged):
+        store.entry_count()
+    with pytest.raises(STORE.StoreDamaged):
+        store.append_entry(Entry(**{**first.__dict__, "id": None, "statement": "after"}))
+    # Restored in place, it serves the restored file, and every kept answer is fresh.
+    db.write_bytes(original)
+    os.utime(db)
+    assert store.entry_count() == len(store.entries())
+    assert_kept_equal_fresh(store)
+
+
+def test_damage_landing_in_the_clock_tick_of_the_stores_own_checkpoint_is_refused(
+    store_and_file: tuple[Path, Store], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store's own checkpoint can leave its file looking as last seen (issue #95): its
+    write stamps the file with the system clock, whose tick is about 15 ms on Windows, and a
+    checkpoint that writes no page past the end of the file within the tick of the change
+    last seen (here the open; in a running service the checkpoint before it) moves neither
+    the size nor the time of last change. On main 382767a the two looks were 12 to 66 ms
+    apart, at the same size, in 60 of 60 runs here. Damage planted during such a checkpoint
+    is in a file whose two looks are equal, and the store must check it all the same: it
+    knows it folded its own commits into the file. The tick is injected, not waited for: once
+    the checkpoint statement has run, the file's time of last change is set back to the one
+    the store saw before it, which is what the clock does within one tick."""
+    monkeypatch.setattr(STORE, "CHECKPOINT_COMMITS", 1, raising=False)
+    db, store = store_and_file
+    original = db.read_bytes()
+    first = store.entries()[0]
+    seen = store._file
+    assert isinstance(seen, STORE._FileState)
+
+    def damage() -> None:
+        with db.open("r+b") as f:
+            for page in range(2, len(original) // 4096):
+                f.seek(page * 4096)
+                f.write(bytes(range(256)) * 16)
+
+    def within_the_tick() -> None:
+        os.utime(db, ns=(seen.changed_ns, seen.changed_ns))
+
+    writer = store._db
+    planting = _Planting(writer, "checkpoint", damage, within_the_tick)
+    store._db = planting  # type: ignore[assignment]
+    try:
+        store.append_entry(Entry(**{**first.__dict__, "id": None, "statement": "during"}))
+    except Exception:
+        pass  # the write itself may meet the damage; either way the next look must
+    finally:
+        store._db = writer
+    assert planting.planted, "no checkpoint of the store's own ran to plant the damage in"
+    assert file_state(db) == (seen.size, seen.changed_ns), (
+        "the checkpoint grew the store file, so its size alone tells the two looks apart; "
+        "this case needs a write that fits the pages the file has"
+    )
     with pytest.raises(STORE.StoreDamaged):
         store.entry_count()
     with pytest.raises(STORE.StoreDamaged):
