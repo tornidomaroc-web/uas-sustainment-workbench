@@ -1152,24 +1152,22 @@ class AtRest:
 
 
 def _file_alone_check(path: str) -> str | None:
-    """SQLite's `integrity_check` on the file's own bytes, without the `-wal` beside it: the
-    bytes are read into memory and checked there, so nothing beside the file is opened and
-    nothing is written. The header's WAL mark (bytes 18 and 19) is cleared in the copy, as a
-    database in memory is not in WAL mode. Any failure to read or check the copy is a problem."""
+    """SQLite's `integrity_check` on the file's own pages, without the `-wal` beside it: the
+    file is opened `immutable`, which SQLite reads read-only with no locks and without the
+    `-wal` and `-shm`, so nothing beside the file is opened and nothing is written. A copy of
+    the file in memory took twice its size and, at 2 GiB or more, raised MemoryError, past what
+    SQLite allocates at once. Any failure to open or check the file is a problem."""
+    uri = Path(path).resolve().as_uri() + "?mode=ro&immutable=1"
     try:
-        data = bytearray(Path(path).read_bytes())
-    except OSError as exc:
-        return exc.strerror or str(exc)
-    if data[18:20] == b"\x02\x02":
-        data[18:20] = b"\x01\x01"
-    memory = sqlite3.connect(":memory:")
+        alone = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        return str(exc)
     try:
-        memory.deserialize(data)
-        return _sqlite_check(memory, "integrity_check")
+        return _sqlite_check(alone, "integrity_check")
     except sqlite3.Error as exc:
         return str(exc)
     finally:
-        memory.close()
+        alone.close()
 
 
 @contextlib.contextmanager

@@ -511,6 +511,36 @@ def test_a_wal_holding_no_frames_beside_a_damaged_file(
         assert sorted(p.name for p in folder.iterdir()) == [db.name]
 
 
+def test_a_store_file_of_2_gib_is_told_apart_from_its_wal_in_one_line(
+    tmp_path: Path, stopped_with_writes: list[bytes]
+) -> None:
+    """The file alone is checked where it lies, not from a copy in memory: the copy took twice
+    the file's size and, at 2 GiB or more, past what SQLite allocates at once, ended `verify` in
+    a MemoryError traceback (measured by hand on a real store of 2113 MiB). Here the store a hard
+    stop left, damaged only in its `-wal`, is grown to 2 GiB by bytes past the pages its header
+    counts, which SQLite does not read."""
+    folder = tmp_path / "store"
+    folder.mkdir()
+    db = folder / "fleet.sqlite"
+    names = [db.name, f"{db.name}-wal", f"{db.name}-shm"]
+    for name, data in zip(names, stopped_with_writes, strict=True):
+        (folder / name).write_bytes(data)
+    wal = folder / names[1]
+    overwrite_a_page_in_wal(wal, db)
+    pages = db.read_bytes()
+    with db.open("r+b") as f:
+        f.truncate(2**31)
+    logged = wal.read_bytes()
+    code, lines, err, _ = uasw(tmp_path, "--db", str(db), "verify")
+    assert "Traceback" not in err, err[-600:]
+    assert code == 1 and len(lines) == 1 and CHECK in lines[0], lines
+    assert "the store's -wal" in lines[0] and "the file alone passes it" in lines[0], lines
+    assert db.stat().st_size == 2**31 and wal.read_bytes() == logged
+    with db.open("rb") as f:
+        assert f.read(len(pages)) == pages
+    assert sorted(p.name for p in folder.iterdir()) == sorted(names)
+
+
 def test_a_sound_store_still_verifies_and_takes_writes(tmp_path: Path, seeded: bytes) -> None:
     folder = tmp_path / "store"
     folder.mkdir()
