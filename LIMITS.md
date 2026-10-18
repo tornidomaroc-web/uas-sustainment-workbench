@@ -336,6 +336,20 @@ field-level tables. This file is about what that means for a maintenance tool.
   - *The aircraft rows and the file as a whole.* Aircraft keys, labels, licences and attributions
     are not journaled (the row is replaceable by design), and the file replaced by an earlier
     copy is a truncated tail.
+  - *Pages of the file the walk does not read.* The walk reads the journaled rows, so damage
+    elsewhere in the file (the `aircraft` page, an automatic index, `sqlite_sequence`) left the
+    chain intact: 0.6.2 reported `journal intact: 94 links` on a seeded store whose `aircraft`
+    page was overwritten at rest (issue #105). So `uasw verify` first runs SQLite's
+    `PRAGMA integrity_check` on the whole file, and a file that fails it is one
+    `refused (503)` line naming SQLite's finding, exit 1, with no walk and no `intact` or
+    `unchanged` line. Measured on the seeded store with each b-tree's pages overwritten in turn
+    (`aircraft`, `flights`, `entries`, `journal`, `sqlite_sequence`, each of the three
+    automatic indexes) and with one key of the flights index edited in place: each is refused.
+    The check is SQLite's, of the file's structure and of every index against its rows; a row
+    rewritten in a well-formed page is the walk's to find, and a change to an aircraft row is
+    found by neither. `GET /journal/verify` does not run it: `uasw serve` runs it once when it
+    starts, and while it runs checks a file changed under it with `quick_check` (below), which
+    passes an index key edited in place.
   - *Before the migration.* A store written by 0.5.x is journaled when this version first opens
     it, each row linked as found after a note that says so, with the counts and the time; a
     change made to it before that is linked as found.
@@ -346,7 +360,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   session, where the file cannot reach it, is the operator's, and so is deciding who may hold
   the file. The line is "unchanged since head H", and that is all it says: a false statement
   linked at entry is linked false, and what the ledger refuses or accepts is unchanged. Whatever
-  the file holds, verifying reports and never raises: a record that cannot be parsed or hashed
+  a journaled row holds, verifying reports and never raises: a record that cannot be parsed or hashed
   (not JSON, nested too deep for the parser, a column turned into a BLOB), a note that is not
   the migration note, and a note on an entry or flight link, where the column is NULL and no
   hash covers it, are each a `content` break at that link. Verifying reads every row: 3 ms for
@@ -647,6 +661,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
   state the service read after its last write or ingest; a commit from outside is in them
   from the service's next write on.
+- **A store file damaged at rest is refused by every command that writes, and by
+  `uasw verify`.** A write's own reads touch only some pages, so 0.6.2's `uasw record` wrote
+  and exited 0 on a seeded store whose `flights` pages were overwritten while no process held
+  it, and `uasw ingest` did the same with only the `entries` pages or only `sqlite_sequence`
+  overwritten; every later `verify` then refused the file, or, for `sqlite_sequence`, called it
+  intact (issues #104, #105). Now `seed`, `serve`, `ingest`, `record` and `record retract` run
+  SQLite's `PRAGMA integrity_check` on an existing store file before the store is opened on it,
+  and `verify` before its walk: a file that fails is one `refused (503)` line naming SQLite's
+  finding, exit 1, the file byte for byte as it was and no `-wal` or `-shm` left beside it.
+  `integrity_check` rather than the `quick_check` the running service uses on a file changed
+  under it: both found every b-tree's pages overwritten in turn on the seeded store, and
+  only `integrity_check` found one key of the flights index edited in place. Measured on
+  Windows (2026-10-18, a connection of its own, medians; Python 3.12 with SQLite 3.49.1, 3.14
+  with 3.50.4): 0.7 to 0.9 ms on the seeded store (0.1 MiB), 25 to 27 ms at 9.7 MiB (85 times
+  the seeded size), 244 to 266 ms at 84 MiB, where `quick_check` took 0.7 to 0.8, 22 to 23 and
+  192 to 202 ms. Through real processes (four interleaved rounds, medians) the commands'
+  own run-to-run spread was larger than the check: on the seeded store `serve` reached its
+  first `/health` in 1.0 s on this version and 1.3 s on 0.6.2, and `record`, `ingest` and
+  `verify` took 0.4 s and 0.6 to 0.8 s; on the 9.7 MiB store `serve` started in 1.5 s and 2.1 s,
+  and `record`, `ingest` and `verify` took 59 to 68 ms longer than on 0.6.2. Reads through a
+  running service do not run it and take no new lock: `/health`, `/aircraft`, `/fleet/due` and
+  `/aircraft/SYN-04/due` answered within a millisecond of 0.6.2 on the seeded store. What it
+  does not cover: commands that only read (`evidence`, `records`, `fleet-records`,
+  `export-static`, `record history`) do not run it; a file damaged after the check, while the
+  command runs, is left to the open store's look at its file, as in the bullet above; and a row rewritten inside a well-formed page
+  passes it (the journal walk finds that in a journaled row).
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

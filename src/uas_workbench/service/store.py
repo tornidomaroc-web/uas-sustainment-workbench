@@ -391,20 +391,12 @@ class Store:
                 "the store file was replaced while the service has it open; restart the "
                 "service to use the file now there"
             )
-        uri = Path(self._path).resolve().as_uri() + "?mode=rw"
         try:
-            check = sqlite3.connect(uri, uri=True)
-            try:
-                check.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-                rows = check.execute("PRAGMA quick_check(1)").fetchall()
-            finally:
-                check.close()
+            problem = _sqlite_check(self._path, "quick_check")
         except sqlite3.Error as exc:
             problem = str(exc)
-        else:
-            if rows == [("ok",)]:
-                return None
-            problem = str(rows[0][0]) if rows else "no answer"
+        if problem is None:
+            return None
         return (
             f"the store file was changed outside the service and fails SQLite's check "
             f"({problem}); restore it from a good copy"
@@ -1124,6 +1116,46 @@ def _aircraft_row(aircraft: Aircraft) -> tuple[object, ...]:
         aircraft.licence,
         aircraft.attribution,
     )
+
+
+def _sqlite_check(path: str, pragma: str) -> str | None:
+    """SQLite's own check of the file at `path` (`quick_check` or `integrity_check`), on a
+    connection of its own that writes nothing: the first problem it reports, or None when it
+    answers ok. Raises what SQLite raises on a file it cannot open or read."""
+    uri = Path(path).resolve().as_uri() + "?mode=rw"
+    check = sqlite3.connect(uri, uri=True)
+    try:
+        check.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        rows = check.execute(f"PRAGMA {pragma}(1)").fetchall()
+    finally:
+        check.close()
+    if rows == [("ok",)]:
+        return None
+    return str(rows[0][0]) if rows else "no answer"
+
+
+def damage_at_rest(path: str) -> str | None:
+    """What is wrong with the existing store file at `path` by SQLite's
+    `PRAGMA integrity_check`, run before a store is opened on it, or None when it passes (issues
+    #104, #105). Every command that writes runs it when it opens an existing store, and
+    `uasw verify` before the walk: the journal chain covers only the journaled rows, and a
+    write's own reads only the pages they touch, so damage made at rest elsewhere in the file
+    was written beside and reported intact. `integrity_check` rather than the `quick_check` the
+    open store runs on a file changed under it: it also finds an index whose keys no longer
+    match their rows, which `quick_check` passes, for somewhat more time on a large store
+    (LIMITS.md gives both). It writes nothing.
+
+    A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
+    error (the path is a folder, or cannot be opened) is not judged here and is left to the
+    open, which refuses it as before. SQLite's report can span lines; it is given on one."""
+    try:
+        problem = _sqlite_check(path, "integrity_check")
+    except sqlite3.DatabaseError as exc:
+        code = getattr(exc, "sqlite_errorcode", None)  # absent when raised by Python code
+        if code is None or code & 0xFF not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+            return None
+        problem = str(exc)
+    return None if problem is None else " ".join(problem.split())
 
 
 def _data_version(connection: sqlite3.Connection) -> int:

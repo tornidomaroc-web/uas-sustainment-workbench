@@ -214,11 +214,16 @@ code, both verify alone; `uasw verify --head H`, given a head written down earli
 whether the records are unchanged since it, and fails on both. That is all the line says:
 unchanged since a head, never that the records are correct. A store written by 0.5.x is
 journaled when first opened, after a note that what came before it is not tamper-evident.
-Whatever the file holds, verifying reports a break and never crashes, and `uasw verify` given a
-path with no store at it says so (`refused (404)`) rather than making an empty store there and
-calling it intact; so do the other commands that only read, and `uasw ingest` or
+Whatever a journaled row holds, verifying reports a break and never crashes, and `uasw verify`
+given a path with no store at it says so (`refused (404)`) rather than making an empty store
+there and calling it intact; so do the other commands that only read, and `uasw ingest` or
 `uasw record` refused on such a path makes no store there either: a store is made by a write
-that is accepted, or by `uasw seed` and `uasw serve`. A running service whose store
+that is accepted, or by `uasw seed` and `uasw serve`. The walk reads only the journaled rows,
+so `uasw verify` first checks the file whole with SQLite's `PRAGMA integrity_check`, and so
+does every command that writes (`seed`, `serve`, `ingest`, `record`, `record retract`) when it
+opens an existing store: a file damaged at rest, in pages the walk or the write would not have
+read, is one `refused (503)` line naming SQLite's finding, exit 1, with nothing written and no
+`intact` or `unchanged` line (#104, #105). A running service whose store
 file is overwritten, truncated, replaced or removed from outside refuses every read and write
 of the store with 503 naming the cause, `/health` included, rather than serving what it held
 in memory; restored in place, it serves the restored file, provided the service had no writes

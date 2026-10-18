@@ -38,7 +38,7 @@ from uas_workbench.ledger import UnreadableRecord
 
 from .limits import max_log_mib, too_large
 from .observability import configure_logging
-from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged
+from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged, damage_at_rest
 
 log = logging.getLogger("uasw.cli")
 
@@ -65,6 +65,9 @@ READERS = {".ulg": read_ulog, ".bin": read_dataflash}
 # command that never closes its store leaves a sqlite3 connection to be collected, which
 # Python 3.13+ reports as a ResourceWarning (issue #48). One process runs one command.
 _opened: list[Store] = []
+# The store files this process checked whole and found sound (`open_store`): a command that
+# opens one store twice (`record retract` reads its target, then writes) checks it once.
+_checked: set[str] = set()
 
 
 class Refused(Exception):
@@ -78,20 +81,35 @@ class Refused(Exception):
         self.detail = detail
 
 
-def open_store(path: str, *, create: bool = True) -> Store:
+def open_store(path: str, *, create: bool = True, check: bool | None = None) -> Store:
     """The store at `path`, made there on first use by the commands that write (`seed`,
     `serve`, `ingest`, `record`); `ingest` and `record` check their input first, so one that
     is refused makes nothing (issue #83). A command that only reads passes `create=False` and is
     refused (404) when nothing is at `path`, before any file or folder is made: a mistyped
     `--db` made an empty store there, which `uasw verify` then called intact (issue #73).
     Only "nothing is there" is a 404: a path that cannot be looked at (a folder one may not
-    read) goes on to the open, which refuses it (503) as before, never a traceback."""
+    read) goes on to the open, which refuses it (503) as before, never a traceback.
+
+    With `check` (by default, the commands that write; `uasw verify` and `record retract`
+    pass it), an existing store file is checked whole before the store is opened on it
+    (`damage_at_rest`), once per process: one that fails is refused (503) naming the cause,
+    with nothing read from it as records and nothing written (issues #104, #105)."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
             f"there is no store at {path}; a command that only reads does not make one, so "
             "check the path, or seed or ingest to make the store",
         )
+    checking = create if check is None else check
+    if checking and path != ":memory:" and path not in _checked and not _nothing_at(path):
+        problem = damage_at_rest(path)
+        if problem is not None:
+            raise Refused(
+                503,
+                f"the store file fails SQLite's integrity check ({problem}), so it is damaged; "
+                "nothing was read from it or written to it; restore it from a good copy",
+            )
+        _checked.add(path)
     if path != ":memory:" and create:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -421,7 +439,10 @@ def cmd_verify(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    result = open_store(args.db, create=False).verify_journal(args.head)
+    # The file whole first: the walk reads only the rows the chain covers, so it reported the
+    # journal intact on a file damaged elsewhere (issue #105). A damaged file is one refusal
+    # line of its own, and the walk is not run.
+    result = open_store(args.db, create=False, check=True).verify_journal(args.head)
     if result.migration is not None:
         m = result.migration
         print(f"link {m.seq}, recorded {m.recorded_utc}: {m.note}")
@@ -518,7 +539,7 @@ def cmd_record(args: argparse.Namespace) -> None:
     elif what == "time-in-service":
         _record_entry(args, args.aircraft, "time_in_service.set", before_s=args.hours * 3600.0)
     elif what == "retract":
-        retracted = open_store(args.db, create=False).entry(args.entry_id)
+        retracted = open_store(args.db, create=False, check=True).entry(args.entry_id)
         if retracted is None:
             import sys
 
@@ -732,6 +753,7 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         while _opened:
             _opened.pop().close()
+        _checked.clear()
 
 
 if __name__ == "__main__":
