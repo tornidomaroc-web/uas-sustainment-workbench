@@ -38,7 +38,7 @@ from uas_workbench.ledger import UnreadableRecord
 
 from .limits import max_log_mib, too_large
 from .observability import configure_logging
-from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged, damage_at_rest
+from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged, checked_at_rest
 
 log = logging.getLogger("uasw.cli")
 
@@ -92,7 +92,7 @@ def open_store(path: str, *, create: bool = True, check: bool | None = None) -> 
 
     With `check` (by default, the commands that write; `uasw verify` and `record retract`
     pass it), an existing store file is checked whole before the store is opened on it
-    (`damage_at_rest`), once per process: one that fails is refused (503) naming the cause,
+    (`checked_at_rest`), once per process: one that fails is refused (503) naming the cause,
     with nothing read from it as records and nothing written (issues #104, #105)."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
@@ -102,14 +102,21 @@ def open_store(path: str, *, create: bool = True, check: bool | None = None) -> 
         )
     checking = create if check is None else check
     if checking and path != ":memory:" and path not in _checked and not _nothing_at(path):
-        problem = damage_at_rest(path)
-        if problem is not None:
-            raise Refused(
-                503,
-                f"the store file fails SQLite's integrity check ({problem}), so it is damaged; "
-                "nothing was read from it or written to it; restore it from a good copy",
-            )
-        _checked.add(path)
+        with checked_at_rest(path) as problem:
+            if problem is not None:
+                raise Refused(
+                    503,
+                    f"the store file fails SQLite's integrity check ({problem}), so it is "
+                    "damaged; nothing was read from it or written to it; restore it from a good "
+                    "copy",
+                )
+            _checked.add(path)
+            # Opened while the check's connection is still open (`checked_at_rest`).
+            return _open(path, create)
+    return _open(path, create)
+
+
+def _open(path: str, create: bool) -> Store:
     if path != ":memory:" and create:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)

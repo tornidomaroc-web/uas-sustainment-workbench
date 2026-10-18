@@ -392,7 +392,11 @@ class Store:
                 "service to use the file now there"
             )
         try:
-            problem = _sqlite_check(self._path, "quick_check")
+            check = _check_connection(self._path)
+            try:
+                problem = _sqlite_check(check, "quick_check")
+            finally:
+                check.close()
         except sqlite3.Error as exc:
             problem = str(exc)
         if problem is None:
@@ -1118,23 +1122,25 @@ def _aircraft_row(aircraft: Aircraft) -> tuple[object, ...]:
     )
 
 
-def _sqlite_check(path: str, pragma: str) -> str | None:
-    """SQLite's own check of the file at `path` (`quick_check` or `integrity_check`), on a
-    connection of its own that writes nothing: the first problem it reports, or None when it
-    answers ok. Raises what SQLite raises on a file it cannot open or read."""
+def _check_connection(path: str) -> sqlite3.Connection:
+    """A connection of its own to the file at `path`, for SQLite's check; it writes nothing."""
     uri = Path(path).resolve().as_uri() + "?mode=rw"
     check = sqlite3.connect(uri, uri=True)
-    try:
-        check.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-        rows = check.execute(f"PRAGMA {pragma}(1)").fetchall()
-    finally:
-        check.close()
+    check.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    return check
+
+
+def _sqlite_check(check: sqlite3.Connection, pragma: str) -> str | None:
+    """SQLite's own check (`quick_check` or `integrity_check`) on `check`: the first problem
+    it reports, or None when it answers ok. Raises what SQLite raises on a file it cannot read."""
+    rows = check.execute(f"PRAGMA {pragma}(1)").fetchall()
     if rows == [("ok",)]:
         return None
     return str(rows[0][0]) if rows else "no answer"
 
 
-def damage_at_rest(path: str) -> str | None:
+@contextlib.contextmanager
+def checked_at_rest(path: str) -> Iterator[str | None]:
     """What is wrong with the existing store file at `path` by SQLite's
     `PRAGMA integrity_check`, run before a store is opened on it, or None when it passes (issues
     #104, #105). Every command that writes runs it when it opens an existing store, and
@@ -1145,17 +1151,33 @@ def damage_at_rest(path: str) -> str | None:
     match their rows, which `quick_check` passes, for somewhat more time on a large store
     (LIMITS.md gives both). It writes nothing.
 
+    The check's connection stays open while the block runs, so a store opened inside it
+    shares the `-shm` file it made. On a file this process may not write, SQLite makes `-shm`
+    with the file's own permissions and cannot remove it when the last connection closes; a
+    connection opened after that cannot write it and saw every read as a new state of the store
+    ("never stood still"; met on Linux CI, where a read-only store is mode 0400).
+
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
     open, which refuses it as before. SQLite's report can span lines; it is given on one."""
     try:
-        problem = _sqlite_check(path, "integrity_check")
-    except sqlite3.DatabaseError as exc:
-        code = getattr(exc, "sqlite_errorcode", None)  # absent when raised by Python code
-        if code is None or code & 0xFF not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
-            return None
-        problem = str(exc)
-    return None if problem is None else " ".join(problem.split())
+        check = _check_connection(path)
+    except sqlite3.Error:
+        yield None
+        return
+    try:
+        try:
+            problem = _sqlite_check(check, "integrity_check")
+        except sqlite3.DatabaseError as exc:
+            code = getattr(exc, "sqlite_errorcode", None)  # absent when raised by Python code
+            damaged = code is not None and code & 0xFF in (
+                sqlite3.SQLITE_CORRUPT,
+                sqlite3.SQLITE_NOTADB,
+            )
+            problem = str(exc) if damaged else None
+        yield None if problem is None else " ".join(problem.split())
+    finally:
+        check.close()
 
 
 def _data_version(connection: sqlite3.Connection) -> int:
