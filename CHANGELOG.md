@@ -20,18 +20,21 @@ that checkpoint waits, up to the 5 s busy timeout, for the reads already under w
 write that runs it and the writes sent meanwhile answer only then. Open: uploads read at the
 same time each hold their reader's memory, and nothing bounds how many (#96). The version
 string is 0.6.2 wherever it is reported (`/health`, the OpenAPI document, the evidence pack,
-the records summaries and their pages); apart from it and the refusals above, every response
-on a clean store is what 0.6.1 gave, the SYN-04 evidence sample keeps
+the records summaries and their pages); apart from it, the refusals above and the `/metrics`
+gauges after two writes answered at once, every response on a clean store is what 0.6.1
+gave, the SYN-04 evidence sample keeps
 `3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and a fresh seeded store's
 journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`.
 
 - Damage landing during the store's own checkpoint is refused whatever the clock says
-  (closes #95). No release was open to it: only the store that folds its own WAL (the last
-  item), new in this release, was. The checkpoint's write stamps the store file with the
-  system clock, whose tick is about 15 ms on Windows, and a checkpoint that wrote no page past
-  the end of the file within the tick of the change last seen left the file looking as last
-  seen, so no check ran and the damage was served: the next read met SQLite's "database disk
-  image is malformed" rather than the 503 naming the cause. The store now checks its file
+  (closes #95). The checkpoint's write stamps the store file with the system clock, whose
+  tick is about 15 ms on Windows, and a checkpoint that wrote no page past the end of the file
+  within the tick of the change last seen left the file looking as last seen, so no check
+  ran: `/health`, the board's reads and `POST /entries` then answered 503 with SQLite's own
+  "database disk image is malformed" rather than the 503 naming the cause, and no entry was
+  written. 0.6.1 was open to it too: the checkpoint SQLite made on the store's own commit
+  could land within the tick of the change last seen in the same way (with the tick set back
+  as the test sets it, 0.6.1 gave the same 503s). The store now checks its file
   after every checkpoint that folded own commits, whether or not its two looks differ, which
   is every checkpoint it runs; that is the one check such a checkpoint already cost, and
   nothing on the read path changes. Measured on main 382767a (Windows): the two looks were 12
@@ -39,8 +42,8 @@ journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d438499
   the machine's clock ticking at about 1 ms. The test's other failure was its own: a restore
   landing within the tick of the damage, at the same size, is seen only within a second, as
   LIMITS.md says; the tests now set each restore apart. Damage to a page the `-wal` file holds
-  a newer copy of still passes the check (LIMITS.md). No response, record, pack or hash
-  changes.
+  a newer copy of still passes the check (LIMITS.md). On a sound store no response, record,
+  pack or hash changes.
 - A write through the service no longer reads and folds the whole ledger twice per aircraft
   for the `/metrics` gauges (closes #92): the gauges are computed in one snapshot at one
   time for the whole fleet, one read and one fold, and one refresh runs at a time, so two
@@ -48,7 +51,8 @@ journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d438499
   `uasw serve` on the seeded fleet a `POST /entries` took 506 ms at 3,000 entries and 1.80 s
   at 10,000; now 94 ms and 0.32 s (Windows, Python 3.12). The board's own responses
   (`/aircraft`, `/fleet/due` and the rest) still read and fold the ledger twice per aircraft
-  per request (LIMITS.md). Gauge values and every response are unchanged.
+  per request (LIMITS.md). Apart from that race, gauge values and every response are
+  unchanged.
 - A `.bin` holding a format definition whose length is not 3 plus the size of its own format
   is refused in one line (`uasw ingest`, exit 1) or one 422 (`POST /ingest`) naming the
   definition's offset, before pymavlink reads it, and nothing is stored (closes #88). Before,

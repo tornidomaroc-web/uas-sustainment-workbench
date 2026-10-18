@@ -607,8 +607,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   whose tick is about 15 ms on Windows, and one that writes no page past the end of the file
   within the tick of the change last seen leaves both looks equal (issue #95: measured on
   Windows, the two looks were 12 to 66 ms apart at the same size; with no check run then,
-  damage landing during such a checkpoint was served, the next read meeting SQLite's own
-  "database disk image is malformed" rather than the 503 naming the cause). So damage landing
+  after damage landing during such a checkpoint the service answered reads and writes 503
+  with SQLite's own "database disk image is malformed" rather than the 503 naming the cause,
+  and wrote no entry; 0.6.1, whose own checkpoints SQLite made on its commits, did the same).
+  So damage landing
   during the checkpoint is refused, and a file that passes is recorded as seen with nothing
   else done: no connection is opened afresh and no kept answer is computed again. Every
   checkpoint the store runs has own commits to fold, since it runs one every 200 of them and
