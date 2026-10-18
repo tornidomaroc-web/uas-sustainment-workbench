@@ -689,12 +689,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   page count and schema cookie included, was the same as the damaged file's), so the store
   cannot tell a `-wal` written against another file from its own; moving the three aside
   together is the only protection. With a `-wal` kept, the file alone is
-  checked as well (its bytes, in memory, without the `-wal`), and the line says where the
+  checked as well (read through SQLite's `immutable` mode, which opens the file read-only with
+  no locks and reads neither the `-wal` nor the `-shm`), and the line says where the
   damage is: "the store file fails SQLite's integrity check", or, when the file alone passes,
   "the store's -wal ... fails SQLite's integrity check ... where the file alone passes it, so
   the store is damaged in writes held only in the -wal". The file alone is then the store
-  without those writes. The second check runs only on such a refusal and reads the file into
-  memory once.
+  without those writes. The second check runs only on such a refusal and reads the file from
+  disk, as the first does. It first read a copy of the file into memory, which took twice
+  the file's size (2084 MiB more at 1033 MiB, measured on Windows) and, at 2 GiB or more,
+  ended the command in a `MemoryError` traceback, past what SQLite allocates at once; read in
+  place, it took 2 MiB more at 115 MiB, 1033 MiB and 2113 MiB alike, and `verify`'s refusal
+  of the 2113 MiB store took 9.7 to 9.9 s, where it took 2.8 s without the second check.
   `integrity_check` rather than the `quick_check` the running service uses on a file changed
   under it: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on
