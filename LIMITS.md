@@ -497,7 +497,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   the number of aircraft (issue #92: each aircraft's due list read and folded it twice).
   Measured through `uasw serve` (Windows, Python 3.12.10, 2026-10-15; `POST /entries` one
   after another, seeded fleet of nine aircraft): 506 ms a write at 3,000 entries before, 94 ms
-  now; 1.80 s at 10,000 before, 0.31 s now. The board's own responses (`/aircraft`,
+  now; 1.80 s at 10,000 before, 0.32 s now. The board's own responses (`/aircraft`,
   `/fleet/due` and the rest above) still read and fold the ledger twice per aircraft per
   request, as before (18 folds for `/aircraft` on the seeded fleet). A store in memory holds its one lock for the whole refresh, where it
   took it once per read before.

@@ -2,27 +2,53 @@
 
 ## Unreleased
 
+## 0.6.2 (2026-10-18)
+
+What operators see change: a `.bin` holding a format definition whose length is not its
+format's is now refused, a log stored before this release included. Sending such a log again
+answers 422 from `POST /ingest`, where 0.6.1 answered 409 "already stored", and `uasw ingest`
+prints `refused (422)` and exits 1, where 0.6.1 logged it as already stored and exited 0; the
+copy already stored stays stored and counted. A write sent without the write token, or from
+another machine when no token is set, is refused (401 or 403) from its headers alone, before
+the service reads a byte of its body. A log over 512 MiB is refused (413) before any reader
+opens it; `UASW_MAX_LOG_MIB` sets another limit. A write through the service reads and folds
+the ledger once for the `/metrics` gauges, no longer twice per aircraft (94 ms a
+`POST /entries` at 3,000 entries on the seeded fleet, 506 ms before). The store folds its own
+WAL into its file every 200 of its own commits and after each batch and checks the file after
+each such checkpoint, so damage landing during one is refused with the 503 naming the cause;
+that checkpoint waits, up to the 5 s busy timeout, for the reads already under way, and the
+write that runs it and the writes sent meanwhile answer only then. Open: uploads read at the
+same time each hold their reader's memory, and nothing bounds how many (#96). The version
+string is 0.6.2 wherever it is reported (`/health`, the OpenAPI document, the evidence pack,
+the records summaries and their pages); apart from it and the refusals above, every response
+on a clean store is what 0.6.1 gave, the SYN-04 evidence sample keeps
+`3515dcb1fc7f1282c73fad1c6fbc9ebe39df61537c5629145a4b55d96f42eabf` and a fresh seeded store's
+journal head is `c7726f26f1d1fddd45c679b1207d1eb0cebdf9c14b682f06c28d2d48d4384991`.
+
 - Damage landing during the store's own checkpoint is refused whatever the clock says
-  (closes #95). The checkpoint's write stamps the store file with the system clock, whose
-  tick is about 15 ms on Windows, and a checkpoint that wrote no page past the end of the
-  file within the tick of the change last seen left the file looking as last seen, so no
-  check ran and the damage was served: the next read met SQLite's "database disk image is
-  malformed" rather than the 503 naming the cause. Only the unreleased store that folds its
-  own WAL (below) was open to it. The store now checks its file after every checkpoint that
-  folded own commits, whether or not its two looks differ; that is the one check such a
-  checkpoint already cost, and nothing on the read path changes. Measured on main 382767a
-  (Windows): the two looks were 12 to 66 ms apart at the same size in 60 of 60 runs of the
-  test, which passed every run with the machine's clock ticking at about 1 ms. The test's
-  other failure was its own: a restore landing within the tick of the damage, at the same
-  size, is served within a second, as LIMITS.md says; the tests now set each restore apart.
-  No response, record, pack or hash changes.
+  (closes #95). No release was open to it: only the store that folds its own WAL (the last
+  item), new in this release, was. The checkpoint's write stamps the store file with the
+  system clock, whose tick is about 15 ms on Windows, and a checkpoint that wrote no page past
+  the end of the file within the tick of the change last seen left the file looking as last
+  seen, so no check ran and the damage was served: the next read met SQLite's "database disk
+  image is malformed" rather than the 503 naming the cause. The store now checks its file
+  after every checkpoint that folded own commits, whether or not its two looks differ, which
+  is every checkpoint it runs; that is the one check such a checkpoint already cost, and
+  nothing on the read path changes. Measured on main 382767a (Windows): the two looks were 12
+  to 66 ms apart at the same size in 60 of 60 runs of the test, which passed every run with
+  the machine's clock ticking at about 1 ms. The test's other failure was its own: a restore
+  landing within the tick of the damage, at the same size, is seen only within a second, as
+  LIMITS.md says; the tests now set each restore apart. Damage to a page the `-wal` file holds
+  a newer copy of still passes the check (LIMITS.md). No response, record, pack or hash
+  changes.
 - A write through the service no longer reads and folds the whole ledger twice per aircraft
   for the `/metrics` gauges (closes #92): the gauges are computed in one snapshot at one
   time for the whole fleet, one read and one fold, and one refresh runs at a time, so two
   writes answered at once can no longer leave the older state's gauges standing. Through
   `uasw serve` on the seeded fleet a `POST /entries` took 506 ms at 3,000 entries and 1.80 s
-  at 10,000; now 94 ms and 0.31 s (Windows, Python 3.12). Gauge values and every response
-  are unchanged.
+  at 10,000; now 94 ms and 0.32 s (Windows, Python 3.12). The board's own responses
+  (`/aircraft`, `/fleet/due` and the rest) still read and fold the ledger twice per aircraft
+  per request (LIMITS.md). Gauge values and every response are unchanged.
 - A `.bin` holding a format definition whose length is not 3 plus the size of its own format
   is refused in one line (`uasw ingest`, exit 1) or one 422 (`POST /ingest`) naming the
   definition's offset, before pymavlink reads it, and nothing is stored (closes #88). Before,
@@ -31,34 +57,43 @@
   the file (#85) checks each definition it meets, the quiet tail included, and a definition is
   refused even with no message of its type after it; a format character pymavlink has no size
   for is refused there too. All 1,413 definitions in the 13 real logs fit, and their records
-  are unchanged. A log stored earlier that holds such a definition stays stored; sending it
-  again is now this refusal, where `POST /ingest` answered 409 "already stored" and
-  `uasw ingest` logged it as already stored and exited 0.
+  are unchanged. A log stored earlier that holds such a definition stays stored and counted;
+  sending it again is now this refusal (422, exit 1), where 0.6.1 answered 409 "already
+  stored" to `POST /ingest` and `uasw ingest` logged it as already stored and exited 0.
 - A log over 512 MiB is refused, and an upload is no longer held whole in memory (closes
   #89). `POST /ingest` answers 413 and `uasw ingest` prints `refused (413)` with the same
-  sentence, before any reader opens the log; `UASW_MAX_LOG_MIB` sets another whole number of
-  MiB (twice the largest real log read here, 246 MB), and one that is not a whole number
-  above 0 is refused (422) before the command or the service starts. The service checks the
-  write token, then the declared length, before reading a byte of the body, and counts a
-  body with no declared length as it arrives; before, FastAPI read the whole form to disk
-  before the write check ran. The route copies the upload a MiB at a time: 200 MiB raised
-  the service's peak memory 4 MB, not 211 MB; an accepted 80 MB DataFlash log still raises
-  it about 120 MB, which is pymavlink's index of it. A copy that fails answers 503 and
-  removes its temporary file, which it left behind before. `POST /entries` checks the write
-  token before reading its body too: FastAPI read a JSON body whole into memory first, so
-  300 MiB sent without the token raised the service's peak memory about 950 MB before its
-  401; now 0 MB. No response, record, pack or hash changes.
+  sentence, before any reader opens the log. The default is about twice the largest real log
+  read here (246 MB of PX4 ULog); `UASW_MAX_LOG_MIB` sets another whole number of MiB, and one
+  that is not a whole number above 0 is refused (422) before `uasw ingest` or `uasw serve`
+  opens anything. The service runs the write check (the token, or this machine when no token
+  is set), then checks the declared length, before reading a byte of the body, and counts a
+  body with no declared length as it arrives, so up to the limit and 1 MiB of it is spooled to
+  disk, then deleted, before its 413; before, FastAPI read the whole form to disk before the
+  write check ran. A client that goes on sending after a refusal from its headers has the rest
+  read and dropped by the HTTP server, none of it reaching the service. The route copies the
+  upload a MiB at a time: 200 MiB raised the service's peak memory 4 MB, not 211 MB; an
+  accepted 80 MB DataFlash log still raises it about 120 MB, which is pymavlink's index of it,
+  and logs read at the same time add up (#96). A copy that fails answers 503 and removes its
+  temporary file, which it left behind before. `POST /entries` runs the write check before
+  reading its body too: FastAPI read a JSON body whole into memory first, so 300 MiB sent
+  without the token raised the service's peak memory about 950 MB before its 401; now 0 MB.
+  A writer's own entry still has no size limit (LIMITS.md). No response, record, pack or hash
+  changes.
 - The store's own checkpoints are no longer taken for changes from outside (closes #79). Its
   writing connection no longer checkpoints on its own; the store folds the WAL into its file
   every 200 of its own commits and after each batch, looks at the file right before and right
-  after, and checks a change between the two once, on the writer, with no connection opened
-  afresh and no kept answer computed again. Its checkpoint waits for the reads already under
-  way to end, so the whole WAL is folded and starts over; one that waits for no reader let the
-  `-wal` file grow with every write while threads kept reading. Before, each checkpoint SQLite
-  made on the store's commits, on nearly every commit while readers kept the WAL from starting
-  over, cost a check that every read meeting it waited for, every connection opened afresh and
-  the journal walked again: 113 to 227 in 6,000 writes with two threads reading, now 30 checks
-  and none of the rest, the `-wal` file at 3.7 MiB. A change from outside, another `uasw` command's commit and checkpoint included, is
+  after, and checks it once, on the writer, after every such checkpoint (#95, above), with no
+  connection opened afresh and no kept answer computed again. Its checkpoint waits, up to the
+  5 s busy timeout, for the reads already under way to end, so the whole WAL is folded and
+  starts over; one that waits for no reader let the `-wal` file grow with every write while
+  threads kept reading. The wait holds the store's write lock, so the write that runs the
+  checkpoint and every write through the service sent meanwhile answer only when that read
+  ends or the timeout passes (3.4 s behind a read held 3 s, measured through `uasw serve`).
+  Before, each checkpoint SQLite made on the store's commits, on nearly every commit while
+  readers kept the WAL from starting over, cost a check that every read meeting it waited for,
+  every connection opened afresh and the journal walked again: 113 and 227 checks in 6,000
+  writes beside two reading threads, now 30 checks and none of the rest, the `-wal` file at
+  3.7 MiB. A change from outside, another `uasw` command's commit and checkpoint included, is
   checked as before. LIMITS.md also says that damage to a page the `-wal` file holds a newer
   copy of passes the check (on 0.6.1 too). No response, record, pack or hash changes.
 
