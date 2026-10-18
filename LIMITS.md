@@ -348,7 +348,9 @@ field-level tables. This file is about what that means for a maintenance tool.
     The check is SQLite's, of the file's structure and of every index against its rows; a row
     rewritten in a well-formed page is the walk's to find, and a change to an aircraft row is
     found by neither. `GET /journal/verify` runs it too, before its walk, on a connection of its
-    own, and a file that fails it is refused (503) on every route from then on (issue #107);
+    own, and a file that fails it is refused (503) on every route until the file passes it
+    again (issue #107): a good copy restored with the service stopped is served when it starts
+    again, and one restored in place is checked again within a second (below);
     `uasw serve` also runs it when it starts and on a file changed under it (below).
   - *Before the migration.* A store written by 0.5.x is journaled when this version first opens
     it, each row linked as found after a note that says so, with the counts and the time; a
@@ -660,7 +662,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   rest being the walk and the whole-store read every change from outside costs. While it
   runs, every other read and write that meets the change waits for it, the store's own
   checkpoint included, since a read let through meanwhile could read a damaged file; a damaged
-  store is checked at most once a second, however many requests meet it. The checkpoint's
+  store is checked at most once a second, however many requests meet it. The second is timed
+  from the end of a check, so while requests keep coming a damaged store spends about
+  check / (check + 1 s) of one core on it: measured through `uasw serve` (Windows, Python
+  3.12.10, 2026-10-19), with `/health` asked 20 and 100 times a second the service took 22 and
+  27 % of one core at 86 MiB of 1 KB rows, where the check took 0.26 s, and 0.2 % with no
+  request; at 83 MiB of 795,000 indexed rows of 60 bytes, where `integrity_check` took 4.3 s
+  and `quick_check` 0.2 s, it took 84 to 86 %. The check's time follows the rows and index
+  keys more than the bytes, so the 3 ms per MiB above holds for rows the size of this store's
+  own. The checkpoint's
   wait for an older read holds the store's write lock, so the write that runs it, and every
   write through the service sent meanwhile, answer only when that read ends or the busy
   timeout passes; then the checkpoint is left for the next one and the writes are answered
