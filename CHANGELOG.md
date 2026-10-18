@@ -11,6 +11,12 @@
   `verify` reported the journal intact on a file whose `aircraft` page, an index or
   `sqlite_sequence` was overwritten; the check costs about 1 ms on the seeded store
   and 25 ms at 9.7 MiB. Commands that only read do not run it, nor does `GET /journal/verify`.
+- Doing what that refusal says gives back the good copy as it was (closes #108): beside a
+  `-wal` a hard stop left, the line says whether the damage is in the file or only in the
+  `-wal` (the file alone passing) and to move the file, its `-wal` and its `-shm` aside
+  together before putting a good copy where the file was, where it said only to restore the
+  file, and a good copy put beside the kept `-wal` took its pages in: 63 entries, its own entry
+  gone, and `verify` intact at 97 links instead of the good copy's 95.
 
 ## 0.6.2 (2026-10-18)
 

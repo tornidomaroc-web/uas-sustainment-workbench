@@ -669,13 +669,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   intact (issues #104, #105). Now `seed`, `serve`, `ingest`, `record` and `record retract` run
   SQLite's `PRAGMA integrity_check` on an existing store file before the store is opened on it,
   and `verify` before its walk: a file that fails is one `refused (503)` line naming SQLite's
-  finding, exit 1, the file byte for byte as it was. A `-wal` holding pages that a hard stop
-  left beside it is left as it was, with its `-shm`, rather than folded into the damaged file
-  and removed, as the check's connection did when it closed last (found on Windows by hand, a
-  `uasw serve` stopped hard after three writes, then the `aircraft` pages overwritten; the
-  check reads the pages held in the `-wal`, so an index key edited only there is refused too);
-  with no such `-wal`, no `-wal` or `-shm` is left, except beside a file marked read-only,
-  where SQLite's side files stay as for any open of it (above).
+  finding, exit 1, the file byte for byte as it was. A `-wal` that a hard stop left beside it
+  holding anything, its 32-byte header alone included, stays byte for byte as it was, with
+  its `-shm` beside it, rather than folded into the damaged file and removed, as the check's
+  connection did when it closed last (found on Windows by hand, a `uasw serve` stopped hard
+  after three writes, then the `aircraft` pages overwritten; the check reads the pages held in
+  the `-wal`, so an index key edited only there is refused too). The `-shm` is SQLite's index
+  of the `-wal` and holds no record: the check's read rebuilds it, so its bytes change on
+  every such refusal. An empty `-wal` is removed with its `-shm`; with none, no `-wal` or
+  `-shm` is left, except beside a file marked read-only, where SQLite's side files stay as for
+  any open of it (above).
+  The kept `-wal` and `-shm` belong to the damaged store, and the refusal says so: the line
+  then reads "move the file, its -wal and its -shm aside together, then put a good copy where
+  the file was". Put in the file's place with that `-wal` still beside it, a good copy takes
+  the `-wal`'s pages in when it is next opened: measured on Windows (issue #108), a good copy of
+  61 entries and 95 links came back with 63 entries, its own entry gone, and `uasw verify`
+  called it intact at 97 links. SQLite records nothing in the file that ties a `-wal` to it
+  (the `-wal`'s header holds its own salts, and the good copy's header, its change counter,
+  page count and schema cookie included, was the same as the damaged file's), so the store
+  cannot tell a `-wal` written against another file from its own; moving the three aside
+  together is the only protection. With a `-wal` kept, the file alone is
+  checked as well (its bytes, in memory, without the `-wal`), and the line says where the
+  damage is: "the store file fails SQLite's integrity check", or, when the file alone passes,
+  "the store's -wal ... fails SQLite's integrity check ... where the file alone passes it, so
+  the store is damaged in writes held only in the -wal". The file alone is then the store
+  without those writes. The second check runs only on such a refusal and reads the file into
+  memory once.
   `integrity_check` rather than the `quick_check` the running service uses on a file changed
   under it: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on
