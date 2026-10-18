@@ -109,7 +109,13 @@ def readme_examples() -> list[str]:
 
 # The newest released section and the number of cues it quotes. A release that makes a new
 # section the newest adds it here, with its count, 0 if it quotes none.
-RELEASED_CUES = {"0.5.1": 3, "0.5.2": 0, "0.6.0 (2026-10-13)": 0, "0.6.1 (2026-10-13)": 0}
+RELEASED_CUES = {
+    "0.5.1": 3,
+    "0.5.2": 0,
+    "0.6.0 (2026-10-13)": 0,
+    "0.6.1 (2026-10-13)": 0,
+    "0.6.2 (2026-10-18)": 0,
+}
 # A checked section's whole quotation of a cue the code no longer gives, kept on purpose to say
 # what changed: section heading -> the quoted cues. None today.
 HISTORICAL: dict[str, frozenset[str]] = {}
@@ -169,6 +175,14 @@ def test_the_examples_are_found() -> None:
         "annual insp due by 2027-04-30",
         "AOG awaiting parts since 2026-08-14",  # wrapped across a line break
     ]
+
+
+def test_every_released_count_names_a_section_as_headed() -> None:
+    """Each count in RELEASED_CUES is kept for a section the CHANGELOG holds, under its heading
+    as written, date included: an entry for a section not written, or under another date, is
+    refused here rather than left unused."""
+    headings = {heading for heading, _ in changelog_sections()}
+    assert set(RELEASED_CUES) <= headings, sorted(set(RELEASED_CUES) - headings)
 
 
 # ---- wording: the grammar, given what the example states --------------------------------
