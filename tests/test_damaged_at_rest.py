@@ -12,7 +12,9 @@ Every command that writes now runs SQLite's `PRAGMA integrity_check` when it ope
 store file, before anything else touches it, and `uasw verify` runs it before the walk: a file
 that fails is one `refused (503)` line naming the cause, exit 1, the file byte for byte as it
 was and nothing left beside it, or, on a store a hard stop left with `-wal` and `-shm`, both
-side files as they were. `integrity_check` rather than `quick_check`, the check the
+side files still there and the `-wal` as it was. Doing what that line says then gives back the
+good copy as it was (#108): the `-wal` belongs to the damaged store, and a good copy put beside
+it took its pages in. `integrity_check` rather than `quick_check`, the check the
 service runs on a file changed under it: it also finds an index whose keys no longer match
 their rows, which `quick_check` passes (the last case below).
 
@@ -343,6 +345,170 @@ def test_a_store_stopped_hard_and_damaged_is_refused_with_its_side_files_as_they
     assert db.read_bytes() == data
     assert wal.read_bytes() == logged
     assert sorted(p.name for p in folder.iterdir()) == [db.name, f"{db.name}-shm", wal.name]
+
+
+def recorded_then_stopped_hard(db: Path, entries: int) -> None:
+    """`entries` work orders recorded by `uasw record`'s own code in one process that then ends
+    without closing the store, as a hard stop leaves one: the entries only in the `-wal`, with
+    the `-shm` beside it."""
+    child = (
+        "import os, sys; from uas_workbench.service import cli; "
+        "from uas_workbench.service.store import Store; "
+        "Store.close = lambda self: None; "
+        "[cli.main(['--db', sys.argv[1], 'record', 'work-order', 'open', 'SYN-01', "
+        "'--state', 'deferred', '--work-id', f'WO-H{n}', '--by', 'A. Tester, maintenance', "
+        "'--statement', f'hand check {n}']) for n in range(int(sys.argv[2]))]; os._exit(0)"
+    )
+    subprocess.run([sys.executable, "-c", child, str(db), str(entries)], check=True, timeout=120)
+
+
+@pytest.fixture(scope="module")
+def stopped_with_writes(tmp_path_factory: pytest.TempPathFactory, seeded: bytes) -> list[bytes]:
+    """The file, `-wal` and `-shm` of the seeded store with three entries recorded and then
+    stopped hard: 97 links, three of them only in the `-wal`."""
+    folder = tmp_path_factory.mktemp("stopped")
+    db = folder / "fleet.sqlite"
+    db.write_bytes(seeded)
+    recorded_then_stopped_hard(db, 3)
+    names = [db.name, f"{db.name}-wal", f"{db.name}-shm"]
+    assert sorted(p.name for p in folder.iterdir()) == sorted(names)
+    return [(folder / n).read_bytes() for n in names]
+
+
+@pytest.fixture(scope="module")
+def good_copy(tmp_path_factory: pytest.TempPathFactory, seeded: bytes) -> bytes:
+    """A good copy taken apart from that store: the seeded store and one entry of its own,
+    closed, nothing beside it; 61 entries, 95 links."""
+    folder = tmp_path_factory.mktemp("good")
+    db = folder / "fleet.sqlite"
+    db.write_bytes(seeded)
+    code, _, err, _ = uasw(folder, "--db", str(db), *WRITES["record"])
+    assert code == 0, err
+    code, _, err, out = uasw(folder, "--db", str(db), "verify")
+    assert code == 0 and out.startswith("journal intact: 95 links"), (out, err)
+    assert sorted(p.name for p in folder.iterdir()) == ["fleet.sqlite"]
+    return db.read_bytes()
+
+
+def overwrite_a_page_in_wal(wal: Path, db: Path) -> None:
+    """The last frame of one page that is not a b-tree's root, overwritten in the `-wal` with
+    the bytes 0 to 255 repeated, every frame's checksum computed again as SQLite does, so SQLite
+    reads the damaged page as committed while the file alone is sound."""
+    c = sqlite3.connect(f"file:{db.as_posix()}?mode=ro&immutable=1", uri=True)
+    try:
+        roots = {int(r) for (r,) in c.execute("SELECT rootpage FROM sqlite_master")} | {1}
+    finally:
+        c.close()
+    w = bytearray(wal.read_bytes())
+    magic, _, size = struct.unpack(">III", w[:12])
+    order = ">" if magic & 1 else "<"
+    frames = list(range(32, len(w) - 24 - size + 1, 24 + size))
+    at = next(f for f in reversed(frames) if struct.unpack(">I", w[f : f + 4])[0] not in roots)
+    w[at + 24 : at + 24 + size] = (PATTERN * (size // len(PATTERN) + 1))[:size]
+
+    def checksum(chunk: bytes, s0: int, s1: int) -> tuple[int, int]:
+        for i in range(0, len(chunk), 8):
+            x0, x1 = struct.unpack(order + "II", chunk[i : i + 8])
+            s0 = (s0 + x0 + s1) & 0xFFFFFFFF
+            s1 = (s1 + x1 + s0) & 0xFFFFFFFF
+        return s0, s1
+
+    s0, s1 = struct.unpack(">II", w[24:32])
+    for f in frames:
+        s0, s1 = checksum(bytes(w[f : f + 8]), s0, s1)
+        s0, s1 = checksum(bytes(w[f + 24 : f + 24 + size]), s0, s1)
+        w[f + 16 : f + 24] = struct.pack(">II", s0, s1)
+    wal.write_bytes(bytes(w))
+
+
+def follow_the_advice(line: str, db: Path, good: bytes, aside: Path) -> None:
+    """What the refusal line says to do with a good copy: the file moved aside, with its `-wal`
+    and `-shm` when the line says so, else with them left where they are; then the good copy
+    put where the file was."""
+    aside.mkdir()
+    together = "move the file, its -wal and its -shm aside together" in line
+    for name in [db.name, f"{db.name}-wal", f"{db.name}-shm"] if together else [db.name]:
+        shutil.move(db.parent / name, aside / name)
+    db.write_bytes(good)
+
+
+RESTORES = [(w, c) for w in ("record", "verify") for c in ("file", "wal")]
+
+
+@pytest.mark.parametrize(("write", "where"), RESTORES, ids=[f"{w}-{c}" for w, c in RESTORES])
+def test_doing_what_the_refusal_says_gives_back_the_good_copy_as_it_was(
+    tmp_path: Path, stopped_with_writes: list[bytes], good_copy: bytes, write: str, where: str
+) -> None:
+    """A store a hard stop left after three writes, damaged in the file or only in the `-wal`,
+    then restored as its refusal line says. The line said to put a good copy in place of the
+    file; the `-wal` the refusal kept stayed beside it, SQLite took its pages into the good
+    copy, and `verify` called the result intact at 97 links, the good copy's own entry gone
+    (#108). The line now says the side files go aside with the file, and says where the damage
+    is: in the file, or only in the `-wal` with the file alone passing."""
+    folder = tmp_path / "store"
+    folder.mkdir()
+    db = folder / "fleet.sqlite"
+    names = [db.name, f"{db.name}-wal", f"{db.name}-shm"]
+    for name, data in zip(names, stopped_with_writes, strict=True):
+        (folder / name).write_bytes(data)
+    wal = folder / names[1]
+    if where == "file":
+        db.write_bytes(overwrite(["aircraft"])(db.read_bytes(), db))
+    else:
+        overwrite_a_page_in_wal(wal, db)
+        assert sqlite_says(db, "integrity_check") != "ok"
+    data, logged = db.read_bytes(), wal.read_bytes()
+    args = ["verify"] if write == "verify" else WRITES[write]
+    code, lines, err, out = uasw(tmp_path, "--db", str(db), *args)
+    assert "Traceback" not in err, err[-600:]
+    assert code == 1, (lines, out)
+    assert len(lines) == 1 and lines[0].startswith("refused (503): ") and CHECK in lines[0], lines
+    assert db.read_bytes() == data and wal.read_bytes() == logged
+    assert sorted(p.name for p in folder.iterdir()) == sorted(names)
+    if where == "file":
+        assert "the store file fails SQLite's integrity check" in lines[0], lines
+    else:
+        assert "the store's -wal" in lines[0] and "the file alone passes it" in lines[0], lines
+
+    aside = tmp_path / "aside"
+    follow_the_advice(lines[0], db, good_copy, aside)
+    code, _, err, out = uasw(tmp_path, "--db", str(db), "verify")
+    assert code == 0, err
+    assert out.startswith("journal intact: 95 links"), out
+    assert db.read_bytes() == good_copy
+    assert sorted(p.name for p in folder.iterdir()) == ["fleet.sqlite"]
+    # The damaged store, moved aside whole, is as the refusal left it.
+    assert (aside / names[0]).read_bytes() == data and (aside / names[1]).read_bytes() == logged
+
+
+@pytest.mark.parametrize("wal_bytes", [0, 32], ids=["empty", "header only"])
+def test_a_wal_holding_no_frames_beside_a_damaged_file(
+    tmp_path: Path, seeded: bytes, stopped_with_writes: list[bytes], wal_bytes: int
+) -> None:
+    """An empty `-wal` is removed with its `-shm` when the check closes; a `-wal` holding
+    anything, its 32-byte header alone included, is kept as it was."""
+    folder = tmp_path / "store"
+    folder.mkdir()
+    db = folder / "fleet.sqlite"
+    db.write_bytes(seeded)
+    db.write_bytes(overwrite(["aircraft"])(seeded, db))
+    wal = folder / f"{db.name}-wal"
+    wal.write_bytes(stopped_with_writes[1][:wal_bytes])
+    (folder / f"{db.name}-shm").write_bytes(stopped_with_writes[2])
+    data = db.read_bytes()
+    code, lines, err, _ = uasw(tmp_path, "--db", str(db), *WRITES["record"])
+    assert "Traceback" not in err, err[-600:]
+    assert code == 1 and len(lines) == 1 and CHECK in lines[0], lines
+    assert db.read_bytes() == data
+    if wal_bytes:
+        assert wal.read_bytes() == stopped_with_writes[1][:wal_bytes]
+        assert sorted(p.name for p in folder.iterdir()) == [
+            db.name,
+            f"{db.name}-shm",
+            wal.name,
+        ]
+    else:
+        assert sorted(p.name for p in folder.iterdir()) == [db.name]
 
 
 def test_a_sound_store_still_verifies_and_takes_writes(tmp_path: Path, seeded: bytes) -> None:
