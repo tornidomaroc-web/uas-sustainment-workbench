@@ -38,7 +38,7 @@ from uas_workbench.ledger import UnreadableRecord
 
 from .limits import max_log_mib, too_large
 from .observability import configure_logging
-from .store import DuplicateFlight, Store, StoreBusy, StoreDamaged, checked_at_rest
+from .store import AtRest, DuplicateFlight, Store, StoreBusy, StoreDamaged, checked_at_rest
 
 log = logging.getLogger("uasw.cli")
 
@@ -93,7 +93,9 @@ def open_store(path: str, *, create: bool = True, check: bool | None = None) -> 
     With `check` (by default, the commands that write; `uasw verify` and `record retract`
     pass it), an existing store file is checked whole before the store is opened on it
     (`checked_at_rest`), once per process: one that fails is refused (503) naming the cause,
-    with nothing read from it as records and nothing written (issues #104, #105)."""
+    with nothing read from it as records and nothing written (issues #104, #105), and, beside
+    a `-wal` a hard stop left, where the damage is and that the side files go aside with the
+    file (`_damaged`, issue #108)."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
@@ -102,18 +104,39 @@ def open_store(path: str, *, create: bool = True, check: bool | None = None) -> 
         )
     checking = create if check is None else check
     if checking and path != ":memory:" and path not in _checked and not _nothing_at(path):
-        with checked_at_rest(path) as problem:
-            if problem is not None:
-                raise Refused(
-                    503,
-                    f"the store file fails SQLite's integrity check ({problem}), so it is "
-                    "damaged; nothing was read from it or written to it; restore it from a good "
-                    "copy",
-                )
+        with checked_at_rest(path) as found:
+            if found is not None:
+                raise Refused(503, _damaged(found))
             _checked.add(path)
             # Opened while the check's connection is still open (`checked_at_rest`).
             return _open(path, create)
     return _open(path, create)
+
+
+def _damaged(found: AtRest) -> str:
+    """The refusal of a store `checked_at_rest` found damaged, and what to do with a good copy.
+    With a `-wal` a hard stop left beside the file, it says where the damage is (in the file,
+    or only in the `-wal`, the file alone passing) and that the `-wal` and `-shm` go aside with
+    the file: put beside them, a good copy would take the `-wal`'s pages in (issue #108)."""
+    if not found.wal_kept:
+        return (
+            f"the store file fails SQLite's integrity check ({found.problem}), so it is "
+            "damaged; nothing was read from it or written to it; restore it from a good copy"
+        )
+    if found.file_alone_passes:
+        where = (
+            f"the store's -wal, which a hard stop left beside the file, fails SQLite's integrity "
+            f"check ({found.problem}) where the file alone passes it, so the store is damaged in "
+            "writes held only in the -wal"
+        )
+    else:
+        where = f"the store file fails SQLite's integrity check ({found.problem}), so it is damaged"
+    return (
+        f"{where}; nothing was read from the store or written to it, and the -wal is kept as it "
+        "was; the -wal and -shm belong to the damaged store: move the file, its -wal and its "
+        "-shm aside together, then put a good copy where the file was (a good copy put beside "
+        "that -wal would take its pages in)"
+    )
 
 
 def _open(path: str, create: bool) -> Store:

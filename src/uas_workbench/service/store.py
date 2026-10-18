@@ -1139,8 +1139,41 @@ def _sqlite_check(check: sqlite3.Connection, pragma: str) -> str | None:
     return str(rows[0][0]) if rows else "no answer"
 
 
+@dataclass(frozen=True)
+class AtRest:
+    """What `checked_at_rest` found wrong with a store: SQLite's finding on one line; whether
+    a `-wal` holding anything was beside the file and is kept as it was; and, when one was,
+    whether the file alone, without it, passes `integrity_check`, so the damage is only in the
+    `-wal` (issue #108)."""
+
+    problem: str
+    wal_kept: bool
+    file_alone_passes: bool
+
+
+def _file_alone_check(path: str) -> str | None:
+    """SQLite's `integrity_check` on the file's own bytes, without the `-wal` beside it: the
+    bytes are read into memory and checked there, so nothing beside the file is opened and
+    nothing is written. The header's WAL mark (bytes 18 and 19) is cleared in the copy, as a
+    database in memory is not in WAL mode. Any failure to read or check the copy is a problem."""
+    try:
+        data = bytearray(Path(path).read_bytes())
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    if data[18:20] == b"\x02\x02":
+        data[18:20] = b"\x01\x01"
+    memory = sqlite3.connect(":memory:")
+    try:
+        memory.deserialize(data)
+        return _sqlite_check(memory, "integrity_check")
+    except sqlite3.Error as exc:
+        return str(exc)
+    finally:
+        memory.close()
+
+
 @contextlib.contextmanager
-def checked_at_rest(path: str) -> Iterator[str | None]:
+def checked_at_rest(path: str) -> Iterator[AtRest | None]:
     """What is wrong with the existing store file at `path` by SQLite's
     `PRAGMA integrity_check`, run before a store is opened on it, or None when it passes (issues
     #104, #105). Every command that writes runs it when it opens an existing store, and
@@ -1157,11 +1190,16 @@ def checked_at_rest(path: str) -> Iterator[str | None]:
     connection opened after that cannot write it and saw every read as a new state of the store
     ("never stood still"; met on Linux CI, where a read-only store is mode 0400).
 
-    A `-wal` holding pages beside the file (a hard stop leaves one, with its `-shm`) is left as
-    it was: SQLite folds the WAL into the file and removes the side files when its last
-    connection closes, and on a refusal that was the check's, which wrote to the damaged file
-    and took away the `-wal`. An empty `-wal`, or none, holds nothing to fold in, and the side
-    files are removed when the check closes, as before.
+    A `-wal` holding anything beside the file (a hard stop leaves one, with its `-shm`), its
+    header alone included, is left as it was: SQLite folds the WAL into the file and removes
+    the side files when its last connection closes, and on a refusal that was the check's,
+    which wrote to the damaged file and took away the `-wal`. An empty `-wal`, or none, holds
+    nothing to fold in, and the side files are removed when the check closes, as before. The
+    `-shm` is SQLite's index of the `-wal`, and the check's read rebuilds it. When such a `-wal`
+    is kept and the check fails, the file alone is checked too, so the refusal can say whether
+    the damage is only in the `-wal`: the `-wal` belongs to the damaged store, and a good copy
+    put beside it would take its pages in (issue #108); SQLite records nothing in the file that
+    ties a `-wal` to it, so a `-wal` left beside another file cannot be told apart.
 
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
@@ -1187,7 +1225,11 @@ def checked_at_rest(path: str) -> Iterator[str | None]:
                 sqlite3.SQLITE_NOTADB,
             )
             problem = str(exc) if damaged else None
-        yield None if problem is None else " ".join(problem.split())
+        if problem is None:
+            yield None
+        else:
+            alone_passes = left_beside and _file_alone_check(path) is None
+            yield AtRest(" ".join(problem.split()), left_beside, alone_passes)
     finally:
         check.close()
 
