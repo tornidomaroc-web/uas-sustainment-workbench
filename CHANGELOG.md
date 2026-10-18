@@ -6,9 +6,10 @@
   (closes #104, closes #105): `seed`, `serve`, `ingest`, `record` and `record retract` run
   SQLite's `PRAGMA integrity_check` when they open an existing store, and `verify` before its
   walk, so a file that fails is one `refused (503)` line naming SQLite's finding, exit 1, the
-  file unchanged, where `record` and `ingest` wrote and exited 0 when the damage missed the
-  pages they read and `verify` reported the journal intact on a file whose `aircraft` page, an
-  index or `sqlite_sequence` was overwritten; the check costs about 1 ms on the seeded store
+  file unchanged and a `-wal` a hard stop left beside it neither folded in nor removed, where
+  `record` and `ingest` wrote and exited 0 when the damage missed the pages they read and
+  `verify` reported the journal intact on a file whose `aircraft` page, an index or
+  `sqlite_sequence` was overwritten; the check costs about 1 ms on the seeded store
   and 25 ms at 9.7 MiB. Commands that only read do not run it, nor does `GET /journal/verify`.
 
 ## 0.6.2 (2026-10-18)

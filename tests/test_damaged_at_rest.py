@@ -11,7 +11,8 @@ was overwritten.
 Every command that writes now runs SQLite's `PRAGMA integrity_check` when it opens an existing
 store file, before anything else touches it, and `uasw verify` runs it before the walk: a file
 that fails is one `refused (503)` line naming the cause, exit 1, the file byte for byte as it
-was and nothing left beside it. `integrity_check` rather than `quick_check`, the check the
+was and nothing left beside it, or, on a store a hard stop left with `-wal` and `-shm`, both
+side files as they were. `integrity_check` rather than `quick_check`, the check the
 service runs on a file changed under it: it also finds an index whose keys no longer match
 their rows, which `quick_check` passes (the last case below).
 
@@ -268,6 +269,80 @@ def test_verify_reports_a_store_damaged_at_rest_apart_from_the_chain(
     code, lines, err, out = uasw(tmp_path, "--db", str(db), *args)
     assert "intact" not in out + err and "unchanged" not in out + err, (out, err)
     assert_refused_untouched(db, data, code, lines, err, out)
+
+
+def stopped_hard(db: Path) -> None:
+    """The flights index rewritten by a process that then ends without closing, as a hard stop
+    leaves a store: its pages only in the `-wal`, with the `-shm` beside it."""
+    child = (
+        "import os, sqlite3, sys; c = sqlite3.connect(sys.argv[1]); "
+        "c.execute('PRAGMA wal_autocheckpoint = 0'); "
+        "c.execute('REINDEX sqlite_autoindex_flights_1'); c.commit(); os._exit(0)"
+    )
+    subprocess.run([sys.executable, "-c", child, str(db)], check=True, timeout=60)
+
+
+def edit_index_key_in_wal(wal: Path) -> None:
+    """`edit_index_key`, in the `-wal`'s copy of the page: the frame's checksum and every later
+    one's computed again as SQLite does, so SQLite reads the edited page as committed."""
+    w = bytearray(wal.read_bytes())
+    magic, _, size = struct.unpack(">III", w[:12])
+    order = ">" if magic & 1 else "<"
+
+    def checksum(chunk: bytes, s0: int, s1: int) -> tuple[int, int]:
+        for i in range(0, len(chunk), 8):
+            x0, x1 = struct.unpack(order + "II", chunk[i : i + 8])
+            s0 = (s0 + x0 + s1) & 0xFFFFFFFF
+            s1 = (s1 + x1 + s0) & 0xFFFFFFFF
+        return s0, s1
+
+    s0, s1 = struct.unpack(">II", w[24:32])
+    edited, at = False, 32
+    while at + 24 + size <= len(w):
+        key = w.find(b"SYN-02SYN-02-", at + 24, at + 24 + size)
+        if key >= 0 and not edited:
+            w[key + 10] = ord("1")
+            edited = True
+        s0, s1 = checksum(bytes(w[at : at + 8]), s0, s1)
+        s0, s1 = checksum(bytes(w[at + 24 : at + 24 + size]), s0, s1)
+        w[at + 16 : at + 24] = struct.pack(">II", s0, s1)
+        at += 24 + size
+    assert edited, "no SYN-02 key in the -wal"
+    wal.write_bytes(bytes(w))
+
+
+SIDE_FILES = [(w, c) for w in ("record", "ingest", "verify") for c in ("file", "wal")]
+
+
+@pytest.mark.parametrize(("write", "where"), SIDE_FILES, ids=[f"{w}-{c}" for w, c in SIDE_FILES])
+def test_a_store_stopped_hard_and_damaged_is_refused_with_its_side_files_as_they_were(
+    tmp_path: Path, seeded: bytes, write: str, where: str
+) -> None:
+    """A store a hard stop left with `-wal` and `-shm`, damaged in the file or only in the
+    `-wal`: refused, with the file and the `-wal` byte for byte as they were and both side files
+    still there. SQLite folds the WAL into the file and removes the side files when its last
+    connection closes; the check's connection was that one on a refusal, so it wrote to the
+    damaged file and took away the `-wal` a hard stop left."""
+    folder = tmp_path / "store"
+    folder.mkdir()
+    db = folder / "fleet.sqlite"
+    db.write_bytes(seeded)
+    stopped_hard(db)
+    wal = folder / "fleet.sqlite-wal"
+    assert sorted(p.name for p in folder.iterdir()) == [db.name, f"{db.name}-shm", wal.name]
+    if where == "file":
+        db.write_bytes(overwrite(["aircraft"])(db.read_bytes(), db))
+    else:
+        edit_index_key_in_wal(wal)
+    data, logged = db.read_bytes(), wal.read_bytes()
+    args = ["verify"] if write == "verify" else WRITES[write]
+    code, lines, err, out = uasw(tmp_path, "--db", str(db), *args)
+    assert "Traceback" not in err, err[-600:]
+    assert code == 1, (lines, out)
+    assert len(lines) == 1 and lines[0].startswith("refused (503): ") and CHECK in lines[0], lines
+    assert db.read_bytes() == data
+    assert wal.read_bytes() == logged
+    assert sorted(p.name for p in folder.iterdir()) == [db.name, f"{db.name}-shm", wal.name]
 
 
 def test_a_sound_store_still_verifies_and_takes_writes(tmp_path: Path, seeded: bytes) -> None:
