@@ -220,17 +220,21 @@ there and calling it intact; so do the other commands that only read, and `uasw 
 `uasw record` refused on such a path makes no store there either: a store is made by a write
 that is accepted, or by `uasw seed` and `uasw serve`. The walk reads only the journaled rows,
 so `uasw verify` first checks the file whole with SQLite's `PRAGMA integrity_check`, and so
-does every command that writes (`seed`, `serve`, `ingest`, `record`, `record retract`) when it
-opens an existing store: a file damaged at rest, in pages the walk or the write would not have
-read, is one `refused (503)` line naming SQLite's finding, exit 1, with nothing written and no
-`intact` or `unchanged` line (#104, #105). A `-wal` and `-shm` a hard stop left beside such a
+does every other command when it opens an existing store, those that write (`seed`, `serve`,
+`ingest`, `record`, `record retract`) and those that only read (`records`, `evidence`,
+`fleet-records`, `export-static`, `record history`): a file damaged at rest, in pages the walk,
+the write or the read would not have read, is one `refused (503)` line naming SQLite's
+finding, exit 1, with nothing written and no `intact` or `unchanged` line (#104, #105, #107).
+A command that only reads folds nothing into the file: a `-wal` a hard stop left is still
+there, byte for byte, after it has answered or refused (#107). A `-wal` and `-shm` a hard stop left beside such a
 file are kept, and belong to it: the line says whether the damage is in the file or only in
 the `-wal`, and to move the file, its `-wal` and its `-shm` aside together before putting a
 good copy where the file was, since a good copy put beside that `-wal` takes its pages in
 (#108). A running service whose store
-file is overwritten, truncated, replaced or removed from outside refuses every read and write
-of the store with 503 naming the cause, `/health` included, rather than serving what it held
-in memory; restored in place, it serves the restored file, provided the service had no writes
+file is overwritten, truncated, replaced or removed from outside, or has one index key edited
+in place, refuses every read and write of the store with 503 naming the cause, `/health`
+included, rather than serving what it held in memory: it checks a file changed under it with
+`PRAGMA integrity_check`, and `GET /journal/verify` runs that check before its walk (#107); restored in place, it serves the restored file, provided the service had no writes
 of its own waiting in its `-wal` file (restore with the service stopped; see
 [LIMITS.md](LIMITS.md)). `GET /journal/verify`
 needs the write token, or comes from this machine when none is set, as the writes do: it

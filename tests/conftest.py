@@ -33,8 +33,8 @@ def _closing_every_store() -> Iterator[None]:
     opened: list[Store] = []
     init = Store.__init__
 
-    def tracking_init(self: Store, path: str = ":memory:") -> None:
-        init(self, path)
+    def tracking_init(self: Store, path: str = ":memory:", *, reads_only: bool = False) -> None:
+        init(self, path, reads_only=reads_only)
         opened.append(self)
 
     with pytest.MonkeyPatch.context() as patch:

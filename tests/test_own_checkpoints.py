@@ -1,13 +1,14 @@
 """The store's own checkpoints are not changes from outside (issue #79).
 
-Since PR #76 the store looks at its file (one `stat`) before every read and write and, when
-the file is not as last seen, checks it (`PRAGMA quick_check`) while every other read and write
-waits, then moves the connection generation: every connection is opened afresh and every kept
-answer (the journal walk, what `readable` holds, the projection) is computed again. Under WAL
-the store file changes only when the WAL is checkpointed into it, and SQLite checkpoints
-automatically on the commit that takes the WAL past about 1,000 pages, which is the store's own
-commit. So the store's own writing was taken for a change from outside: on main 096f335, 3,000
-writes through one store gave 13 such moves, each followed by a walk of the whole journal.
+Since PR #76 the store looks at its file (one `stat`) before every read and write and, when the
+file is not as last seen, checks it (`PRAGMA quick_check`, `integrity_check` since #107) while
+every other read and write waits, then moves the connection generation: every connection is
+opened afresh and every kept answer (the journal walk, what `readable` holds, the projection) is
+computed again. Under WAL the store file changes only when the WAL is checkpointed into it, and
+SQLite checkpoints automatically on the commit that takes the WAL past about 1,000 pages, which
+is the store's own commit. So the store's own writing was taken for a change from outside: on
+main 096f335, 3,000 writes through one store gave 13 such moves, each followed by a walk of the
+whole journal.
 
 The store's own commit is now made under the lock its look at the file takes: the file is
 looked at right before the commit and right after it, and a change between the two is the

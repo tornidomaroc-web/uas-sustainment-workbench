@@ -879,7 +879,7 @@ def create_app(
     app.add_exception_handler(StoreBusy, busy)
 
     async def damaged(request: Request, exc: Exception) -> JSONResponse:
-        """The store file changed outside the service and fails SQLite's check, or was
+        """The store file changed outside the service and fails SQLite's integrity check, or was
         replaced or removed, while the service ran (part of issue #73): 503 naming it, on
         every route that reads or writes the store, /health included, nothing written."""
         assert isinstance(exc, StoreDamaged)
@@ -1240,6 +1240,10 @@ def create_app(
         call, which is the costliest read the service has (LIMITS.md gives the measured cost),
         and only who may write may ask for it. The walk is a snapshot on the request thread's own
         reading connection, so a write made meanwhile lands at once and is in the next walk."""
+        # The file whole first, as `uasw verify` checks it before its walk: the walk reads only
+        # the journaled rows, and a file failing SQLite's integrity check is refused (503) from
+        # then on (issue #107). A comment, not the docstring: the OpenAPI document stays as it was.
+        store.check_whole()
         result = store.verify_journal(head)
         return JournalVerifyOut(
             ok=result.ok,

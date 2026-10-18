@@ -48,10 +48,13 @@ checked ledger write takes that lock before its check (`writing`), so it is refu
 nothing checked. An open that has to write (the first of a store 0.5.x left) waits and is
 refused the same way. While a store is open its file has `-wal` and `-shm` beside
 it; `close` closes every reading connection, checkpoints the WAL into the file and closes the
-writing one, so when it was the last store on the file SQLite removes both and a closed store
-is one file. A store in memory has no file, keeps the mode SQLite gives it, and has one
-connection: a snapshot there holds the write lock for its length, its label is the count of
-the store's own commits, and a write issued meanwhile waits for it.
+writing one, so when it was the last store on the file SQLite removes both and a closed store is
+one file. A store opened for reads only (`reads_only`, the commands that only read) never
+checkpoints, and beside a `-wal` holding anything as it opens (one a hard stop left, or a
+running service's) none of its connections checkpoints as it closes either, so it leaves that
+`-wal` as it found it (issue #107). A store in memory has no file, keeps the mode SQLite gives
+it, and has one connection: a snapshot there holds the write lock for its length, its label is
+the count of the store's own commits, and a write issued meanwhile waits for it.
 
 Every record is read through one path (`_entry`, `_flight`), and a record that cannot be
 read there (not JSON, nested too deep for the parser, a field missing or of the wrong type,
@@ -228,8 +231,16 @@ class _BeforeCommit:
 
 
 class Store:
-    def __init__(self, path: str = ":memory:") -> None:
+    def __init__(self, path: str = ":memory:", *, reads_only: bool = False) -> None:
         self._path = path
+        # Opened for reads only, the store never checkpoints (`close`), and beside a `-wal`
+        # holding anything as it opens, every connection it opens is told not to checkpoint as
+        # it closes, which SQLite does when the last connection to the file closes: a read
+        # folded a `-wal` a hard stop left into a damaged file and removed it (issue #107).
+        # Beside none, or an empty one, its reads add nothing to fold, and the last connection
+        # to close removes the side files, so a closed store is still one file.
+        self._reads_only = reads_only
+        self._keep_wal = reads_only and path != ":memory:" and _holds_wal(path)
         # The writing connection, used under the write lock only. The lock is re-entrant: a
         # store in memory has this one connection, so its reads take the lock too, and a read
         # made while the lock is held (a write that reads first) must not wait for itself.
@@ -295,17 +306,19 @@ class Store:
         first, then the writing one, after the WAL is checkpointed into the file, so that when
         this was the last connection the file alone holds every committed write and SQLite
         removes `-wal` and `-shm`; another connection still open keeps them, and SQLite does
-        the same when that one closes. Called once the threads that read are done (a server
-        after it has stopped, a command when it ends); a read after it raises
-        `sqlite3.ProgrammingError`, as on a closed connection. Closing a closed store does
-        nothing."""
+        the same when that one closes. A store opened for reads only runs no checkpoint here,
+        and leaves a `-wal` it found holding anything as it was (`reads_only`). Called once the
+        threads that read are done (a server after it has stopped, a command when it ends); a
+        read after it raises `sqlite3.ProgrammingError`, as on a closed connection. Closing a
+        closed store does nothing."""
         self._closed = True
         with self._readers_lock:
             readers, self._readers = self._readers, []
         for reader in readers:
             reader.close()
-        with contextlib.suppress(sqlite3.Error):
-            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        if not self._reads_only:
+            with contextlib.suppress(sqlite3.Error):
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._db.close()
 
     def _wal(self) -> None:
@@ -328,6 +341,8 @@ class Store:
 
     def _open_writer(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, check_same_thread=False)
+        if self._keep_wal:
+            connection.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
         connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA synchronous = FULL")
@@ -394,7 +409,7 @@ class Store:
         try:
             check = _check_connection(self._path)
             try:
-                problem = _sqlite_check(check, "quick_check")
+                problem = _sqlite_check(check, "integrity_check")
             finally:
                 check.close()
         except sqlite3.Error as exc:
@@ -402,9 +417,28 @@ class Store:
         if problem is None:
             return None
         return (
-            f"the store file was changed outside the service and fails SQLite's check "
-            f"({problem}); restore it from a good copy"
+            f"the store file was changed outside the service and fails SQLite's integrity "
+            f"check ({' '.join(problem.split())}); restore it from a good copy"
         )
+
+    def check_whole(self) -> None:
+        """SQLite's `integrity_check` on the store file whole, on a connection of its own, as
+        `uasw verify` runs it before its walk; `GET /journal/verify` runs it before its walk
+        (issue #107). The look at the file before every read sees only a file whose `stat`
+        changed, and a change within the clock tick of the last one, at the same size, leaves
+        it as it was. A file that fails is refused from then on as one damaged under the store
+        (`StoreDamaged`), every read and write alike, until it changes again and passes. Takes
+        the lock every look at the file takes, never the write lock."""
+        if self._labeller is None:
+            return
+        self._watch()
+        with self._watch_lock:
+            damaged = self._damage_in(self._seen())
+            if damaged is not None:
+                self._damaged = damaged
+                self._checked_at = time.monotonic()
+        if damaged is not None:
+            raise StoreDamaged(damaged)
 
     def _ready_to_write(self) -> None:
         """Under the write lock, before a write that opens its own transaction: the file is
@@ -424,6 +458,8 @@ class Store:
         `ROLLBACK` below bound exactly one read transaction; query-only, so nothing is ever
         written through it; closable from another thread, which is how `close` closes it."""
         connection = sqlite3.connect(self._path, check_same_thread=False, isolation_level=None)
+        if self._keep_wal:
+            connection.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
         connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         connection.execute("PRAGMA query_only = ON")
         with self._readers_lock:
@@ -1122,6 +1158,14 @@ def _aircraft_row(aircraft: Aircraft) -> tuple[object, ...]:
     )
 
 
+def _holds_wal(path: str) -> bool:
+    """Whether a `-wal` holding anything, its header alone included, is beside the file."""
+    try:
+        return os.path.getsize(path + "-wal") > 0
+    except OSError:
+        return False
+
+
 def _check_connection(path: str) -> sqlite3.Connection:
     """A connection of its own to the file at `path`, for SQLite's check; it writes nothing."""
     uri = Path(path).resolve().as_uri() + "?mode=rw"
@@ -1174,13 +1218,13 @@ def _file_alone_check(path: str) -> str | None:
 def checked_at_rest(path: str) -> Iterator[AtRest | None]:
     """What is wrong with the existing store file at `path` by SQLite's
     `PRAGMA integrity_check`, run before a store is opened on it, or None when it passes (issues
-    #104, #105). Every command that writes runs it when it opens an existing store, and
-    `uasw verify` before the walk: the journal chain covers only the journaled rows, and a
-    write's own reads only the pages they touch, so damage made at rest elsewhere in the file
-    was written beside and reported intact. `integrity_check` rather than the `quick_check` the
-    open store runs on a file changed under it: it also finds an index whose keys no longer
-    match their rows, which `quick_check` passes, for somewhat more time on a large store
-    (LIMITS.md gives both). It writes nothing.
+    #104, #105). Every command runs it when it opens an existing store, those that only read
+    included (issue #107), and `uasw verify` before the walk: the journal chain covers only the
+    journaled rows, and a write's own reads only the pages they touch, so damage made at rest
+    elsewhere in the file was written beside and reported intact. `integrity_check` rather than
+    SQLite's quicker `quick_check`: it also finds an index whose keys no longer match their
+    rows, which `quick_check` passes, for somewhat more time on a large store (LIMITS.md gives
+    both). It writes nothing.
 
     The check's connection stays open while the block runs, so a store opened inside it
     shares the `-shm` file it made. On a file this process may not write, SQLite makes `-shm`
@@ -1202,10 +1246,7 @@ def checked_at_rest(path: str) -> Iterator[AtRest | None]:
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
     open, which refuses it as before. SQLite's report can span lines; it is given on one."""
-    try:
-        left_beside = os.path.getsize(path + "-wal") > 0
-    except OSError:
-        left_beside = False
+    left_beside = _holds_wal(path)
     try:
         check = _check_connection(path)
     except sqlite3.Error:
