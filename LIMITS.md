@@ -669,7 +669,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   intact (issues #104, #105). Now `seed`, `serve`, `ingest`, `record` and `record retract` run
   SQLite's `PRAGMA integrity_check` on an existing store file before the store is opened on it,
   and `verify` before its walk: a file that fails is one `refused (503)` line naming SQLite's
-  finding, exit 1, the file byte for byte as it was and no `-wal` or `-shm` left beside it.
+  finding, exit 1, the file byte for byte as it was. A `-wal` holding pages that a hard stop
+  left beside it is left as it was, with its `-shm`, rather than folded into the damaged file
+  and removed, as the check's connection did when it closed last (found on Windows by hand, a
+  `uasw serve` stopped hard after three writes, then the `aircraft` pages overwritten; the
+  check reads the pages held in the `-wal`, so an index key edited only there is refused too);
+  with no such `-wal`, no `-wal` or `-shm` is left, except beside a file marked read-only,
+  where SQLite's side files stay as for any open of it (above).
   `integrity_check` rather than the `quick_check` the running service uses on a file changed
   under it: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on

@@ -1157,15 +1157,27 @@ def checked_at_rest(path: str) -> Iterator[str | None]:
     connection opened after that cannot write it and saw every read as a new state of the store
     ("never stood still"; met on Linux CI, where a read-only store is mode 0400).
 
+    A `-wal` holding pages beside the file (a hard stop leaves one, with its `-shm`) is left as
+    it was: SQLite folds the WAL into the file and removes the side files when its last
+    connection closes, and on a refusal that was the check's, which wrote to the damaged file
+    and took away the `-wal`. An empty `-wal`, or none, holds nothing to fold in, and the side
+    files are removed when the check closes, as before.
+
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
     open, which refuses it as before. SQLite's report can span lines; it is given on one."""
+    try:
+        left_beside = os.path.getsize(path + "-wal") > 0
+    except OSError:
+        left_beside = False
     try:
         check = _check_connection(path)
     except sqlite3.Error:
         yield None
         return
     try:
+        if left_beside:
+            check.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
         try:
             problem = _sqlite_check(check, "integrity_check")
         except sqlite3.DatabaseError as exc:
