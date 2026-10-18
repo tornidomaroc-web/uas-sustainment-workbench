@@ -7,12 +7,12 @@ and `/health` "ok"; the first page read from disk then gave a 500, and after the
 restored from a good copy 16 of 22 reads still answered 500 from the pages read meanwhile.
 
 The store now looks at its file (one `stat`: identity, size, time of last change, mode) before
-every read and every write. When the file changed and SQLite did not change it, the store
-checks it (`PRAGMA quick_check` on a connection of its own): damaged, every route that reads
-the store answers 503 naming the cause, `/health` included, and every write is refused with
-nothing written; sound (a store restored in place), every connection is opened afresh and
-every kept answer computed again. A store file replaced or removed while the service runs is
-refused until the service is restarted.
+every read and every write. When the file changed and SQLite did not change it, the store checks
+it (`PRAGMA integrity_check` on a connection of its own, `quick_check` before #107): damaged,
+every route that reads the store answers 503 naming the cause, `/health` included, and every
+write is refused with nothing written; sound (a store restored in place), every connection is
+opened afresh and every kept answer computed again. A store file replaced or removed while the
+service runs is refused until the service is restarted.
 
 Every case damages a real store file under a live `uasw serve`, which logs to a file. Windows
 refuses to replace or remove a file the service holds open, so on Windows those two cases

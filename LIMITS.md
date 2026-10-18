@@ -347,9 +347,9 @@ field-level tables. This file is about what that means for a maintenance tool.
     automatic indexes) and with one key of the flights index edited in place: each is refused.
     The check is SQLite's, of the file's structure and of every index against its rows; a row
     rewritten in a well-formed page is the walk's to find, and a change to an aircraft row is
-    found by neither. `GET /journal/verify` does not run it: `uasw serve` runs it once when it
-    starts, and while it runs checks a file changed under it with `quick_check` (below), which
-    passes an index key edited in place.
+    found by neither. `GET /journal/verify` runs it too, before its walk, on a connection of its
+    own, and a file that fails it is refused (503) on every route from then on (issue #107);
+    `uasw serve` also runs it when it starts and on a file changed under it (below).
   - *Before the migration.* A store written by 0.5.x is journaled when this version first opens
     it, each row linked as found after a note that says so, with the counts and the time; a
     change made to it before that is linked as found.
@@ -376,7 +376,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   rollback-journal mode it failed with the database locked (the defect PR #57 met). What WAL
   changes and what it does not, each checked by `tests/test_wal.py`:
   - *`GET /journal/verify` stays guarded as the writes are*, token or loopback, though it makes
-    nothing wait: it is the costliest read the service has, every row on every call.
+    nothing wait: it is the costliest read the service has, every row on every call, and since
+    issue #107 SQLite's `integrity_check` on the whole file before the walk (measured through
+    `uasw serve`, medians: 5.6 ms against 4.6 ms before on the seeded store, 203 against 155 ms
+    at 9.4 MiB, 1.71 against 1.47 s at 83 MiB).
   - *One writer at a time, as before.* A second writer (`uasw record` beside a running service)
     waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then is refused with 503
     (`StoreBusy`); a refused commit is rolled back and moves nothing kept. A ledger entry takes that
@@ -495,10 +498,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   meanwhile (471 ms, 72 answered); 3.36 s with 32 (1.62 s); with 8 readers asking once a
   second each, 25 ms (25 ms), 213 ms at the 90th percentile (341 ms). Nothing in the service
   limits a caller's rate, which is the reverse proxy's or the operator's to do. A
-  `wal_checkpoint(TRUNCATE)`, which every `uasw` command and every store
-  runs on close, moves other connections' `data_version` as a commit does, so a `uasw verify`
-  run beside the service makes the service walk the journal and read the whole store once more
-  on its next call, to the same answers. The reading connections are closed by `Store.close`,
+  `wal_checkpoint(TRUNCATE)`, which every `uasw` command that writes and every store the
+  service opens runs on close, moves other connections' `data_version` as a commit does, so a
+  `uasw record` run beside the service makes the service walk the journal and read the whole
+  store once more on its next call. A command that only reads runs none and commits nothing
+  (issue #107), so it does not move them. The reading connections are closed by `Store.close`,
   from the closing thread, after the threads that read are done: `uasw` closes its store when
   the command ends, `uasw serve` after the server has stopped; a read after the close is refused
   as a read on a closed connection is, and a closed store is one file, as before. A store in
@@ -583,9 +587,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   does not see a file changed outside it: its connections go on serving the pages they hold.
   So the store looks at its file (one `stat`, about 6 µs here: which file, size, time of last
   change, permissions) before every read and every write, and when the file changed and SQLite
-  did not make the change, it runs `PRAGMA quick_check` on a connection of its own. A file that
-  fails it (overwritten, truncated, pages overwritten) is refused on every route that reads or
-  writes the store, `/health` included, with 503 naming the cause; `/metrics`, which reads no
+  did not make the change, it runs `PRAGMA integrity_check` on a connection of its own, which
+  also finds an index key edited in place: `quick_check`, which it ran before issue #107, passed
+  one, and the service answered `GET /journal/verify` ok and wrote an entry into that file. A
+  file that fails it (overwritten, truncated, pages overwritten, an index key edited) is
+  refused on every route that reads or writes the store, `/health` included, with 503 naming the cause; `/metrics`, which reads no
   store, still answers. While the check runs, every other read and write waits for its
   verdict. A file restored in place is checked again and, sound, served: every
   connection is opened afresh, so no page read from the damaged file is served, and every kept
@@ -601,7 +607,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   with 503. Anything else SQLite refuses on the file is a 503 with SQLite's sentence, never a
   500. What this does not catch: a change landing within the same clock tick (about 15 ms on
   Windows) as the change last seen, at the same size, is seen only at the next change, which
-  may be the store's own next checkpoint; a damaged file is looked at again once a second, so
+  may be the store's own next checkpoint, or at the next `GET /journal/verify`, which runs the
+  check whatever the look says and has the file refused from then on when it fails; a damaged file is looked at again once a second, so
   a restore is always seen within a second. Nor damage to a page the `-wal` file holds a newer
   copy of: SQLite reads that page from the `-wal` file, so the check passes, and the next
   checkpoint writes the page over the damage (measured on 0.6.1 as on this version: pages
@@ -642,10 +649,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   computed again; the two threads read 2.5 to 2.9 times as often, and the `-wal` file stayed at
   3.7 MiB where 0.6.1 left it at 6.0 and 19 MiB. A legitimate change from outside
   (another `uasw` command's commit and the checkpoint its close runs) is still one: one
-  `quick_check` and the connections opened afresh, besides the journal walk its commit costs
+  `integrity_check` and the connections opened afresh, besides the journal walk its commit costs
   anyway (ten `uasw record` processes beside one store: ten checks and ten reopenings, on 0.6.1
   and on this version), since one `stat` cannot tell another connection's checkpoint from a
-  file restored in place. The check is about 2 ms per MB of store here (18 ms at 9 MB); while it
+  file restored in place. The check is about 3 ms per MiB of store here: on a connection of its
+  own, 0.9 ms on the seeded store, 28 ms at 9.4 MiB and 257 ms at 83 MiB, where `quick_check`
+  took 0.8, 27 and 230 ms (Windows, Python 3.12.10 with SQLite 3.49.1, 2026-10-18, medians of
+  15); through `uasw serve`, the first `/health` after the file's time of last change moved
+  took 112 ms at 9.4 MiB and 1.0 s at 83 MiB, 13 and 41 ms more than with `quick_check`, the
+  rest being the walk and the whole-store read every change from outside costs. While it
   runs, every other read and write that meets the change waits for it, the store's own
   checkpoint included, since a read let through meanwhile could read a damaged file; a damaged
   store is checked at most once a second, however many requests meet it. The checkpoint's
@@ -666,9 +678,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   and exited 0 on a seeded store whose `flights` pages were overwritten while no process held
   it, and `uasw ingest` did the same with only the `entries` pages or only `sqlite_sequence`
   overwritten; every later `verify` then refused the file, or, for `sqlite_sequence`, called it
-  intact (issues #104, #105). Now `seed`, `serve`, `ingest`, `record` and `record retract` run
-  SQLite's `PRAGMA integrity_check` on an existing store file before the store is opened on it,
-  and `verify` before its walk: a file that fails is one `refused (503)` line naming SQLite's
+  intact (issues #104, #105). Now every command runs SQLite's `PRAGMA integrity_check` on an
+  existing store file before the store is opened on it: `seed`, `serve`, `ingest`, `record`
+  and `record retract`, `verify` before its walk, and the commands that only read (`records`,
+  `evidence`, `fleet-records`, `export-static`, `record history`, issue #107): a file that fails is one `refused (503)` line naming SQLite's
   finding, exit 1, the file byte for byte as it was. A `-wal` that a hard stop left beside it
   holding anything, its 32-byte header alone included, stays byte for byte as it was, with
   its `-shm` beside it, rather than folded into the damaged file and removed, as the check's
@@ -700,8 +713,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   ended the command in a `MemoryError` traceback, past what SQLite allocates at once; read in
   place, it took 2 MiB more at 115 MiB, 1033 MiB and 2113 MiB alike, and `verify`'s refusal
   of the 2113 MiB store took 9.7 to 9.9 s, where it took 2.8 s without the second check.
-  `integrity_check` rather than the `quick_check` the running service uses on a file changed
-  under it: both found every b-tree's pages overwritten in turn on the seeded store, and
+  A hard stop during a checkpoint leaves the file part-written and the `-wal` whole: measured
+  on Windows (2026-10-18), the store's own checkpoint after one batch of 186 MiB took 1.6 s,
+  and stopped hard 40, 200 and 600 ms into it the file held 9.5, 49 and 119 of its 194 MiB.
+  The store with its `-wal` then passes the check and the commands that only read answered
+  (`journal intact: 120094 links`) with the file and the `-wal` as they were; the next write
+  folded the `-wal` in and `verify` called the store intact at 120095 links. The file alone
+  fails ("database disk image is malformed") until that fold, so when such a store is also
+  damaged in its `-wal`, the line says "the store file fails SQLite's integrity check" where
+  the damage is only in the `-wal`; what it says to do with the three files holds as written.
+  `integrity_check` rather than SQLite's quicker `quick_check`: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on
   Windows (2026-10-18, a connection of its own, medians; Python 3.12 with SQLite 3.49.1, 3.14
   with 3.50.4): 0.7 to 0.9 ms on the seeded store (0.1 MiB), 25 to 27 ms at 9.7 MiB (85 times
@@ -711,12 +732,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   first `/health` in 1.0 s on this version and 1.3 s on 0.6.2, and `record`, `ingest` and
   `verify` took 0.4 s and 0.6 to 0.8 s; on the 9.7 MiB store `serve` started in 1.5 s and 2.1 s,
   and `record`, `ingest` and `verify` took 59 to 68 ms longer than on 0.6.2. Reads through a
-  running service do not run it and take no new lock: `/health`, `/aircraft`, `/fleet/due` and
+  running service run it only after the file changed under it (the bullet above) and take no
+  new lock: `/health`, `/aircraft`, `/fleet/due` and
   `/aircraft/SYN-04/due` answered within a millisecond of 0.6.2 on the seeded store. What it
-  does not cover: commands that only read (`evidence`, `records`, `fleet-records`,
-  `export-static`, `record history`) do not run it; a file damaged after the check, while the
-  command runs, is left to the open store's look at its file, as in the bullet above; and a row rewritten inside a well-formed page
-  passes it (the journal walk finds that in a journaled row).
+  does not cover: a file damaged after the check, while the command runs, is left to the open
+  store's look at its file, as in the bullet above; and a row rewritten inside a well-formed
+  page passes it (the journal walk finds that in a journaled row).
+  The commands that only read run it since issue #107: before, on a store with one key of the
+  flights index edited in place, `records`, `evidence`, `fleet-records` and `export-static`
+  wrote their output and `record history` printed its history, each exit 0. Measured (Windows,
+  Python 3.12.10, 2026-10-18, real processes, five interleaved rounds, medians), `record
+  history` took 394 ms against 403 ms before on the seeded store, 505 against 473 ms at
+  9.4 MiB and 1.30 against 1.10 s at 83 MiB, the check's own time; `verify`, which ran it
+  already, took the same. A command that only reads also leaves a `-wal` it finds holding
+  anything as it was, whether it answers or refuses: it runs no checkpoint as it closes, and
+  beside such a `-wal` it tells SQLite not to fold it in when its last connection closes
+  (`SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`). Before, it folded a hard stop's `-wal` into the file
+  and removed both side files, `record history` did so on a store the check refuses, even when
+  it refused the command itself, and damage held only in the `-wal` was then in the file.
+  Beside no `-wal`, or an empty one, a closed store is still one file after it. The checkpoint
+  it ran as it closed also waited for another connection's write lock: with one held beside
+  it, `verify`, `record history` and `records` took 5.9 to 6.1 s (the 5 s busy timeout, then
+  the checkpoint given up), and take 0.4 to 0.6 s now; beside a running service, `uasw verify`
+  truncated the service's `-wal` and moved its `data_version`, and now moves neither. SQLite's
+  read-only (`mode=ro`) and `immutable` opens were measured as the other way to keep the
+  `-wal`: read-only left an empty `-wal` and a `-shm` beside a closed store, and `immutable`
+  reads the file alone, 60 of a hard-stopped store's 63 entries; neither checks anything.
 - **A record the store cannot read leaves every projected record unknown, not one.** Liveness
   is decided over the whole ledger and a component move names another aircraft, so one entry
   that cannot be read (not JSON, nested too deep for the parser, a field missing or of the

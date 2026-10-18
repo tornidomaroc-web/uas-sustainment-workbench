@@ -10,13 +10,23 @@
   `record` and `ingest` wrote and exited 0 when the damage missed the pages they read and
   `verify` reported the journal intact on a file whose `aircraft` page, an index or
   `sqlite_sequence` was overwritten; the check costs about 1 ms on the seeded store
-  and 25 ms at 9.7 MiB. Commands that only read do not run it, nor does `GET /journal/verify`.
+  and 25 ms at 9.7 MiB.
 - Doing what that refusal says gives back the good copy as it was (closes #108): beside a
   `-wal` a hard stop left, the line says whether the damage is in the file or only in the
   `-wal` (the file alone passing) and to move the file, its `-wal` and its `-shm` aside
   together before putting a good copy where the file was, where it said only to restore the
   file, and a good copy put beside the kept `-wal` took its pages in: 63 entries, its own entry
   gone, and `verify` intact at 97 links instead of the good copy's 95.
+- The commands that only read run the same check and leave a hard stop's `-wal` as they found
+  it (closes #107): `records`, `evidence`, `fleet-records`, `export-static` and `record history`
+  refuse a store whose index key was edited in place, where they wrote their output and exited
+  0, and none of them, `verify` included, folds a `-wal` holding anything into the file or
+  removes it, whether it answers or refuses, where `record history` folded a hard stop's `-wal`
+  into a file the check refuses; a running service checks a file changed under it with
+  `integrity_check` rather than `quick_check`, and `GET /journal/verify` runs it before its
+  walk, so neither answers ok on, nor writes into, a file with an edited index key; the check
+  costs a read command 32 ms at 9.4 MiB and 0.2 s at 83 MiB, and a command that only reads
+  no longer waits 5 s for a write lock held beside it.
 
 ## 0.6.2 (2026-10-18)
 

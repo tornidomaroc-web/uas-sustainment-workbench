@@ -81,7 +81,7 @@ class Refused(Exception):
         self.detail = detail
 
 
-def open_store(path: str, *, create: bool = True, check: bool | None = None) -> Store:
+def open_store(path: str, *, create: bool = True, reads_only: bool = False) -> Store:
     """The store at `path`, made there on first use by the commands that write (`seed`,
     `serve`, `ingest`, `record`); `ingest` and `record` check their input first, so one that
     is refused makes nothing (issue #83). A command that only reads passes `create=False` and is
@@ -90,27 +90,27 @@ def open_store(path: str, *, create: bool = True, check: bool | None = None) -> 
     Only "nothing is there" is a 404: a path that cannot be looked at (a folder one may not
     read) goes on to the open, which refuses it (503) as before, never a traceback.
 
-    With `check` (by default, the commands that write; `uasw verify` and `record retract`
-    pass it), an existing store file is checked whole before the store is opened on it
-    (`checked_at_rest`), once per process: one that fails is refused (503) naming the cause,
-    with nothing read from it as records and nothing written (issues #104, #105), and, beside
-    a `-wal` a hard stop left, where the damage is and that the side files go aside with the
-    file (`_damaged`, issue #108)."""
+    An existing store file is checked whole before the store is opened on it
+    (`checked_at_rest`), once per process, by every command, those that only read included
+    (issue #107): one that fails is refused (503) naming the cause, with nothing read from it
+    as records and nothing written (issues #104, #105), and, beside a `-wal` a hard stop left,
+    where the damage is and that the side files go aside with the file (`_damaged`, issue
+    #108). A command that only reads passes `reads_only`: its store runs no checkpoint and
+    leaves a `-wal` it finds holding anything as it was, whether it answers or is refused."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
             f"there is no store at {path}; a command that only reads does not make one, so "
             "check the path, or seed or ingest to make the store",
         )
-    checking = create if check is None else check
-    if checking and path != ":memory:" and path not in _checked and not _nothing_at(path):
+    if path != ":memory:" and path not in _checked and not _nothing_at(path):
         with checked_at_rest(path) as found:
             if found is not None:
                 raise Refused(503, _damaged(found))
             _checked.add(path)
             # Opened while the check's connection is still open (`checked_at_rest`).
-            return _open(path, create)
-    return _open(path, create)
+            return _open(path, create, reads_only)
+    return _open(path, create, reads_only)
 
 
 def _damaged(found: AtRest) -> str:
@@ -139,14 +139,14 @@ def _damaged(found: AtRest) -> str:
     )
 
 
-def _open(path: str, create: bool) -> Store:
+def _open(path: str, create: bool, reads_only: bool) -> Store:
     if path != ":memory:" and create:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             detail = f"the store {path} cannot be opened: {exc.strerror or exc}"
             raise Refused(503, detail) from exc
-    store = Store(path)
+    store = Store(path, reads_only=reads_only)
     _opened.append(store)
     return store
 
@@ -318,7 +318,7 @@ def _size(path: Path) -> int:
 def cmd_export_static(args: argparse.Namespace) -> None:
     from .static_export import SAMPLE_EVIDENCE_KEY, export_static
 
-    store = open_store(args.db, create=False)
+    store = open_store(args.db, create=False, reads_only=True)
     if store.get_aircraft(SAMPLE_EVIDENCE_KEY) is None:
         # The static demo shows a sample pack and summary for the seeded fleet's SYN-04; a
         # store without it ended in a KeyError traceback. One line, nothing written.
@@ -392,7 +392,7 @@ def cmd_evidence(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_pack, render_html
 
-    store = open_store(args.db, create=False)
+    store = open_store(args.db, create=False, reads_only=True)
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
@@ -416,7 +416,7 @@ def cmd_records(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_records, render_records_html
 
-    store = open_store(args.db, create=False)
+    store = open_store(args.db, create=False, reads_only=True)
     if store.get_aircraft(args.aircraft) is None:
         print(f"refused (404): aircraft {args.aircraft} is not in the store", file=sys.stderr)
         sys.exit(1)
@@ -442,7 +442,7 @@ def cmd_fleet_records(args: argparse.Namespace) -> None:
 
     from uas_workbench.evidence import build_fleet_records, render_fleet_records_html
 
-    store = open_store(args.db, create=False)
+    store = open_store(args.db, create=False, reads_only=True)
     as_of = _when(args.as_of, "--as-of") or datetime.now(UTC)
     summary = build_fleet_records(store, load_config(), as_of=as_of, commit=current_commit())
     _write(args.out, render_fleet_records_html(summary))
@@ -472,7 +472,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
     # The file whole first: the walk reads only the rows the chain covers, so it reported the
     # journal intact on a file damaged elsewhere (issue #105). A damaged file is one refusal
     # line of its own, and the walk is not run.
-    result = open_store(args.db, create=False, check=True).verify_journal(args.head)
+    result = open_store(args.db, create=False, reads_only=True).verify_journal(args.head)
     if result.migration is not None:
         m = result.migration
         print(f"link {m.seq}, recorded {m.recorded_utc}: {m.note}")
@@ -569,7 +569,7 @@ def cmd_record(args: argparse.Namespace) -> None:
     elif what == "time-in-service":
         _record_entry(args, args.aircraft, "time_in_service.set", before_s=args.hours * 3600.0)
     elif what == "retract":
-        retracted = open_store(args.db, create=False, check=True).entry(args.entry_id)
+        retracted = open_store(args.db, create=False).entry(args.entry_id)
         if retracted is None:
             import sys
 
@@ -579,7 +579,7 @@ def cmd_record(args: argparse.Namespace) -> None:
         args.statement = ""
         _record_entry(args, retracted.subject, "retraction")
     elif what == "history":
-        store = open_store(args.db, create=False)
+        store = open_store(args.db, create=False, reads_only=True)
         dead = store.projection().superseded_by
         for e in store.entries(args.subject):
             if e.id in dead and not args.all:

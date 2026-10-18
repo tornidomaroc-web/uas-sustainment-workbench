@@ -26,8 +26,8 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[Store]:
     stores: list[Store] = []
     init = Store.__init__
 
-    def tracking(self: Store, path: str = ":memory:") -> None:
-        init(self, path)
+    def tracking(self: Store, path: str = ":memory:", *, reads_only: bool = False) -> None:
+        init(self, path, reads_only=reads_only)
         stores.append(self)
 
     monkeypatch.setattr(Store, "__init__", tracking)
