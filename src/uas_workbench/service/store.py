@@ -71,6 +71,7 @@ import json
 import os
 import sqlite3
 import stat
+import struct
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -129,6 +130,10 @@ BUSY_TIMEOUT_MS = 5000
 # How many of the store's own commits the WAL takes before the store folds it into the file
 # (`_checkpoint`): about the 1,000 pages SQLite checkpoints at, at a few pages a write.
 CHECKPOINT_COMMITS = 200
+# A damaged store file is checked again no sooner than this many times as long as its last
+# check took after that check ended, and never sooner than a second (`_watch`, issue #113): so
+# the checks take at most a tenth of one core, where a second's wait let them take most of one.
+RECHECK_TIMES = 9
 # A checked write refused because another writer held the store past that wait (`writing`).
 BUSY = (
     "another write held the store for longer than this one waits; nothing was written, "
@@ -273,6 +278,7 @@ class Store:
         self._writer_generation = 0
         self._watch_lock = threading.Lock()
         self._checked_at = 0.0  # when the file was last checked (monotonic seconds)
+        self._recheck_after = 1.0  # how long a damaged file waits for its next check, seconds
         # An open writes only on a store that needs it (one 0.5.x left: the switch to WAL, the
         # journal table, the migration); each waits for another connection's write lock up to
         # the busy timeout and, past it, the open is refused with nothing written and every
@@ -371,23 +377,39 @@ class Store:
             now = self._seen()
             # A file's time of last change moves with the clock's tick (about 15 ms on
             # Windows), so a restore landing within the tick of the damage, at the same size,
-            # looks unchanged: a damaged file is looked at again once a second regardless.
-            again = self._damaged is not None and time.monotonic() - self._checked_at >= 1.0
+            # looks unchanged: a damaged file is looked at again regardless, once the wait its
+            # last check set has passed (`_judged`).
+            again = (
+                self._damaged is not None
+                and time.monotonic() - self._checked_at >= self._recheck_after
+            )
             if now != self._file or again:
-                self._damaged = self._damage_in(now)
-                if self._damaged is None:
+                began = time.monotonic()
+                damaged = self._damage_in(now)
+                if damaged is None:
                     # Every label carries the generation, so no answer kept before is used.
                     self._generation += 1
                 # The file as seen only once its verdict is in: until then every other
                 # thread's look misses, and it waits here for the verdict rather than reading
-                # or writing the changed file meanwhile. And the second look is timed from the
-                # end of the check, so a check longer than a second is not run again by every
-                # request that waited for it.
+                # or writing the changed file meanwhile.
                 self._file = now
-                self._checked_at = time.monotonic()
+                self._judged(damaged, began)
             damaged = self._damaged
         if damaged is not None:
             raise StoreDamaged(damaged)
+
+    def _judged(self, damaged: str | None, began: float) -> None:
+        """Under the lock every look at the file takes, after a check of the file that began
+        at `began` (monotonic seconds): its verdict, when it ended, and how long a damaged file
+        then waits for its next check, which grows with the check's own time (issue #113). The
+        wait is timed from the end of the check, so the requests that waited for its verdict do
+        not run it again, and it is `RECHECK_TIMES` the check's time, never less than a second,
+        so a damaged store spends at most a tenth of one core on its checks however long one
+        takes, where a wait of one second let a 4.3 s check take 84 to 86 % of one."""
+        ended = time.monotonic()
+        self._damaged = damaged
+        self._checked_at = ended
+        self._recheck_after = max(1.0, RECHECK_TIMES * (ended - began))
 
     def _seen(self) -> _FileState | str | None:
         try:
@@ -433,10 +455,10 @@ class Store:
             return
         self._watch()
         with self._watch_lock:
+            began = time.monotonic()
             damaged = self._damage_in(self._seen())
             if damaged is not None:
-                self._damaged = damaged
-                self._checked_at = time.monotonic()
+                self._judged(damaged, began)
         if damaged is not None:
             raise StoreDamaged(damaged)
 
@@ -559,7 +581,12 @@ class Store:
             if self._label(generation) == before:
                 return before
             connection.execute("ROLLBACK")
-        raise RuntimeError("the store never stood still long enough to read one state of it")
+        # Refused as SQLite's own refusals are, one line in a command and 503 in the service,
+        # never a traceback; a `-shm` that cannot be written is the cause met (issue #112).
+        raise sqlite3.OperationalError(
+            unwritable_side_files(self._path)
+            or "the store never stood still long enough to read one state of it"
+        )
 
     def _capture(self, label: int) -> _Snapshot:
         return _Snapshot(
@@ -864,9 +891,10 @@ class Store:
             after = self._seen()
             if after == before and not folded:
                 return
-            self._damaged = self._damage_in(after)
+            began = time.monotonic()
+            damaged = self._damage_in(after)
             self._file = after
-            self._checked_at = time.monotonic()
+            self._judged(damaged, began)
 
     # ---- the ledger ------------------------------------------------------------------
 
@@ -1166,6 +1194,41 @@ def _holds_wal(path: str) -> bool:
         return False
 
 
+def _cannot_write(path: str) -> str | None:
+    """Why the file at `path` cannot be opened for writing, or None when it can or is not
+    there. It is opened and closed with nothing written, so its bytes and its time of last
+    change stay as they were."""
+    try:
+        handle = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    os.close(handle)
+    return None
+
+
+def unwritable_side_files(path: str) -> str | None:
+    """Why no read of the store at `path` can stand, when its `-shm` cannot be written, or None
+    (issue #112). The `-shm` is SQLite's index of the `-wal`; a connection that cannot write it
+    keeps the index in its own memory instead, and then every read on any connection is a new
+    state of the store (`PRAGMA data_version` moves on each one), so no snapshot stands
+    (`Store._begin`). A store file marked read-only leaves both side files beside it after any
+    read, since SQLite cannot remove them, and marked read-only too they stopped every command.
+    A `-wal` that cannot be written is named beside the `-shm`, and alone stops no read."""
+    shm = _cannot_write(path + "-shm")
+    if shm is None:
+        return None
+    wal = _cannot_write(path + "-wal")
+    name = Path(path).name  # the side files sit beside the store file the command was given
+    also = f", nor can {name}-wal ({wal})" if wal is not None else ""
+    return (
+        f"the store's side file {name}-shm cannot be written ({shm}){also}; a read must write "
+        "the -shm to hold one state of the store, so nothing was read from it or written to it; "
+        "make the side files writable, then run it again"
+    )
+
+
 def _check_connection(path: str) -> sqlite3.Connection:
     """A connection of its own to the file at `path`, for SQLite's check; it writes nothing."""
     uri = Path(path).resolve().as_uri() + "?mode=rw"
@@ -1188,11 +1251,67 @@ class AtRest:
     """What `checked_at_rest` found wrong with a store: SQLite's finding on one line; whether
     a `-wal` holding anything was beside the file and is kept as it was; and, when one was,
     whether the file alone, without it, passes `integrity_check`, so the damage is only in the
-    `-wal` (issue #108)."""
+    `-wal` (issue #108); and, when it fails, whether a fold of the `-wal` into the file was cut
+    short, which leaves the file alone failing whatever the damage (`_fold_cut_short`, #111)."""
 
     problem: str
     wal_kept: bool
     file_alone_passes: bool
+    fold_cut_short: bool = False
+
+
+def _fold_cut_short(path: str) -> bool:
+    """Whether a fold of the `-wal` into the file at `path` was begun and not finished, as a
+    hard stop during a checkpoint leaves it (issue #111): of the pages the `-wal` holds in
+    committed frames, some, and not all, are in the file exactly as the `-wal`'s latest copy
+    of them. A checkpoint writes those copies into the file in ascending page order, so until
+    it ends the file alone is part old and part new and fails SQLite's check whatever is
+    damaged, while the store with its `-wal` reads every page the `-wal` holds from the `-wal`.
+    None of them in the file is a fold not begun, and every one a fold finished whose frames
+    stayed in the `-wal`: either way the file alone is a store of its own.
+
+    Frames count from the header up to the last commit frame, while their salts are the
+    header's, as SQLite counts them; their checksums are not computed, which on a large `-wal`
+    took seconds, so a frame SQLite would stop at for its checksum can only add a page to
+    compare. The file and the `-wal` are read a page at a time and nothing is written."""
+    try:
+        with open(path + "-wal", "rb") as wal:
+            header = wal.read(32)
+            if len(header) < 32:
+                return False
+            magic, _, size, _, salt1, salt2 = struct.unpack(">IIIIII", header[:24])
+            if magic not in (0x377F0682, 0x377F0683) or size < 512 or size & (size - 1):
+                return False
+            seen: dict[int, int] = {}
+            pages: dict[int, int] = {}
+            at = 32
+            while True:
+                frame = wal.read(24)
+                if len(frame) < 24:
+                    break
+                page, commit, s1, s2 = struct.unpack(">IIII", frame[:16])
+                if (s1, s2) != (salt1, salt2):
+                    break
+                seen[page] = at + 24
+                if commit:
+                    pages = dict(seen)
+                at += 24 + size
+                wal.seek(at)
+            copied = waiting = False
+            with open(path, "rb") as file:
+                for page, offset in pages.items():
+                    file.seek((page - 1) * size)
+                    held = file.read(size)
+                    wal.seek(offset)
+                    if len(held) == size and held == wal.read(size):
+                        copied = True
+                    else:
+                        waiting = True
+                    if copied and waiting:
+                        return True
+    except OSError:
+        return False
+    return False
 
 
 def _file_alone_check(path: str) -> str | None:
@@ -1241,7 +1360,10 @@ def checked_at_rest(path: str) -> Iterator[AtRest | None]:
     is kept and the check fails, the file alone is checked too, so the refusal can say whether
     the damage is only in the `-wal`: the `-wal` belongs to the damaged store, and a good copy
     put beside it would take its pages in (issue #108); SQLite records nothing in the file that
-    ties a `-wal` to it, so a `-wal` left beside another file cannot be told apart.
+    ties a `-wal` to it, so a `-wal` left beside another file cannot be told apart. When the file
+    alone fails too, whether a fold of the `-wal` into it was cut short is looked at
+    (`_fold_cut_short`): then the file alone fails whatever is damaged, and where the damage is
+    cannot be told (issue #111).
 
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
@@ -1268,7 +1390,8 @@ def checked_at_rest(path: str) -> Iterator[AtRest | None]:
             yield None
         else:
             alone_passes = left_beside and _file_alone_check(path) is None
-            yield AtRest(" ".join(problem.split()), left_beside, alone_passes)
+            cut_short = left_beside and not alone_passes and _fold_cut_short(path)
+            yield AtRest(" ".join(problem.split()), left_beside, alone_passes, cut_short)
     finally:
         check.close()
 

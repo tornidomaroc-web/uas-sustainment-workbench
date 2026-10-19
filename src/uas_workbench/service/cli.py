@@ -38,7 +38,15 @@ from uas_workbench.ledger import UnreadableRecord
 
 from .limits import max_log_mib, too_large
 from .observability import configure_logging
-from .store import AtRest, DuplicateFlight, Store, StoreBusy, StoreDamaged, checked_at_rest
+from .store import (
+    AtRest,
+    DuplicateFlight,
+    Store,
+    StoreBusy,
+    StoreDamaged,
+    checked_at_rest,
+    unwritable_side_files,
+)
 
 log = logging.getLogger("uasw.cli")
 
@@ -96,7 +104,9 @@ def open_store(path: str, *, create: bool = True, reads_only: bool = False) -> S
     as records and nothing written (issues #104, #105), and, beside a `-wal` a hard stop left,
     where the damage is and that the side files go aside with the file (`_damaged`, issue
     #108). A command that only reads passes `reads_only`: its store runs no checkpoint and
-    leaves a `-wal` it finds holding anything as it was, whether it answers or is refused."""
+    leaves a `-wal` it finds holding anything as it was, whether it answers or is refused.
+    Before that check, a store whose `-shm` cannot be written is refused (503) naming the side
+    files that cannot be, with nothing opened (`unwritable_side_files`, issue #112)."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
@@ -104,6 +114,10 @@ def open_store(path: str, *, create: bool = True, reads_only: bool = False) -> S
             "check the path, or seed or ingest to make the store",
         )
     if path != ":memory:" and path not in _checked and not _nothing_at(path):
+        # Before SQLite opens anything, which would make a `-wal` beside the file (issue #112).
+        unwritable = unwritable_side_files(path)
+        if unwritable is not None:
+            raise Refused(503, unwritable)
         with checked_at_rest(path) as found:
             if found is not None:
                 raise Refused(503, _damaged(found))
@@ -117,7 +131,9 @@ def _damaged(found: AtRest) -> str:
     """The refusal of a store `checked_at_rest` found damaged, and what to do with a good copy.
     With a `-wal` a hard stop left beside the file, it says where the damage is (in the file,
     or only in the `-wal`, the file alone passing) and that the `-wal` and `-shm` go aside with
-    the file: put beside them, a good copy would take the `-wal`'s pages in (issue #108)."""
+    the file: put beside them, a good copy would take the `-wal`'s pages in (issue #108).
+    Beside a fold of the `-wal` into the file that a hard stop cut short, the file alone fails
+    whatever is damaged, so the line says it cannot tell where the damage is (issue #111)."""
     if not found.wal_kept:
         return (
             f"the store file fails SQLite's integrity check ({found.problem}), so it is "
@@ -128,6 +144,12 @@ def _damaged(found: AtRest) -> str:
             f"the store's -wal, which a hard stop left beside the file, fails SQLite's integrity "
             f"check ({found.problem}) where the file alone passes it, so the store is damaged in "
             "writes held only in the -wal"
+        )
+    elif found.fold_cut_short:
+        where = (
+            f"the store fails SQLite's integrity check ({found.problem}), and a hard stop cut "
+            "short the fold of its -wal into the file, which leaves the file alone failing the "
+            "check too, so whether the damage is in the file or in the -wal cannot be told"
         )
     else:
         where = f"the store file fails SQLite's integrity check ({found.problem}), so it is damaged"

@@ -299,9 +299,12 @@ finding, exit 1, with nothing written and no `intact` or `unchanged` line (#104,
 A command that only reads folds nothing into the file: a `-wal` a hard stop left is still
 there, byte for byte, after it has answered or refused (#107). A `-wal` and `-shm` a hard stop left beside such a
 file are kept, and belong to it: the line says whether the damage is in the file or only in
-the `-wal`, and to move the file, its `-wal` and its `-shm` aside together before putting a
-good copy where the file was, since a good copy put beside that `-wal` takes its pages in
-(#108). A running service whose store
+the `-wal`, or, beside a fold of the `-wal` into the file that a hard stop cut short, that it
+cannot tell which (#111), and to move the file, its `-wal` and its `-shm` aside together before
+putting a good copy where the file was, since a good copy put beside that `-wal` takes its
+pages in (#108). A store whose `-shm` cannot be written (a read-only store's side files marked
+read-only too) is one `refused (503)` line naming the side files, with nothing opened, since no
+read can hold one state of the store without writing there (#112). A running service whose store
 file is overwritten, truncated, replaced or removed from outside, or has one index key edited
 in place, refuses every read and write of the store with 503 naming the cause, `/health`
 included, rather than serving what it held in memory: it checks a file changed under it with

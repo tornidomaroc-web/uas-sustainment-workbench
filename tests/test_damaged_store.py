@@ -379,7 +379,9 @@ def test_no_read_or_write_passes_while_a_changed_file_is_being_checked(tmp_path:
     """While one thread checks a changed file, every other read and write waits for its
     verdict: a warm reading thread and a warm writing connection, which hold pages of the file
     as it was, neither answer from the damaged file nor write onto it. And a check that takes
-    longer than the second between second looks is run once, not once per waiting request."""
+    longer than the wait between second looks is run once, not once per waiting request. That
+    wait was a second; it now grows with the last check's own time (issue #113), so the case
+    waits for the store's own `_recheck_after`, set by the held check above."""
     import importlib
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -438,15 +440,17 @@ def test_no_read_or_write_passes_while_a_changed_file_is_being_checked(tmp_path:
         assert waited, "a read or a write went on while the changed file was being checked"
         assert len(checks) == 1
 
-        # Damaged and due its second look, with a check that takes longer than the second:
+        # Damaged and due its second look, with a check that takes longer than the wait:
         # four requests that meet it get the one verdict.
         checks.clear()
         checking.clear()
         go.clear()
-        time.sleep(1.1)
+        wait = store._recheck_after
+        assert wait >= 1.0
+        time.sleep(wait + 0.1)
         waiting = [others.submit(outcome, store.entry_count) for _ in range(4)]
         assert checking.wait(30)
-        time.sleep(1.2)
+        time.sleep(wait + 0.2)
         go.set()
         assert all(isinstance(f.result(30), store_module.StoreDamaged) for f in waiting)
         assert len(checks) == 1, f"{len(checks)} checks for one second look"

@@ -95,7 +95,7 @@ def apart(db: Path) -> None:
 def restored(db: Path, store: Store, good: bytes) -> None:
     """`good` written in place, its time of last change set two seconds past the later of
     what it is now and what the store last saw. A restore within the clock tick of the change
-    last seen, at the same size, is served within a second (LIMITS.md); these cases are about
+    last seen, at the same size, is served after the wait LIMITS.md gives; these cases are about
     one that is seen, and the change last seen is a damage planted some milliseconds before
     (set apart by `apart`, so two seconds past its own tick) or the store's own checkpoint."""
     db.write_bytes(good)

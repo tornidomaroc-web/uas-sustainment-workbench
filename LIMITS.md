@@ -350,7 +350,8 @@ field-level tables. This file is about what that means for a maintenance tool.
     found by neither. `GET /journal/verify` runs it too, before its walk, on a connection of its
     own, and a file that fails it is refused (503) on every route until the file passes it
     again (issue #107): a good copy restored with the service stopped is served when it starts
-    again, and one restored in place is checked again within a second (below);
+    again, and one restored in place is checked again at the first request after it, or
+    within the wait below when one `stat` cannot tell it from the damaged file (below);
     `uasw serve` also runs it when it starts and on a file changed under it (below).
   - *Before the migration.* A store written by 0.5.x is journaled when this version first opens
     it, each row linked as found after a note that says so, with the counts and the time; a
@@ -418,8 +419,20 @@ field-level tables. This file is about what that means for a maintenance tool.
     and writes to it, but 0.5.x keeps no journal, so a row it writes has no link and from then
     on this version reports the journal broken at that row (`unjournaled`); the migration runs
     once, so the break stays. A store file marked read-only is verified as before, but its
-    close cannot fold the WAL in, so both side files stay until a store opens it writable. A
-    directory the process cannot write to was not measured; SQLite needs to create the side
+    close cannot fold the WAL in, so both side files stay until a store opens it writable.
+    Those side files marked read-only too stop every read (issue #112): SQLite then keeps its
+    index of the `-wal`, which lives in the `-shm`, in the reading process's memory, and every
+    read on any connection is a new state of the store (`PRAGMA data_version` moves on each,
+    measured on SQLite 3.49.1 and 3.50.4), so no snapshot can stand. Every command that opens
+    an existing store looks at the `-shm` before SQLite opens anything (it is opened for writing
+    and closed, nothing written) and refuses one it cannot write in one `refused (503)` line
+    naming it, and the `-wal` when that cannot be written either, exit 1, the three files byte
+    for byte as they were and nothing made; before, the six commands that only read, `record`
+    on such a store and `uasw serve` ended in a `RuntimeError` traceback after 1000 tries to pin
+    one state. A `-wal` alone that cannot be written stops no read, and is not refused. Should a
+    `-shm` become unwritable under a running store, a read that cannot stand is refused as
+    SQLite's own refusals are (503 in the service, one line in a command) rather than raising.
+    A directory the process cannot write to was not measured; SQLite needs to create the side
     files there to open a WAL-mode file at all.
 - **Threads never read through one connection; each read is one state of the file, and so
   is each records summary and evidence pack, while the board's responses are not.** Every
@@ -610,8 +623,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   500. What this does not catch: a change landing within the same clock tick (about 15 ms on
   Windows) as the change last seen, at the same size, is seen only at the next change, which
   may be the store's own next checkpoint, or at the next `GET /journal/verify`, which runs the
-  check whatever the look says and has the file refused from then on when it fails; a damaged file is looked at again once a second, so
-  a restore is always seen within a second. Nor damage to a page the `-wal` file holds a newer
+  check whatever the look says and has the file refused from then on when it fails; a damaged
+  file is looked at again regardless after a wait that grows with its last check's time
+  (below), so such a restore is seen within that wait and one check. Nor damage to a page the `-wal` file holds a newer
   copy of: SQLite reads that page from the `-wal` file, so the check passes, and the next
   checkpoint writes the page over the damage (measured on 0.6.1 as on this version: pages
   overwritten that the `-wal` file held passed the check; any page it did not hold failed it).
@@ -661,16 +675,36 @@ field-level tables. This file is about what that means for a maintenance tool.
   took 112 ms at 9.4 MiB and 1.0 s at 83 MiB, 13 and 41 ms more than with `quick_check`, the
   rest being the walk and the whole-store read every change from outside costs. While it
   runs, every other read and write that meets the change waits for it, the store's own
-  checkpoint included, since a read let through meanwhile could read a damaged file; a damaged
-  store is checked at most once a second, however many requests meet it. The second is timed
-  from the end of a check, so while requests keep coming a damaged store spends about
-  check / (check + 1 s) of one core on it: measured through `uasw serve` (Windows, Python
-  3.12.10, 2026-10-19), with `/health` asked 20 and 100 times a second the service took 22 and
-  27 % of one core at 86 MiB of 1 KB rows, where the check took 0.26 s, and 0.2 % with no
-  request; at 83 MiB of 795,000 indexed rows of 60 bytes, where `integrity_check` took 4.3 s
-  and `quick_check` 0.2 s, it took 84 to 86 %. The check's time follows the rows and index
-  keys more than the bytes, so the 3 ms per MiB above holds for rows the size of this store's
-  own. The checkpoint's
+  checkpoint included, since a read let through meanwhile could read a damaged file. A damaged
+  store whose file looks as last seen is checked again only after a wait timed from the end of
+  its last check: nine times as long as that check took, and never less than a second (issue
+  #113), however many requests meet it. So its checks take at most a tenth of one core, where
+  a wait of one second let them take check / (check + 1 s) of one. The bound this sets: damage
+  is found at the first request after the file's `stat` changes, as before, and so is a good
+  copy restored in place or a restart with a good copy; only a restore that one `stat` cannot
+  tell from the damaged file (same size, same time of last change) waits, and is served within
+  max(1 s, 9 × the check's time) plus one check. Measured through `uasw serve` (Windows,
+  Python 3.12.10 run directly, 2026-10-19; damage that SQLite finds only at the end of its
+  check, one index key edited, so each check takes its full time; share of one core over 30 s,
+  request handling included):
+
+  | Store | Check | `/health` 20/s | 100/s | No request | Restore seen (same `stat`) |
+  |---|---|---|---|---|---|
+  | 82 MiB of 1 KB rows, before | 0.16 s | 16 % | 23 % | 0 % | 0.6 s |
+  | the same, now | 0.16 s | 13 % | 17 % | 0.3 % | 1.0 s |
+  | 86 MiB of 795,000 indexed rows of 60 bytes, before | 4.0 s | 81 % | 85 % | 0 % | 5.7 s |
+  | the same, now | 4.0 s | 14 % | 18 % | 0.2 % | 34.6 s |
+
+  With no damage, 20 requests a second took 2 to 3 % on either version. Unchanged by it: the
+  damage was answered 503 within 0.2 s and 3.4 to 3.6 s (the first check's time), a restore in
+  place that moved the file's time of last change was served within 0.2 s and 4.2 to 4.5 s,
+  and a service stopped, given a good copy and started again answered `/health` in 1.5 s and
+  9.3 to 9.4 s, the at-rest check included. Damage found early in the check makes each check
+  short: 64 pages overwritten mid-file were found in 0.03 s on both stores, and the service
+  took 5 to 12 % on either version. The check's time follows the rows and index keys more than
+  the bytes (`integrity_check` took 0.16 s on the first store and 4.5 s on the second, where
+  `quick_check` took 0.2 s on both), so the 3 ms per MiB above holds for rows the size of this
+  store's own. The checkpoint's
   wait for an older read holds the store's write lock, so the write that runs it, and every
   write through the service sent meanwhile, answer only when that read ends or the busy
   timeout passes; then the checkpoint is left for the next one and the writes are answered
@@ -729,9 +763,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   The store with its `-wal` then passes the check and the commands that only read answered
   (`journal intact: 120094 links`) with the file and the `-wal` as they were; the next write
   folded the `-wal` in and `verify` called the store intact at 120095 links. The file alone
-  fails ("database disk image is malformed") until that fold, so when such a store is also
-  damaged in its `-wal`, the line says "the store file fails SQLite's integrity check" where
-  the damage is only in the `-wal`; what it says to do with the three files holds as written.
+  fails ("database disk image is malformed") until that fold, whatever is damaged, so the file
+  alone cannot say where damage beside a fold cut short is (issue #111). When the file alone
+  fails beside a `-wal` holding committed pages, the check looks at those pages in the file: a
+  checkpoint writes the `-wal`'s latest copy of each into the file in ascending page order, so
+  some of them, not all, in the file exactly as the `-wal` holds them is a fold begun and not
+  finished, and the line then says "the store fails SQLite's integrity check (...), and a hard
+  stop cut short the fold of its -wal into the file, which leaves the file alone failing the
+  check too, so whether the damage is in the file or in the -wal cannot be told". None of them
+  in the file (no fold begun) or every one (a fold finished whose frames stayed) leaves the
+  file alone a store of its own, and the line names the file as before; a file alone that
+  passes still names the `-wal`. What it says to do with the three files is unchanged.
+  Measured on Windows (Python 3.12.10, SQLite 3.49.1, 2026-10-19): the seeded store, then 186
+  rows of 1 MiB written in one transaction by a process stopped hard after its commit (file
+  0.1 MiB, `-wal` 187.3 MiB, 47,680 pages), then `PRAGMA wal_checkpoint(FULL)` stopped hard
+  300, 500, 700 and 900 ms in (the file held 14.2, 62.9, 101.5 and 160.3 MiB, 3,598 to 41,014
+  of the pages copied), then one page the fold had not reached overwritten in the `-wal` with
+  its checksums computed again: 0.6.2's code said "the store file fails" each time, this code
+  says it cannot be told, with the file and the `-wal` byte for byte as they were; with no
+  checkpoint begun, both name the `-wal`. The look reads frame headers and, on such a
+  refusal only, each page the `-wal` holds from both files until it has met one copied and
+  one not: `verify`'s refusal took 0.8 to 1.0 s where it took 0.6 to 0.7 s. It counts frames
+  as SQLite does, by their salts up to the last commit, without computing their checksums.
+  Where a page was written whole and its content happened to be the same before and after, a
+  fold not begun could read as one cut short, and the line would say it cannot tell, which is
+  true, rather than name the file; no such page was met in the three hard-stopped shapes tried
+  (a rebuilt index, three entries, the bulk write).
   `integrity_check` rather than SQLite's quicker `quick_check`: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on
   Windows (2026-10-18, a connection of its own, medians; Python 3.12 with SQLite 3.49.1, 3.14
