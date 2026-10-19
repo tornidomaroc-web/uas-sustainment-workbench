@@ -328,3 +328,17 @@ def test_sample_records_summary_is_linked_and_honest_first(page: Any, site_url: 
     assert summary.locator(".print-header").count() == 1
     assert problems == []
     context.close()
+
+
+def test_the_page_opens_by_saying_what_it_is_and_who_it_is_for(page: Any) -> None:
+    """The opening card is the first thing a visitor reads, above the due list; its words
+    are tied to the code in tests/test_front.py."""
+    text = page.inner_text("#about")
+    for phrase in ("maintenance and operations records", "UAS.SPEC.050(1)(g)", "synthetic"):
+        assert phrase in text, phrase
+    about = page.locator("#about").bounding_box()
+    due = page.locator("#due").bounding_box()
+    assert about is not None and due is not None and about["y"] < due["y"]
+    links = page.locator("#about a")
+    repository = "https://github.com/tornidomaroc-web/uas-sustainment-workbench"
+    assert links.count() == 1 and links.get_attribute("href") == repository
