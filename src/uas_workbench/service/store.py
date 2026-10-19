@@ -1251,29 +1251,36 @@ class AtRest:
     """What `checked_at_rest` found wrong with a store: SQLite's finding on one line; whether
     a `-wal` holding anything was beside the file and is kept as it was; and, when one was,
     whether the file alone, without it, passes `integrity_check`, so the damage is only in the
-    `-wal` (issue #108); and, when it fails, whether a fold of the `-wal` into the file was cut
-    short, which leaves the file alone failing whatever the damage (`_fold_cut_short`, #111)."""
+    `-wal` (issue #108); and, when it fails, whether the file holds part of what the `-wal`
+    holds, as a fold cut short or held back leaves it, which can leave the file alone failing
+    with nothing damaged (`_partly_folded`, #111)."""
 
     problem: str
     wal_kept: bool
     file_alone_passes: bool
-    fold_cut_short: bool = False
+    partly_folded: bool = False
 
 
-def _fold_cut_short(path: str) -> bool:
-    """Whether a fold of the `-wal` into the file at `path` was begun and not finished, as a
-    hard stop during a checkpoint leaves it (issue #111): of the pages the `-wal` holds in
-    committed frames, some, and not all, are in the file exactly as the `-wal`'s latest copy
-    of them. A checkpoint writes those copies into the file in ascending page order, so until
-    it ends the file alone is part old and part new and fails SQLite's check whatever is
-    damaged, while the store with its `-wal` reads every page the `-wal` holds from the `-wal`.
-    None of them in the file is a fold not begun, and every one a fold finished whose frames
-    stayed in the `-wal`: either way the file alone is a store of its own.
+def _partly_folded(path: str) -> bool:
+    """Whether the file at `path` holds part of what its `-wal` holds and not the rest, as a
+    fold of the `-wal` into the file leaves it when a hard stop cuts it short or a reader of an
+    earlier state holds it back (issue #111): some page the `-wal` holds in committed frames
+    is in the file exactly as one of its copies there, and some is not in the file as its
+    latest copy. A checkpoint writes, in ascending page order, the latest copy of each page
+    last written by the commit it folds up to: cut short, the file alone is part old and part
+    new; held back by a reader, it folds only the pages that reader's state last wrote, and a
+    page written again since keeps its older content in the file. Either way the file alone can
+    fail SQLite's check with nothing damaged, while the store with its `-wal` reads every page
+    the `-wal` holds from the `-wal`. Every page in the file as its latest copy is a fold
+    finished whose frames stayed in the `-wal`, and none in the file as any copy is a fold not
+    begun since the `-wal` started over (SQLite starts it over only once all of it is folded):
+    either way the file alone is a store of its own.
 
     Frames count from the header up to the last commit frame, while their salts are the
     header's, as SQLite counts them; their checksums are not computed, which on a large `-wal`
-    took seconds, so a frame SQLite would stop at for its checksum can only add a page to
-    compare. The file and the `-wal` are read a page at a time and nothing is written."""
+    took seconds, so a frame SQLite would stop at for its checksum can only add a copy to
+    compare. The file and the `-wal` are read a page at a time, the latest copy first and an
+    older one only while no page has been met in the file as a copy, and nothing is written."""
     try:
         with open(path + "-wal", "rb") as wal:
             header = wal.read(32)
@@ -1282,8 +1289,8 @@ def _fold_cut_short(path: str) -> bool:
             magic, _, size, _, salt1, salt2 = struct.unpack(">IIIIII", header[:24])
             if magic not in (0x377F0682, 0x377F0683) or size < 512 or size & (size - 1):
                 return False
-            seen: dict[int, int] = {}
-            pages: dict[int, int] = {}
+            pending: list[tuple[int, int]] = []
+            pages: dict[int, list[int]] = {}  # each page's copies, oldest first
             at = 32
             while True:
                 frame = wal.read(24)
@@ -1292,21 +1299,25 @@ def _fold_cut_short(path: str) -> bool:
                 page, commit, s1, s2 = struct.unpack(">IIII", frame[:16])
                 if (s1, s2) != (salt1, salt2):
                     break
-                seen[page] = at + 24
+                pending.append((page, at + 24))
                 if commit:
-                    pages = dict(seen)
+                    for written, offset in pending:
+                        pages.setdefault(written, []).append(offset)
+                    pending = []
                 at += 24 + size
                 wal.seek(at)
             copied = waiting = False
             with open(path, "rb") as file:
-                for page, offset in pages.items():
+                for page, offsets in pages.items():
                     file.seek((page - 1) * size)
                     held = file.read(size)
-                    wal.seek(offset)
-                    if len(held) == size and held == wal.read(size):
-                        copied = True
-                    else:
-                        waiting = True
+                    for offset in reversed(offsets if not copied else offsets[-1:]):
+                        wal.seek(offset)
+                        if len(held) == size and held == wal.read(size):
+                            copied = True
+                            waiting = waiting or offset != offsets[-1]
+                            break
+                        waiting = waiting or offset == offsets[-1]
                     if copied and waiting:
                         return True
     except OSError:
@@ -1361,9 +1372,9 @@ def checked_at_rest(path: str) -> Iterator[AtRest | None]:
     the damage is only in the `-wal`: the `-wal` belongs to the damaged store, and a good copy
     put beside it would take its pages in (issue #108); SQLite records nothing in the file that
     ties a `-wal` to it, so a `-wal` left beside another file cannot be told apart. When the file
-    alone fails too, whether a fold of the `-wal` into it was cut short is looked at
-    (`_fold_cut_short`): then the file alone fails whatever is damaged, and where the damage is
-    cannot be told (issue #111).
+    alone fails too, whether it holds part of what the `-wal` holds is looked at
+    (`_partly_folded`): then the file alone can fail with nothing damaged, and where the damage
+    is cannot be told (issue #111).
 
     A file SQLite finds corrupt or not a database is damaged, with SQLite's sentence; any other
     error (the path is a folder, or cannot be opened) is not judged here and is left to the
@@ -1390,8 +1401,8 @@ def checked_at_rest(path: str) -> Iterator[AtRest | None]:
             yield None
         else:
             alone_passes = left_beside and _file_alone_check(path) is None
-            cut_short = left_beside and not alone_passes and _fold_cut_short(path)
-            yield AtRest(" ".join(problem.split()), left_beside, alone_passes, cut_short)
+            partly = left_beside and not alone_passes and _partly_folded(path)
+            yield AtRest(" ".join(problem.split()), left_beside, alone_passes, partly)
     finally:
         check.close()
 

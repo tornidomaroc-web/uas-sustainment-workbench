@@ -32,9 +32,10 @@
   is one `refused (503)` line naming the side files, with the three files as they were and
   nothing made, where `verify`, `record history`, `evidence`, `records`, `fleet-records`,
   `export-static`, `record` and `serve` ended in a `RuntimeError` traceback; beside a fold of the
-  `-wal` into the file that a hard stop cut short, the at-rest refusal says it cannot tell
-  whether the damage is in the file or in the `-wal`, where it said "the store file fails" with
-  the damage only in the `-wal`, and its advice is unchanged; and a running service checks a
+  `-wal` into the file that a hard stop cut short or a reader of an earlier state held back, the
+  at-rest refusal says it cannot tell whether the damage is in the file or in the `-wal`, where
+  it said "the store file fails" with the damage only in the `-wal`, and its advice is
+  unchanged; and a running service checks a
   damaged file again only after nine times its last check's time, never less than a second,
   so on a store of 795,000 small indexed rows (a 4.0 s check) it took 14 and 18 % of one core
   under 20 and 100 requests a second, where it took 81 and 85 %, and a restore that looks
