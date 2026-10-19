@@ -13,12 +13,13 @@ part has used, and says what is due and why.
 
 **What it does.**
 
-- It reads flight logs in the ULog (`.ulg`) and DataFlash (`.bin`) formats. Each log becomes
-  one flight record: flight time, arm cycles, landings, battery energy and the faults the
-  autopilot reported. A value a log cannot give is marked not known, with the reason.
-- It keeps a maintenance ledger of work orders, components and inspections. Entries are only
-  ever added. A correction is a new entry that supersedes the old one, which stays in the
-  history.
+- It reads flight logs in the ULog (`.ulg`) format of PX4 and the DataFlash (`.bin`) format
+  of ArduPilot. Each log becomes one flight record: flight time, arm cycles, landings, battery
+  energy and the faults the autopilot reported. A value a log cannot give is marked not
+  known, with the reason.
+- It keeps a maintenance ledger of work orders, components and inspections. An entry, once
+  written, is never changed or removed. A correction is a new entry that supersedes the old
+  one, which stays in the history.
 - From the logs and the ledger it computes a due list and a board state for each aircraft:
   serviceable, serviceable with deferred defects, unserviceable, in maintenance, AOG, or not
   known. Every state but serviceable comes with its reason in a sentence.
@@ -34,7 +35,7 @@ For (iii) it holds the flight records and what they show as unusual, but no occu
 report written by a person, so that point reads partly at most. The code is also here for
 open-source maintainers to read and reuse, and for anyone reviewing how it was built.
 
-**What sets it apart.**
+**How it works.**
 
 - Board states are computed from the logs and the ledger on every read. None is typed in or
   stored.
@@ -65,19 +66,20 @@ uasw serve                                # the HTTP API; then open http://local
 
 **Released and unreleased.** The latest release is 0.6.2. Main also holds changes made after
 it: every command that opens an existing store now checks the file whole before it reads or
-writes, and a command that only reads leaves the `-wal` file a hard stop left as it found it. They are listed under
-Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main; `git checkout v0.6.2`
-gives you the release.
+writes, and a command that reads without writing leaves the `-wal` file a hard stop left as
+it found it. They are listed under Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone
+gives you main; `git checkout v0.6.2` gives you the release.
 
 **What it does not do, and how it is checked.** It does not certify airworthiness or release
 an aircraft to service. It takes each entry at the word of the person who made it: there are
 no users, no roles and no signatures, and a write needs one shared token or, when none is
-set, must come from this machine. What each part cannot tell, measured, is in [LIMITS.md](LIMITS.md). On every
-pull request CI runs lint, strict types and the tests on Linux and Windows, and renders the
-demo page in a headless browser. The code is written with an AI coding assistant, as the
-Co-Authored-By line on each commit shows. Pull request #110 carries a separate check, run
-in worktrees outside the repository and posted before the merge: it ran the suite again and
-measured the change by hand
+set, must come from this machine. What each part cannot tell, measured, is in
+[LIMITS.md](LIMITS.md). On every pull request CI runs lint, strict types and the tests on
+Linux and Windows, and renders the demo page in a headless browser. The code is written with
+an AI coding assistant, as the Co-Authored-By lines in the commit history show. No pull
+request carries a GitHub review. Pull request #110 carries a check posted before the merge
+under the owner's account, written by a separate session of the same AI assistant, not by a
+person: it ran the suite again and measured main against the change
 (<https://github.com/tornidomaroc-web/uas-sustainment-workbench/pull/110#issuecomment-6256552924>).
 Pull requests before it carry no such comment.
 
