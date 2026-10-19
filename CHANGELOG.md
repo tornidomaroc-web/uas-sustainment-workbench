@@ -27,6 +27,19 @@
   walk, so neither answers ok on, nor writes into, a file with an edited index key; the check
   costs a read command 32 ms at 9.4 MiB and 0.2 s at 83 MiB, and a command that only reads
   no longer waits 5 s for a write lock held beside it.
+- A store's side files and a damaged store's rechecks (closes #112, closes #111, closes #113):
+  a store whose `-shm` cannot be written (a read-only store's side files marked read-only too)
+  is one `refused (503)` line naming the side files, with the three files as they were and
+  nothing made, where `verify`, `record history`, `evidence`, `records`, `fleet-records`,
+  `export-static`, `record` and `serve` ended in a `RuntimeError` traceback; beside a fold of the
+  `-wal` into the file that a hard stop cut short, the at-rest refusal says it cannot tell
+  whether the damage is in the file or in the `-wal`, where it said "the store file fails" with
+  the damage only in the `-wal`, and its advice is unchanged; and a running service checks a
+  damaged file again only after nine times its last check's time, never less than a second,
+  so on a store of 795,000 small indexed rows (a 4.0 s check) it took 14 and 18 % of one core
+  under 20 and 100 requests a second, where it took 81 and 85 %, and a restore that looks
+  like the damaged file to one `stat` is served within that wait and one check (34.6 s there,
+  5.7 s before).
 - The page `uasw export-static` writes opens with a card that says what the workbench is, who
   it is for, what it does not do and where its limits are written, and the README opens the
   same way, with the steps to try it; the other eight files of the export, and 179 answers to
