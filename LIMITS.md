@@ -764,16 +764,25 @@ field-level tables. This file is about what that means for a maintenance tool.
   (`journal intact: 120094 links`) with the file and the `-wal` as they were; the next write
   folded the `-wal` in and `verify` called the store intact at 120095 links. The file alone
   fails ("database disk image is malformed") until that fold, whatever is damaged, so the file
-  alone cannot say where damage beside a fold cut short is (issue #111). When the file alone
-  fails beside a `-wal` holding committed pages, the check looks at those pages in the file: a
-  checkpoint writes the `-wal`'s latest copy of each into the file in ascending page order, so
-  some of them, not all, in the file exactly as the `-wal` holds them is a fold begun and not
-  finished, and the line then says "the store fails SQLite's integrity check (...), and a hard
-  stop cut short the fold of its -wal into the file, which leaves the file alone failing the
-  check too, so whether the damage is in the file or in the -wal cannot be told". None of them
-  in the file (no fold begun) or every one (a fold finished whose frames stayed) leaves the
-  file alone a store of its own, and the line names the file as before; a file alone that
-  passes still names the `-wal`. What it says to do with the three files is unchanged.
+  alone cannot say where damage beside a fold cut short is (issue #111). A checkpoint that
+  ends can leave the same: held back by a reader of an earlier state (SQLite's own PASSIVE
+  checkpoint, or the store's RESTART when a reader outlasts its 5 s wait), it folds only the
+  pages that state last wrote, and a page written again since keeps its older content in the
+  file, so the file alone can fail with nothing damaged while the store with its `-wal`
+  verifies unchanged (made by real SQLite in `tests/test_fold_cut_short.py`: a table made,
+  then a row put in it, folds page 1 and not the table's root). When the file alone fails
+  beside a `-wal` holding committed pages, the check looks at those pages in the file: some
+  page in the file exactly as one of its copies in the `-wal`, and some page not in it as its
+  latest copy, is the file holding part of what the `-wal` holds, and the line then says "the
+  store fails SQLite's integrity check (...), and the file holds part of what its -wal holds,
+  as a fold of the -wal into the file leaves it when cut short by a hard stop or held back by
+  a reader of an earlier state, which can leave the file alone failing the check with nothing
+  damaged, so whether the damage is in the file or in the -wal cannot be told". Every page in
+  the file as its latest copy (a fold finished whose frames stayed), or none as any copy (no
+  fold begun since the `-wal` last started over, which SQLite does only once all of it is
+  folded), leaves the file alone a store of its own, and the line names the file as before; a
+  file alone that passes still names the `-wal`. What the line says to do with the three files
+  is unchanged.
   Measured on Windows (Python 3.12.10, SQLite 3.49.1, 2026-10-19): the seeded store, then 186
   rows of 1 MiB written in one transaction by a process stopped hard after its commit (file
   0.1 MiB, `-wal` 187.3 MiB, 47,680 pages), then `PRAGMA wal_checkpoint(FULL)` stopped hard
@@ -782,13 +791,20 @@ field-level tables. This file is about what that means for a maintenance tool.
   its checksums computed again: 0.6.2's code said "the store file fails" each time, this code
   says it cannot be told, with the file and the `-wal` byte for byte as they were; with no
   checkpoint begun, both name the `-wal`. The look reads frame headers and, on such a
-  refusal only, each page the `-wal` holds from both files until it has met one copied and
-  one not: `verify`'s refusal took 0.8 to 1.0 s where it took 0.6 to 0.7 s. It counts frames
-  as SQLite does, by their salts up to the last commit, without computing their checksums.
-  Where a page was written whole and its content happened to be the same before and after, a
-  fold not begun could read as one cut short, and the line would say it cannot tell, which is
-  true, rather than name the file; no such page was met in the three hard-stopped shapes tried
-  (a rebuilt index, three entries, the bulk write).
+  refusal only, each page the `-wal` holds from both files, its latest copy first and its
+  older ones only until one page has been met in the file as a copy, stopping once it has met
+  that and a page not as its latest copy: `verify`'s refusal took 0.8 to 1.0 s where it took
+  0.6 to 0.7 s on 0.6.2's code, its peak memory 74 to 75 MiB. With every page twice in a
+  374.7 MiB `-wal`, nothing folded and the file damaged (the look reads every copy), it took
+  1.5 s and 77 MiB, and named the file. It counts frames as SQLite does, by their salts up to
+  the last commit, without computing their checksums; frames under older salts, left when the
+  `-wal` started over, are not read. Where a page was written whole and its content happened
+  to be the same as an earlier version, a fold not begun could read as part of one, and the
+  line would say it cannot tell, which is true, rather than name the file; no such page was
+  met in the shapes tried (a rebuilt index, three entries, the bulk write, the five held
+  back). A copy damaged in the `-wal` after a fold wrote it into the file no longer matches
+  the file, so where that was the only page folded, the file reads as no fold begun and the
+  line names it, as it did before this look.
   `integrity_check` rather than SQLite's quicker `quick_check`: both found every b-tree's pages overwritten in turn on the seeded store, and
   only `integrity_check` found one key of the flights index edited in place. Measured on
   Windows (2026-10-18, a connection of its own, medians; Python 3.12 with SQLite 3.49.1, 3.14

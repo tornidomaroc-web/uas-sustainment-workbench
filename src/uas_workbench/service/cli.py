@@ -132,8 +132,9 @@ def _damaged(found: AtRest) -> str:
     With a `-wal` a hard stop left beside the file, it says where the damage is (in the file,
     or only in the `-wal`, the file alone passing) and that the `-wal` and `-shm` go aside with
     the file: put beside them, a good copy would take the `-wal`'s pages in (issue #108).
-    Beside a fold of the `-wal` into the file that a hard stop cut short, the file alone fails
-    whatever is damaged, so the line says it cannot tell where the damage is (issue #111)."""
+    Beside a fold of the `-wal` into the file that a hard stop cut short or a reader held back,
+    the file alone can fail with nothing damaged, so the line says it cannot tell where the
+    damage is (issue #111)."""
     if not found.wal_kept:
         return (
             f"the store file fails SQLite's integrity check ({found.problem}), so it is "
@@ -145,11 +146,13 @@ def _damaged(found: AtRest) -> str:
             f"check ({found.problem}) where the file alone passes it, so the store is damaged in "
             "writes held only in the -wal"
         )
-    elif found.fold_cut_short:
+    elif found.partly_folded:
         where = (
-            f"the store fails SQLite's integrity check ({found.problem}), and a hard stop cut "
-            "short the fold of its -wal into the file, which leaves the file alone failing the "
-            "check too, so whether the damage is in the file or in the -wal cannot be told"
+            f"the store fails SQLite's integrity check ({found.problem}), and the file holds "
+            "part of what its -wal holds, as a fold of the -wal into the file leaves it when cut "
+            "short by a hard stop or held back by a reader of an earlier state, which can leave "
+            "the file alone failing the check with nothing damaged, so whether the damage is in "
+            "the file or in the -wal cannot be told"
         )
     else:
         where = f"the store file fails SQLite's integrity check ({found.problem}), so it is damaged"
