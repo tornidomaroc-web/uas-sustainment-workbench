@@ -2,17 +2,86 @@
 
 [![ci](https://github.com/tornidomaroc-web/uas-sustainment-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/tornidomaroc-web/uas-sustainment-workbench/actions/workflows/ci.yml)
 
-An open-source maintenance and readiness tool for small civil unmanned aircraft fleets
-(inspection, mapping, research, training). It turns PX4 and ArduPilot flight logs into
-usage counters (flight hours, cycles, landings, battery use) and tracks component life and
-inspections against them.
+A tool you run on your own machine to keep the maintenance and operations records of a small
+civil unmanned aircraft fleet. It reads the flight logs, counts what each aircraft and each
+part has used, and says what is due and why.
 
-**Live demo: <https://tornidomaroc-web.github.io/uas-sustainment-workbench/>**. It shows a
-readiness board for nine aircraft (seven synthetic, two from real public logs): what is due
-soon or overdue at the top, then the flight time that no log covers, then the fleet with a
-computed board state per aircraft and, for every state but serviceable, the reason in a full
-sentence. The maintenance records behind the synthetic states are generated with the fleet
-and labelled as such; nothing on the board is typed in.
+**Live demo, synthetic data, nothing to install:**
+<https://tornidomaroc-web.github.io/uas-sustainment-workbench/>
+
+## In one minute
+
+**What it does.**
+
+- It reads flight logs in the ULog (`.ulg`) and DataFlash (`.bin`) formats. Each log becomes
+  one flight record: flight time, arm cycles, landings, battery energy and the faults the
+  autopilot reported. A value a log cannot give is marked not known, with the reason.
+- It keeps a maintenance ledger of work orders, components and inspections. Entries are only
+  ever added. A correction is a new entry that supersedes the old one, which stays in the
+  history.
+- From the logs and the ledger it computes a due list and a board state for each aircraft:
+  serviceable, serviceable with deferred defects, unserviceable, in maintenance, AOG, or not
+  known. Every state but serviceable comes with its reason in a sentence.
+- It writes a "Draft records summary for the operator's own review" for one aircraft or for
+  the whole fleet.
+
+**Who it is for.** An operator who must keep maintenance and operations records. One example
+is UAS.SPEC.050(1)(g) of Regulation (EU) 2019/947. It asks the operator to keep records of
+(ii) the maintenance activities on the aircraft and (iii) information on its operations,
+including unusual occurrences, each for at least 3 years. The summary sets what the workbench
+holds against those points. It holds no (g)(i) training records, and the summary says so.
+For (iii) it holds the flight records and what they show as unusual, but no occurrence
+report written by a person, so that point reads partly at most. The code is also here for
+open-source maintainers to read and reuse, and for anyone reviewing how it was built.
+
+**What sets it apart.**
+
+- Board states are computed from the logs and the ledger on every read. None is typed in or
+  stored.
+- It compares consecutive logs of one aircraft with the autopilot's own lifetime counter and
+  reports flight that no log covers. On a public research dataset it finds "355 s of flight
+  on aircraft alfa-fixed-wing is not covered by any log".
+- Every entry and flight record is linked into a hash chain as it is written. `uasw verify`
+  says whether the chain is intact. Given a head you kept from an earlier run, it says
+  whether the records are unchanged since then. It never says they are true.
+- The summary marks each point with one of four statuses: supported by these records, partly,
+  not evidenced by this workbench, or not known. It decides nothing. The authority decides.
+- Every aircraft, flight, component and work order is marked synthetic or real. The seven
+  synthetic aircraft of the demo fleet describe no real aircraft.
+
+**Try it in a few minutes.** You need git and Python 3.12 or later. Run these from the
+clone's folder; the store goes to `data/local/fleet.sqlite`, which git ignores.
+
+```bash
+git clone https://github.com/tornidomaroc-web/uas-sustainment-workbench
+cd uas-sustainment-workbench
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m pip install -e .
+uasw seed                                 # the demo fleet: 7 synthetic aircraft, 2 from public logs
+uasw records SYN-04 --out records.html    # a draft records summary; open it in a browser
+uasw verify                               # the write journal: intact, and its head
+uasw serve                                # the HTTP API; then open http://localhost:8000/docs
+```
+
+**Released and unreleased.** The latest release is 0.6.2. Main also holds changes made after
+it: every command that opens an existing store now checks the file whole before it reads or
+writes, and a command that only reads leaves the `-wal` file a hard stop left as it found it. They are listed under
+Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main; `git checkout v0.6.2`
+gives you the release.
+
+**What it does not do, and how it is checked.** It does not certify airworthiness or release
+an aircraft to service. It takes each entry at the word of the person who made it: there are
+no users, no roles and no signatures, and a write needs one shared token or, when none is
+set, must come from this machine. What each part cannot tell, measured, is in [LIMITS.md](LIMITS.md). On every
+pull request CI runs lint, strict types and the tests on Linux and Windows, and renders the
+demo page in a headless browser. The code is written with an AI coding assistant, as the
+Co-Authored-By line on each commit shows. Pull request #110 carries a separate check, run
+in worktrees outside the repository and posted before the merge: it ran the suite again and
+measured the change by hand
+(<https://github.com/tornidomaroc-web/uas-sustainment-workbench/pull/110#issuecomment-6256552924>).
+Pull requests before it carry no such comment.
+
+The rest of this README describes each part in detail.
 
 ## What exists today
 

@@ -27,6 +27,11 @@
   walk, so neither answers ok on, nor writes into, a file with an edited index key; the check
   costs a read command 32 ms at 9.4 MiB and 0.2 s at 83 MiB, and a command that only reads
   no longer waits 5 s for a write lock held beside it.
+- The page `uasw export-static` writes opens with a card that says what the workbench is, who
+  it is for, what it does not do and where its limits are written, and the README opens the
+  same way, with the steps to try it; the other eight files of the export, and 179 answers to
+  the GET routes other than `/metrics` on the seeded store, are byte for byte what they were,
+  with the clock frozen.
 
 ## 0.6.2 (2026-10-18)
 
