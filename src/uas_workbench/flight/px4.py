@@ -20,7 +20,7 @@ from uas_workbench.census.px4 import (
     syslog_level,
 )
 
-from .record import FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
+from .record import NOT_COUNTED, FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
 
 TOPICS = (
     "vehicle_status",
@@ -194,6 +194,14 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
     # a handle, it reads from it, and this block closes it either way.
     with path.open("rb") as handle:
         ulog = ULog(handle, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+    # pyulog skips what it cannot parse and says so: a data message whose framing breaks, and
+    # from 1.3.0 a definition or a subscription too, where 1.2.4 raised. What is left can lack
+    # a topic, the aircraft key or most of the span, so the log is refused, as a damaged
+    # DataFlash log is, and the operator is told what that leaves out of the counts.
+    if ulog.file_corruption:
+        raise ValueError(
+            f"pyulog found messages it could not parse and skipped them; {NOT_COUNTED}"
+        )
     if not ulog.data_list and not _has_data(path):
         raise ValueError("holds a header but no recorded data")
     flight_s, landings = _flight_and_landings(ulog)

@@ -19,7 +19,7 @@ from pymavlink import DFReader
 from uas_workbench.census.ardupilot import BOARD_UID, EV_ARMED, firmware_from_messages
 from uas_workbench.census.excerpt import BOARD_ID_MASK
 
-from .record import FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
+from .record import NOT_COUNTED, FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
 
 READ_TYPES = ("PARM", "MSG", "STAT", "GPS", "EV", "ARM", "BAT", "CURR", "ERR")
 GPS_EPOCH = datetime(1980, 1, 6, tzinfo=UTC)
@@ -75,10 +75,6 @@ CHAR_SIZE = {
     ord(char): struct.calcsize("<" + code)
     for char, (code, _, _) in DFReader.FORMAT_TO_STRUCT.items()
 }
-NOT_COUNTED = (
-    "nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
-    "hours only as far as a later log's lifetime counter covers it"
-)
 
 Sample = tuple[int, float]  # (TimeUS, value)
 

@@ -8,6 +8,12 @@ from typing import Literal, TypeGuard
 
 Source = Literal["px4", "ardupilot"]
 
+# What refusing a damaged log leaves out, told with each reader's refusal of one.
+NOT_COUNTED = (
+    "nothing from this log is stored, so its flight counts toward no cycle limit, and toward "
+    "hours only as far as a later log's lifetime counter covers it"
+)
+
 
 @dataclass(frozen=True)
 class Unknown:
