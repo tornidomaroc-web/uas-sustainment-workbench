@@ -2,50 +2,99 @@
 
 ## Unreleased
 
-- A store file damaged at rest is refused by every command that writes and by `uasw verify`
-  (closes #104, closes #105): `seed`, `serve`, `ingest`, `record` and `record retract` run
-  SQLite's `PRAGMA integrity_check` when they open an existing store, and `verify` before its
-  walk, so a file that fails is one `refused (503)` line naming SQLite's finding, exit 1, the
-  file unchanged and a `-wal` a hard stop left beside it neither folded in nor removed, where
-  `record` and `ingest` wrote and exited 0 when the damage missed the pages they read and
-  `verify` reported the journal intact on a file whose `aircraft` page, an index or
-  `sqlite_sequence` was overwritten; the check costs about 1 ms on the seeded store
-  and 25 ms at 9.7 MiB.
-- Doing what that refusal says gives back the good copy as it was (closes #108): beside a
-  `-wal` a hard stop left, the line says whether the damage is in the file or only in the
-  `-wal` (the file alone passing) and to move the file, its `-wal` and its `-shm` aside
-  together before putting a good copy where the file was, where it said only to restore the
-  file, and a good copy put beside the kept `-wal` took its pages in: 63 entries, its own entry
-  gone, and `verify` intact at 97 links instead of the good copy's 95.
-- The commands that only read run the same check and leave a hard stop's `-wal` as they found
-  it (closes #107): `records`, `evidence`, `fleet-records`, `export-static` and `record history`
-  refuse a store whose index key was edited in place, where they wrote their output and exited
-  0, and none of them, `verify` included, folds a `-wal` holding anything into the file or
-  removes it, whether it answers or refuses, where `record history` folded a hard stop's `-wal`
-  into a file the check refuses; a running service checks a file changed under it with
-  `integrity_check` rather than `quick_check`, and `GET /journal/verify` runs it before its
-  walk, so neither answers ok on, nor writes into, a file with an edited index key; the check
-  costs a read command 32 ms at 9.4 MiB and 0.2 s at 83 MiB, and a command that only reads
-  no longer waits 5 s for a write lock held beside it.
-- A store's side files and a damaged store's rechecks (closes #112, closes #111, closes #113):
-  a store whose `-shm` cannot be written (a read-only store's side files marked read-only too)
-  is one `refused (503)` line naming the side files, with the three files as they were and
-  nothing made, where `verify`, `record history`, `evidence`, `records`, `fleet-records`,
-  `export-static`, `record` and `serve` ended in a `RuntimeError` traceback; beside a fold of the
-  `-wal` into the file that a hard stop cut short or a reader of an earlier state held back, the
-  at-rest refusal says it cannot tell whether the damage is in the file or in the `-wal`, where
-  it said "the store file fails" with the damage only in the `-wal`, and its advice is
-  unchanged; and a running service checks a
-  damaged file again only after nine times its last check's time, never less than a second,
-  so on a store of 795,000 small indexed rows (a 4.0 s check) it took 14 and 18 % of one core
-  under 20 and 100 requests a second, where it took 81 and 85 %, and a restore that looks
-  like the damaged file to one `stat` is served within that wait and one check (34.6 s there,
-  5.7 s before).
+## 0.6.3 (2026-10-20)
+
+What operators see change: every command that opens an existing store checks the file whole
+with SQLite's `PRAGMA integrity_check` before it reads or writes, where 0.6.2 checked nothing
+at the command line, and a file that fails is one `refused (503)` line, exit 1, with nothing
+read from it as records and nothing written. The commands that only read, `verify` included,
+leave a `-wal` a hard stop left beside the store as they found it, where 0.6.2's folded it
+into the file and removed it as they closed. A store whose `-shm` cannot be written is one
+refusal line, where 0.6.2 ended ten of the eleven commands that open a store in a traceback:
+that defect is in 0.6.2 too, not one this release brought. The cost is the check's time,
+which follows the store's rows and index keys more than its bytes: about 1 ms on the seeded
+store, but 6.3 s on a 113.7 MiB store of 795,000 small indexed rows, where every command
+took about 6 s to start (0.4 s on 0.6.2) and a running service held requests about 6 s after
+each change from outside and at each of its own checkpoints (0.3 s on 0.6.2). Beside a kept
+`-wal` the refusal says where the damage is when it can tell and says when it cannot, and in
+one narrow shape it still names the file for damage held only in the `-wal` (below). On a
+sound store, with the clock frozen, every GET answer and every exported file is what 0.6.2
+gave apart from the version string and the demo page's new opening card.
+
+- A store file damaged at rest is refused by every command that opens it (closes #104,
+  closes #105, closes #107): `seed`, `serve`, `ingest`, `record` and `record retract` run the
+  check when they open an existing store, `verify` before its walk, and `records`,
+  `evidence`, `fleet-records`, `export-static` and `record history` as they open it, so a
+  file that fails is one `refused (503)` line naming SQLite's finding, exit 1, the file byte
+  for byte as it was. In 0.6.2 `record` and `ingest` wrote and exited 0 when the damage
+  missed the pages they read; `verify` reported the journal intact on a file whose `aircraft`
+  page, an index or `sqlite_sequence` was overwritten, or one of whose index keys was edited
+  in place; and on that edited key the five commands that only read wrote their output and
+  exited 0. The check took 0.7 to 0.9 ms on the seeded store, 25 to 27 ms at 9.7 MiB and
+  0.24 to 0.27 s at 84 MiB of the seeded store's own kind of rows, but 6.3 s at 113.7 MiB of
+  795,000 indexed rows of 60 bytes, where `record history` and `record` took 6.1 s each
+  against 0.39 and 0.45 s on 0.6.2. A row rewritten inside a well-formed page still passes
+  it.
+- The commands that only read leave a hard stop's `-wal` as they found it (closes #107):
+  `records`, `evidence`, `fleet-records`, `export-static`, `record history` and `verify` fold
+  no `-wal` holding anything into the file and remove none, whether they answer or refuse;
+  only the `-shm`, SQLite's index of the `-wal`, is rebuilt. In 0.6.2 each of the six folded
+  a hard stop's `-wal` into the file and removed both side files as it closed, damaged file
+  or not (measured on a sound store with three entries only in its `-wal`: the file grew from
+  118,784 to 126,976 bytes and stood alone). A command that writes still folds a sound
+  store's `-wal` in. They also no longer wait out the 5 s busy timeout as they close beside a
+  write lock held by another connection: `verify`, `record history` and `records` took 0.4
+  to 0.6 s there, where they took 5.9 to 6.1 s.
+- Beside a `-wal` a hard stop left, the at-rest refusal keeps the `-wal` as it was, with its
+  `-shm` beside it, and says what to do with them (closes #108, closes #111): move the file, its `-wal`
+  and its `-shm` aside together, then put a good copy where the file was, since a good copy
+  put beside the kept `-wal` takes its pages in (measured: a good copy of 61 entries and 95
+  links came back with 63 entries, its own entry gone, and `verify` called it intact at 97
+  links). The store cannot tell a `-wal` written against another file from its own, so
+  moving the three aside together is the only protection. The line also says where the
+  damage is: in the file, or only in the `-wal` when the file alone, read in SQLite's
+  `immutable` mode, passes. Beside a fold of the `-wal` into the file that a hard stop cut
+  short or a reader of an earlier state held back, the file alone can fail with nothing
+  damaged, and the line says it cannot be told whether the damage is in the file or in the
+  `-wal`, naming those two causes. Two limits remain. Where a page's content happens to equal
+  an earlier version of it, a fold not begun can read as part of one, and the line says it
+  cannot tell where it could have named the file. And where a fold had copied a single page
+  (page 1) into the file and that page's copy in the `-wal` was damaged afterwards, the file
+  reads as no fold begun, and the line names the file for damage held only in the `-wal`.
+- A store whose `-shm` cannot be written is one `refused (503)` line naming the side files
+  that cannot be written (closes #112), from every command that opens a store, with the three
+  files as they were and nothing made. In 0.6.2, on a read-only store whose side files were
+  read-only too, `seed`, `serve`, `record`, `record retract`, `verify`, `record history`,
+  `evidence`, `records`, `fleet-records` and `export-static` ended in a `RuntimeError`
+  traceback and `ingest` in SQLite's own "attempt to write a readonly database" (measured on
+  0.6.2 and on this release, all eleven). A read-only `-wal` beside a writable `-shm` is read
+  as before.
+- The running service checks the store file whole too (closes #107, closes #113): a file
+  changed under it is checked with `integrity_check` rather than 0.6.2's `quick_check`, and
+  `GET /journal/verify` runs it before its walk, so the service no longer answers `ok: true`
+  on, or writes an entry into, a file one of whose index keys was edited, as 0.6.2 did. While
+  a check runs, every read and write that meets the change waits for its verdict, so on a
+  store of many small rows each change from outside (another `uasw` command's commit) and
+  each of the service's own checkpoints, every 200 of its writes and after each batch, holds
+  them for the check's time: on the 113.7 MiB store above one `/health` took 6.0 s beside a
+  `uasw record` and the 200th write took 6.1 s, where 0.6.2 took 0.26 and 0.3 s. A damaged
+  file whose `stat` looks as last seen is checked again only after nine times its last
+  check's time, never less than a second, where 0.6.2 checked it each second with
+  `quick_check`; so the checks take at most a tenth of one core, and on 86 MiB of 795,000
+  indexed rows (a 4.0 s check) the service took 14 and 18 % of one core with 20 and 100
+  `/health` requests a second sent, request handling included, where a one-second wait let
+  the same check take 81 and 85 %. The trade-off: damage, a good copy restored in place that
+  changes the file's `stat`, and a restart with a good copy are still seen at the first
+  request, but a good copy restored in place that one `stat` cannot tell from the damaged
+  file waits up to max(1 s, 9 × the check's time) plus one check: 34.6 s on that 4.0 s check,
+  up to 70 s on a 7 s one. Restoring with the service stopped, as LIMITS.md asks, has no such
+  wait.
 - The page `uasw export-static` writes opens with a card that says what the workbench is, who
   it is for, what it does not do and where its limits are written, and the README opens the
-  same way, with the steps to try it; the other eight files of the export, and 179 answers to
-  the GET routes other than `/metrics` on the seeded store, are byte for byte what they were,
-  with the clock frozen.
+  same way, with the steps to try it. With the clock frozen and the commit fixed, the other
+  eight files of the export, and 220 answers to the GET routes on the seeded store (`/metrics`
+  without its clock and garbage-collector lines), are what 0.6.2 gave, byte for byte apart
+  from the version string.
 
 ## 0.6.2 (2026-10-18)
 
