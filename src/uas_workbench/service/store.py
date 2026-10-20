@@ -134,6 +134,11 @@ CHECKPOINT_COMMITS = 200
 # check took after that check ended, and never sooner than a second (`_watch`, issue #113): so
 # the checks take at most a tenth of one core, where a second's wait let them take most of one.
 RECHECK_TIMES = 9
+# Longer than the clock's tick the time of last change moves with (`Looked.still`).
+TICK_NS = 100_000_000
+# The file as last seen, for a store whose file may have changed since its check at rest: no
+# look equals it, so the store's first look checks the file (`Store.__init__`).
+SINCE_CHECKED = "not looked at since its check at rest"
 # A checked write refused because another writer held the store past that wait (`writing`).
 BUSY = (
     "another write held the store for longer than this one waits; nothing was written, "
@@ -197,6 +202,35 @@ def _file_state(path: str) -> _FileState | None:
     return _FileState((st.st_dev, st.st_ino), st.st_size, st.st_mtime_ns, stat.S_IMODE(st.st_mode))
 
 
+@dataclass(frozen=True)
+class Looked:
+    """The store file as one `stat` saw it right before its check at rest began, and when, by
+    the system clock (`look`, issue #117)."""
+
+    state: _FileState | None
+    at_ns: int
+
+    def still(self, now: _FileState | None) -> bool:
+        """Whether the file `now` describes is the one looked at, with nothing a `stat` shows
+        changed since: the same `stat`, of a file last changed more than `TICK_NS` before the
+        look. A file's time of last change moves with the clock's tick (about 15 ms on
+        Windows), so a change landing within the tick of the last one can leave the `stat` as
+        it was (issue #95); one last changed longer before the look cannot."""
+        if now != self.state:
+            return False
+        return now is None or now.changed_ns < self.at_ns - TICK_NS
+
+
+def look(path: str) -> Looked:
+    """The file at `path` as it is now, taken before its check at rest (`checked_at_rest`) and
+    given to the store opened after it; a file that cannot be looked at is never `still`."""
+    at = time.time_ns()
+    try:
+        return Looked(_file_state(path), at)
+    except OSError:
+        return Looked(_FileState((-1, -1), -1, -1, -1), at)
+
+
 def _busy(exc: sqlite3.OperationalError) -> bool:
     """Whether SQLite refused because another connection held the lock (the result code,
     never the message, which differs between builds)."""
@@ -236,7 +270,9 @@ class _BeforeCommit:
 
 
 class Store:
-    def __init__(self, path: str = ":memory:", *, reads_only: bool = False) -> None:
+    def __init__(
+        self, path: str = ":memory:", *, reads_only: bool = False, looked: Looked | None = None
+    ) -> None:
         self._path = path
         # Opened for reads only, the store never checkpoints (`close`), and beside a `-wal`
         # holding anything as it opens, every connection it opens is told not to checkpoint as
@@ -298,7 +334,14 @@ class Store:
             raise
         if path != ":memory:":
             seen = _file_state(path)
-            self._file = seen
+            # Opened on a file checked at rest, the store takes the file as last seen only when
+            # nothing a `stat` shows changed since the look taken before that check (`looked`);
+            # otherwise its first look checks the file, so a change landing while that check
+            # ran, or before the store was open, is checked as one from outside. A batch that
+            # writes nothing no longer checks the file again (issue #117), and that second
+            # check was what caught such a change before. An open that wrote (a store 0.5.x
+            # left) changed the file itself, and its first look checks it too.
+            self._file = seen if looked is None or looked.still(seen) else SINCE_CHECKED
             self._identity = seen.identity if seen is not None else None
         # The answers kept rather than computed on every call: the whole-ledger projection,
         # the first record that cannot be read (`readable`, behind /health) and the last walk
@@ -792,7 +835,11 @@ class Store:
         refused as `StoreBusy` before anything is written. Reads on other threads go on beside
         it on their own connections and do not see it until it commits. The kept answers are
         dropped when it ends, committed or not, and computed again on the next read. A batch
-        is not nested and does not run inside a snapshot this thread holds open."""
+        that wrote something is folded into the file as it ends (`_checkpoint`), which checks
+        the file; one that wrote nothing (a seed that finds the store full) changed nothing in
+        the file and runs neither, where it checked the file a second time as `serve` and
+        `seed` started (issue #117). A batch is not nested and does not run inside a snapshot
+        this thread holds open."""
         if getattr(self._local, "depth", 0):
             raise RuntimeError("a batch of writes cannot run inside an open snapshot")
         with self._lock:
@@ -806,11 +853,19 @@ class Store:
                     raise StoreBusy(BUSY) from exc
                 raise
             self._batching = True
+            changes, wrote = self._db.total_changes, False
             try:
                 yield
+                # Whether the batch wrote anything, by SQLite's own count of the rows this
+                # connection inserted, updated or deleted, those its triggers and foreign keys
+                # changed included. Only this connection writes inside the batch's write
+                # transaction, and the store writes no schema in one, so an unmoved count is a
+                # commit that adds no frame to the WAL and leaves the file as it was.
+                wrote = self._db.total_changes != changes
                 self._db.commit()
-                # One own commit for the checkpoint below to fold, however many writes it held.
-                self._uncheckpointed += 1
+                if wrote:
+                    # One own commit for the checkpoint below to fold, however many writes.
+                    self._uncheckpointed += 1
             except BaseException:
                 self._db.rollback()
                 raise
@@ -821,7 +876,8 @@ class Store:
                 self._journal.value = None
                 self._unreadable.value = None
                 self._projection.value = None
-            self._checkpoint()
+            if wrote:
+                self._checkpoint()
 
     def holds(self) -> tuple[int, int, int]:
         """How many aircraft, flights and entries the store holds, read in one snapshot."""
@@ -847,8 +903,8 @@ class Store:
 
     def _checkpoint(self) -> None:
         """Under the write lock, after an own commit and once the kept answers have moved on:
-        every `CHECKPOINT_COMMITS` own commits, and after a batch, fold the WAL into the store
-        file (`PRAGMA wal_checkpoint(RESTART)`). It waits, up to the busy timeout, for the
+        every `CHECKPOINT_COMMITS` own commits, and after a batch that wrote, fold the WAL into
+        the store file (`PRAGMA wal_checkpoint(RESTART)`). It waits, up to the busy timeout, for the
         snapshots begun before the last commit to end, which are reads already under way;
         snapshots begun meanwhile read the folded file and are not waited for. So the whole WAL
         is folded and the next commit starts it over. A checkpoint that waits for no reader

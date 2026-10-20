@@ -41,10 +41,12 @@ from .observability import configure_logging
 from .store import (
     AtRest,
     DuplicateFlight,
+    Looked,
     Store,
     StoreBusy,
     StoreDamaged,
     checked_at_rest,
+    look,
     unwritable_side_files,
 )
 
@@ -106,7 +108,10 @@ def open_store(path: str, *, create: bool = True, reads_only: bool = False) -> S
     #108). A command that only reads passes `reads_only`: its store runs no checkpoint and
     leaves a `-wal` it finds holding anything as it was, whether it answers or is refused.
     Before that check, a store whose `-shm` cannot be written is refused (503) naming the side
-    files that cannot be, with nothing opened (`unwritable_side_files`, issue #112)."""
+    files that cannot be, with nothing opened (`unwritable_side_files`, issue #112). The
+    file's `stat` is taken before that check and given to the store, which checks the file
+    again at its first look only when the `stat` has changed since, or the file was changed
+    within a clock tick before it (`Looked.still`, issue #117)."""
     if path != ":memory:" and not create and _nothing_at(path):
         raise Refused(
             404,
@@ -118,13 +123,14 @@ def open_store(path: str, *, create: bool = True, reads_only: bool = False) -> S
         unwritable = unwritable_side_files(path)
         if unwritable is not None:
             raise Refused(503, unwritable)
+        looked = look(path)  # before the check, so a change landing during it is seen
         with checked_at_rest(path) as found:
             if found is not None:
                 raise Refused(503, _damaged(found))
             _checked.add(path)
             # Opened while the check's connection is still open (`checked_at_rest`).
-            return _open(path, create, reads_only)
-    return _open(path, create, reads_only)
+            return _open(path, create, reads_only, looked)
+    return _open(path, create, reads_only, None)
 
 
 def _damaged(found: AtRest) -> str:
@@ -164,14 +170,14 @@ def _damaged(found: AtRest) -> str:
     )
 
 
-def _open(path: str, create: bool, reads_only: bool) -> Store:
+def _open(path: str, create: bool, reads_only: bool, looked: Looked | None) -> Store:
     if path != ":memory:" and create:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             detail = f"the store {path} cannot be opened: {exc.strerror or exc}"
             raise Refused(503, detail) from exc
-    store = Store(path, reads_only=reads_only)
+    store = Store(path, reads_only=reads_only, looked=looked)
     _opened.append(store)
     return store
 

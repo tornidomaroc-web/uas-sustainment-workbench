@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from uas_workbench.service.cli import main
-from uas_workbench.service.store import Store
+from uas_workbench.service.store import Looked, Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
 LOG = next((FIXTURES / "px4").glob("*.ulg"))
@@ -26,8 +26,14 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[Store]:
     stores: list[Store] = []
     init = Store.__init__
 
-    def tracking(self: Store, path: str = ":memory:", *, reads_only: bool = False) -> None:
-        init(self, path, reads_only=reads_only)
+    def tracking(
+        self: Store,
+        path: str = ":memory:",
+        *,
+        reads_only: bool = False,
+        looked: Looked | None = None,
+    ) -> None:
+        init(self, path, reads_only=reads_only, looked=looked)
         stores.append(self)
 
     monkeypatch.setattr(Store, "__init__", tracking)

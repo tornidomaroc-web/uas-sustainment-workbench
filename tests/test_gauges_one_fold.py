@@ -309,8 +309,10 @@ def test_a_checkpoint_waiting_for_an_old_reader_delays_writes_and_fails_none(
     path = str(tmp_path / "s.sqlite")
     store = seeded(path)
     client = TestClient(create_app(store, write_token=TOKEN))
-    with store.batch():  # nothing written; it checkpoints, so the count starts at 0
-        pass
+    # Fold what seeding left, so the count starts at 0. A batch that writes nothing no longer
+    # checkpoints (issue #117), so it is the checkpoint itself that is run here.
+    with store._lock:
+        store._checkpoint()
 
     def write(n: int) -> tuple[int, float]:
         work = {"work_id": f"WO-W-{n}", "state": "deferred"}

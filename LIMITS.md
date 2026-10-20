@@ -427,9 +427,10 @@ field-level tables. This file is about what that means for a maintenance tool.
     an existing store looks at the `-shm` before SQLite opens anything (it is opened for writing
     and closed, nothing written) and refuses one it cannot write in one `refused (503)` line
     naming it, and the `-wal` when that cannot be written either, exit 1, the three files byte
-    for byte as they were and nothing made; before, the six commands that only read, `record`
-    on such a store and `uasw serve` ended in a `RuntimeError` traceback after 1000 tries to pin
-    one state. A `-wal` alone that cannot be written stops no read, and is not refused. Should a
+    for byte as they were and nothing made; before, ten of the eleven commands that open a store
+    (`seed`, `serve`, `record`, `record retract` and the six that only read) ended in a
+    `RuntimeError` traceback after 1000 tries to pin one state, and `ingest` in SQLite's own
+    "attempt to write a readonly database" (measured on 0.6.2 and 0.6.3, all eleven). A `-wal` alone that cannot be written stops no read, and is not refused. Should a
     `-shm` become unwritable under a running store, a read that cannot stand is refused as
     SQLite's own refusals are (503 in the service, one line in a command) rather than raising.
     A directory the process cannot write to was not measured; SQLite needs to create the side
@@ -631,7 +632,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   overwritten that the `-wal` file held passed the check; any page it did not hold failed it).
   The store makes the only changes it makes to its file while open itself (issue #79): its
   writing connection never checkpoints on its own (`wal_autocheckpoint` is 0), and the store
-  folds the WAL into the file every 200 of its own commits and after each batch, with
+  folds the WAL into the file every 200 of its own commits and after each batch that wrote, with
   `PRAGMA wal_checkpoint(RESTART)`, which waits, up to the busy timeout, for the reads already
   under way on a state older than its last commit to end (reads begun meanwhile are not waited
   for), so the whole WAL is folded and the next commit starts it over. One that waits for no
@@ -651,8 +652,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   during the checkpoint is refused, and a file that passes is recorded as seen with nothing
   else done: no connection is opened afresh and no kept answer is computed again. Every
   checkpoint the store runs has own commits to fold, since it runs one every 200 of them and
-  after each committed batch, so every one is followed by the check (`_checkpoint` still
-  carries a guard for a checkpoint with nothing to fold, which no store on a file reaches).
+  after each batch that wrote, so every one is followed by the check (`_checkpoint` still
+  carries a guard for a checkpoint with nothing to fold, which no store on a file reaches). A
+  batch that wrote nothing, by SQLite's count of the rows its connection changed
+  (`total_changes`), left the file as it was and runs no checkpoint and no check; before, it
+  ran both, so `serve` and `seed` checked a store that holds data twice as they started
+  (issue #117, measured in the bullet on the check at rest, below).
   So a change from outside that lands during the
   store's own checkpoint and passes the check (a copy restored in place) is served without the
   connections opened afresh; restore a store with the service stopped, as above. Before, SQLite
@@ -707,10 +712,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   and a service stopped, given a good copy and started again answered `/health` in 1.5 s and
   9.3 to 9.4 s, the at-rest check included. Damage found early in the check makes each check
   short: 64 pages overwritten mid-file were found in 0.03 s on both stores, and the service
-  took 5 to 12 % on either version. The check's time follows the rows and index keys more than
-  the bytes (`integrity_check` took 0.16 s on the first store and 4.5 s on the second, where
-  `quick_check` took 0.2 s on both), so the 3 ms per MiB above holds for rows the size of this
-  store's own. The checkpoint's
+  took 5 to 12 % on either version. The check's time follows index keys stored out of their
+  rows' order more than the bytes: `integrity_check` took 0.16 s on the first store and 4.5 s
+  on the second, where `quick_check` took 0.2 s on both, and 795,000 such rows with their keys
+  written in order took 0.49 s on a 114.7 MiB store (the bullet on the check at rest, below);
+  so the 3 ms per MiB above holds for tables indexed in the order their rows are written, as
+  this store's own are apart from the flights' aircraft and log reference. The checkpoint's
   wait for an older read holds the store's write lock, so the write that runs it, and every
   write through the service sent meanwhile, answer only when that read ends or the busy
   timeout passes; then the checkpoint is left for the next one and the writes are answered
@@ -825,9 +832,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   the order rows are written apart from the flights' aircraft and log reference. Every
   command pays it as it opens the store: `record history` and `record` took 6.1 s each where
   0.6.2 took 0.39 and 0.45 s, and on a like store (113.8 MiB, a 5.7 s check) `serve` and
-  `seed`, which on a store that holds data run it again at the checkpoint after their seed
-  finds the store full (issue #117), took 12.0 and 11.7 s where 0.6.2 took 1.05 and 0.83 s
-  (real processes, medians of three interleaved rounds).
+  `seed` took 12.0 and 11.7 s on 0.6.3 where 0.6.2 took 1.05 and 0.83 s (real processes,
+  medians of three interleaved rounds), since on a store that holds data they ran it again at
+  the checkpoint after their seed found the store full. They now run it once (issue #117): on
+  a store of the same shape (the seeded store with 795,000 rows indexed on random keys,
+  74.0 MiB, a 4.3 s check) `serve` reached its first `/health` in 4.6 s where 0.6.3 took
+  9.3 s, and `seed` refused in 4.4 s where 0.6.3 took 8.5 s; on 637.4 MiB of 800,000 work
+  orders appended through the store (a 1.7 s check) `seed` took 2.7 s against 4.4 s and
+  `serve` 31.9 s against 34.4 s, most of it the service computing its kept answers over
+  800,000 entries before it answers, at a peak of 1.4 GiB on both (Windows, Python 3.12.10,
+  SQLite 3.49.1, 2026-10-20, real processes, medians of three interleaved rounds; CPU time
+  within 0.7 s of each wall time).
   Through real processes (four interleaved rounds, medians) the commands'
   own run-to-run spread was larger than the check: on the seeded store `serve` reached its
   first `/health` in 1.0 s on this version and 1.3 s on 0.6.2, and `record`, `ingest` and
@@ -837,7 +852,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   new lock: `/health`, `/aircraft`, `/fleet/due` and
   `/aircraft/SYN-04/due` answered within a millisecond of 0.6.2 on the seeded store. What it
   does not cover: a file damaged after the check, while the command runs, is left to the open
-  store's look at its file, as in the bullet above; and a row rewritten inside a well-formed
+  store's look at its file, as in the bullet above. A change landing while the check runs, or
+  before the store is open, is checked at that store's first look whenever the file's `stat`
+  differs from one taken right before the check, or the file was last changed within 0.1 s
+  before it (a change within the clock's tick of the last one can leave the `stat` as it
+  was); `serve` and `seed` caught such a change with their second check before, and the other
+  commands not at all. A change that puts the file's size and time of last change back
+  exactly as they were, as a tool that sets the time can, is left to `uasw verify`; and a row rewritten inside a well-formed
   page passes it (the journal walk finds that in a journaled row).
   The commands that only read run it since issue #107: before, on a store with one key of the
   flights index edited in place, `records`, `evidence`, `fleet-records` and `export-static`
