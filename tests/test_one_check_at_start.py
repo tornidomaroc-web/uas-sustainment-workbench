@@ -257,7 +257,7 @@ def opened_with_change_during_its_check(
     else:
         at_rest(db)
     looked = os.stat(db)
-    checked_at_rest = cli.checked_at_rest
+    checked_at_rest = STORE.checked_at_rest  # the function `cli` imported
 
     @contextlib.contextmanager
     def changed_after(path: str) -> Iterator[Any]:

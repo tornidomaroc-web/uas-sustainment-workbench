@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `serve` and `seed` on a store that holds data check it once as they start, not twice (part
+  of #117): a batch that writes nothing, as their seed is when it finds the store full, by
+  SQLite's own count of the rows changed, now runs no checkpoint and so no second check; a
+  batch that writes still does. On a 74.0 MiB store whose index keys were written in random
+  order (a 4.3 s check) `serve` answered its first `/health` in 4.6 s where 0.6.3 took 9.3 s,
+  and `seed` refused in 4.4 s where it took 8.5 s. A change landing while the check at rest
+  runs is still checked, now by every command: the store compares the file with a `stat` taken
+  before that check. LIMITS.md also now gives the check's cost as following index keys out of
+  order, and the ten commands 0.6.2 ended in a traceback on an unwritable `-shm`.
+
 ## 0.6.3 (2026-10-20)
 
 What operators see change: every command that opens an existing store checks the file whole

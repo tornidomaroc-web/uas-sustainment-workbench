@@ -16,7 +16,7 @@ from collections.abc import Iterator
 import pytest
 from child_code import check_children_run_this_code, pinned_pythonpath
 
-from uas_workbench.service.store import Store
+from uas_workbench.service.store import Looked, Store
 
 # Every `uasw` child a test launches runs the code under test, wherever it starts (part of
 # issue #73): the folder this process imported `uas_workbench` from goes first on PYTHONPATH,
@@ -33,8 +33,14 @@ def _closing_every_store() -> Iterator[None]:
     opened: list[Store] = []
     init = Store.__init__
 
-    def tracking_init(self: Store, path: str = ":memory:", *, reads_only: bool = False) -> None:
-        init(self, path, reads_only=reads_only)
+    def tracking_init(
+        self: Store,
+        path: str = ":memory:",
+        *,
+        reads_only: bool = False,
+        looked: Looked | None = None,
+    ) -> None:
+        init(self, path, reads_only=reads_only, looked=looked)
         opened.append(self)
 
     with pytest.MonkeyPatch.context() as patch:
