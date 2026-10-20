@@ -676,9 +676,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   rest being the walk and the whole-store read every change from outside costs. While it
   runs, every other read and write that meets the change waits for it, the store's own
   checkpoint included, since a read let through meanwhile could read a damaged file. On a
-  store of many small rows that wait is the check's own time: on the 113.7 MiB store of
-  795,000 indexed rows in the at-rest bullet below (a 6.3 s check), one `/health` sent while a
-  `uasw record` ran beside `uasw serve` took 6.0 s, and the service's own checkpoint held its
+  store whose check takes seconds that wait is the check's own time: on the 113.7 MiB store of
+  795,000 rows indexed in random order in the at-rest bullet below (a 6.3 s check), one
+  `/health` sent while a `uasw record` ran beside `uasw serve` took 6.0 s, and the service's
+  own checkpoint held its
   200th write 6.1 s, where 0.6.2, which ran `quick_check` (0.24 s there), took 0.26 and 0.3 s
   (Windows, Python 3.12.10, 2026-10-20, `/health` sent 20 times a second). A damaged
   store whose file looks as last seen is checked again only after a wait timed from the end of
@@ -815,11 +816,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   Windows (2026-10-18, a connection of its own, medians; Python 3.12 with SQLite 3.49.1, 3.14
   with 3.50.4): 0.7 to 0.9 ms on the seeded store (0.1 MiB), 25 to 27 ms at 9.7 MiB (85 times
   the seeded size), 244 to 266 ms at 84 MiB, where `quick_check` took 0.7 to 0.8, 22 to 23 and
-  192 to 202 ms. Its time follows rows and index keys more than bytes: on a store of 113.7 MiB,
-  the seeded store with a table of 795,000 indexed rows of 60 bytes added (Windows, Python
-  3.12.10, SQLite 3.49.1, 2026-10-20), `integrity_check` took 6.3 s and `quick_check` 0.24 s,
-  and every command pays it as it opens the store: `record history` and `record` took 6.1 s
-  each where 0.6.2 took 0.39 and 0.45 s (real processes, medians of three interleaved rounds).
+  192 to 202 ms. Its time follows index keys stored out of their rows' order more than bytes:
+  on a store of 113.7 MiB, the seeded store with a table of 795,000 rows of 60 bytes added,
+  indexed on keys written in random order (Windows, Python 3.12.10, SQLite 3.49.1,
+  2026-10-20), `integrity_check` took 6.3 s and `quick_check` 0.24 s; the same rows with keys
+  written in order took 0.49 and 0.22 s (114.7 MiB), and the seeded store with 800,000 work
+  orders appended through the store 1.48 and 1.20 s (537.9 MiB), its tables being indexed in
+  the order rows are written apart from the flights' aircraft and log reference. Every
+  command pays it as it opens the store: `record history` and `record` took 6.1 s each where
+  0.6.2 took 0.39 and 0.45 s, and on a like store (113.8 MiB, a 5.7 s check) `serve` and
+  `seed`, which on a store that holds data run it again at the checkpoint after their seed
+  finds the store full (issue #117), took 12.0 and 11.7 s where 0.6.2 took 1.05 and 0.83 s
+  (real processes, medians of three interleaved rounds).
   Through real processes (four interleaved rounds, medians) the commands'
   own run-to-run spread was larger than the check: on the seeded store `serve` reached its
   first `/health` in 1.0 s on this version and 1.3 s on 0.6.2, and `record`, `ingest` and

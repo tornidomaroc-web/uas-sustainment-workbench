@@ -12,10 +12,13 @@ leave a `-wal` a hard stop left beside the store as they found it, where 0.6.2's
 into the file and removed it as they closed. A store whose `-shm` cannot be written is one
 refusal line, where 0.6.2 ended ten of the eleven commands that open a store in a traceback:
 that defect is in 0.6.2 too, not one this release brought. The cost is the check's time,
-which follows the store's rows and index keys more than its bytes: about 1 ms on the seeded
-store, but 6.3 s on a 113.7 MiB store of 795,000 small indexed rows, where every command
-took about 6 s to start (0.4 s on 0.6.2) and a running service held requests about 6 s after
-each change from outside and at each of its own checkpoints (0.3 s on 0.6.2). Beside a kept
+which follows index keys stored out of their rows' order more than the store's bytes: about
+1 ms on the seeded store and 1.5 s on 538 MiB of 800,000 work orders, but 6.3 s on a
+113.7 MiB store of 795,000 small rows indexed in random order, where every command took
+about 6 s to start (0.4 s on 0.6.2), `serve` and `seed` about 12 s (1.1 and 0.8 s), since on
+a store that holds data they check it twice (#117), and a running service held requests
+about 6 s after each change from outside and at each of its own checkpoints (0.3 s on
+0.6.2). Beside a kept
 `-wal` the refusal says where the damage is when it can tell and says when it cannot, and in
 one narrow shape it still names the file for damage held only in the `-wal` (below). On a
 sound store, with the clock frozen, every GET answer and every exported file is what 0.6.2
@@ -31,9 +34,13 @@ gave apart from the version string and the demo page's new opening card.
   page, an index or `sqlite_sequence` was overwritten, or one of whose index keys was edited
   in place; and on that edited key the five commands that only read wrote their output and
   exited 0. The check took 0.7 to 0.9 ms on the seeded store, 25 to 27 ms at 9.7 MiB and
-  0.24 to 0.27 s at 84 MiB of the seeded store's own kind of rows, but 6.3 s at 113.7 MiB of
-  795,000 indexed rows of 60 bytes, where `record history` and `record` took 6.1 s each
-  against 0.39 and 0.45 s on 0.6.2. A row rewritten inside a well-formed page still passes
+  0.24 to 0.27 s at 84 MiB of the seeded store's own kind of rows and 1.48 s at 538 MiB of
+  800,000 work orders, but 6.3 s at 113.7 MiB of 795,000 rows of 60 bytes indexed in random
+  order, where `record history` and `record` took 6.1 s each against 0.39 and 0.45 s on
+  0.6.2; on a like store (113.8 MiB, a 5.7 s check) `serve` and `seed`, which on a store that
+  holds data run the check again at the checkpoint after their seed finds the store full
+  (#117), took 12.0 and 11.7 s against 1.05 and 0.83 s. A row rewritten inside a well-formed
+  page still passes
   it.
 - The commands that only read leave a hard stop's `-wal` as they found it (closes #107):
   `records`, `evidence`, `fleet-records`, `export-static`, `record history` and `verify` fold
@@ -74,8 +81,9 @@ gave apart from the version string and the demo page's new opening card.
   `GET /journal/verify` runs it before its walk, so the service no longer answers `ok: true`
   on, or writes an entry into, a file one of whose index keys was edited, as 0.6.2 did. While
   a check runs, every read and write that meets the change waits for its verdict, so on a
-  store of many small rows each change from outside (another `uasw` command's commit) and
-  each of the service's own checkpoints, every 200 of its writes and after each batch, holds
+  store whose check takes seconds each change from outside (another `uasw` command's
+  commit) and each of the service's own checkpoints, every 200 of its writes and after each
+  batch, holds
   them for the check's time: on the 113.7 MiB store above one `/health` took 6.0 s beside a
   `uasw record` and the 200th write took 6.1 s, where 0.6.2 took 0.26 and 0.3 s. A damaged
   file whose `stat` looks as last seen is checked again only after nine times its last
