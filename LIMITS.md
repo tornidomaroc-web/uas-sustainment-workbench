@@ -45,6 +45,31 @@ field-level tables. This file is about what that means for a maintenance tool.
   case.** Definitions, parameters and boot text alone are refused. A ULog with data only in
   topics the tool does not read is parsed a second time, with every topic, to find that data;
   a large log of that kind is read in full twice.
+- **A ULog that pyulog reports damaged is refused, on pyulog 1.2.4 and 1.3.0.** pyulog skips a
+  message it cannot parse and marks the file corrupt: a data message whose framing breaks, on
+  both versions, and from 1.3.0 (PX4/pyulog#128) a format definition or a subscription too,
+  where 1.2.4 raised and the log was refused in pyulog's words (a `KeyError` naming the
+  subscription it could not match). The flight read from what is left can miss a topic, which
+  then reads as one the log never held ("no vehicle_land_detected topic"), or most of its span,
+  so such a log is refused, as a damaged DataFlash log is, with the same words on what that
+  leaves out of the counts: "pyulog found messages it could not parse and skipped them;
+  nothing from this log is stored, ...". Measured 2026-10-21 on 448 damaged copies of two logs
+  (the PX4 fixture excerpt and the synthetic flown log of `tests/test_flight_px4.py`: cut short,
+  one byte inverted, 64 bytes overwritten, definitions and flags crafted): before this check
+  1.2.4 stored a flight for 322 copies, 37 of them marked corrupt, and 1.3.0 for 345, 62 marked
+  corrupt (23 of those 1.2.4 refused); in the 58 marked corrupt that 1.3.0 stored and that were
+  not crafted, the flight time or landings differed from the undamaged log's in 18 and the
+  span in 13, down to 17.1 s of 204.3 s. With the check 1.2.4 stores 285 and 1.3.0 283, none
+  marked corrupt, each record the same on both versions and as before. The two apart hold a
+  definition declaring an array of more than 65 535 or fewer than 0 elements, which 1.3.0 marks
+  corrupt and 1.2.4 reads, at a cost in time that grows with the size it declares: 33 s for a
+  139-byte file declaring 10 million. None of the 45 real logs measured here (the fixture, the
+  43 PX4 logs above and the whole log the fixture is cut from, 2.3 GB) is marked corrupt by
+  either version; each gives the same
+  record on both, and `uasw ingest` prints the same lines for it, as before the check. What
+  pyulog does not see, the check does not: a value damaged inside a message that still frames
+  (a ULog carries no checksum) reads as written, and a log cut short reads to the cut, as
+  before.
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of

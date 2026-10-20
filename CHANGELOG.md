@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A PX4 ULog that pyulog reports damaged is refused with nothing stored (`POST /ingest` 422,
+  `uasw ingest` exit 1), on pyulog 1.2.4 and 1.3.0, as a damaged DataFlash log is; 0.6.3
+  stored the flight read from what pyulog could parse, which on pyulog 1.3.0 (released
+  2026-10-20) includes logs with a damaged definition or subscription that 1.2.4 refused.
+  Real logs read as before (LIMITS.md).
+
 ## 0.6.3 (2026-10-20)
 
 What operators see change: every command that opens an existing store checks the file whole
