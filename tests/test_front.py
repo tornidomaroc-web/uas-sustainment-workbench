@@ -2,7 +2,8 @@
 
 They are what a first-time reader sees, so what they claim is tied here to the code that
 makes it true: the records summary's title and its four statuses as the code spells them,
-the release they name as the package's version, every `uasw` command they show as one the
+the release they name, in words and in the tag to check out, as the package's version and the
+release under way, every `uasw` command they show as one the
 parser accepts, every relative link as a file in the tree, and every web address as one the
 repository already carries. Neither uses a dash longer than a hyphen, or a word the records
 summary never uses about itself.
@@ -18,6 +19,7 @@ from importlib import resources
 from pathlib import Path
 
 import pytest
+from test_version import RELEASE
 
 from uas_workbench import __version__
 from uas_workbench.evidence.records import RECORDS_STATUSES, RECORDS_TITLE
@@ -71,7 +73,13 @@ def test_the_records_summary_is_named_as_the_code_names_it() -> None:
 
 
 def test_the_release_named_is_the_package_version() -> None:
-    assert f"The latest release is {__version__}." in readme_front()
+    """The release the front names in words and the tag it says to check out are one release:
+    the version the code reports and the release `test_version` holds it to, so a release
+    that moves the version and leaves the front naming the one before fails here."""
+    front = readme_front()
+    for release in {__version__, RELEASE}:
+        assert f"The latest release is {release}." in front, release
+        assert f"`git checkout v{release}`" in front, release
 
 
 def test_every_uasw_command_shown_is_one_the_parser_accepts() -> None:
