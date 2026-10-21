@@ -11,7 +11,9 @@
   not refused for them: it reads as the log cut where they begin, to its last whole message
   before them (closes #122). A message that runs into the zeros is dropped, as a cut log drops
   its cut message, where 0.6.3 read it whole with its missing bytes taken from the zeros: a
-  battery_status sample cut in half stored -50.0 mAh for a flight of 475.0. A whole last
+  battery_status sample cut in half stored -50.0 mAh for a flight of 475.0. One shape is still
+  read whole: a message cut after its header and followed by exactly the zero bytes it lacks,
+  or by one or two more, which pyulog reads as undamaged (LIMITS.md). A whole last
   message whose own last bytes are zero is dropped too when zeros follow it, since its bytes
   are those of a cut one: the PX4 fixture excerpt with zeros appended reads 2 ms shorter. A
   zero run longer than 64 KiB is not read at all: on a 246 MB log, 16 MiB of zeros cost

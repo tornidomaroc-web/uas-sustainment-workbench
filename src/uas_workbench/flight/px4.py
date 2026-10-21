@@ -249,10 +249,12 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
     # as message headers and marks the file corrupt for. The log is then read as if it ended
     # where they begin, as a log cut there reads: to its last whole message. A message that
     # runs into the zeros is dropped as a cut one is, since a cut message followed by zeros has
-    # the bytes of a whole message whose last bytes are zero, and a record is never built from
-    # bytes that may be padding. A file pyulog reads whole without damage is read as it is: the
-    # zeros it ends in are then its last message's own. A run too long to be that is not read
-    # at all, which spares pyulog its walk through it, byte by byte.
+    # the bytes of a whole message whose last bytes are zero, and no record is built from
+    # zeros pyulog reads as damage. A file pyulog reads whole without damage is read as it
+    # is: the zeros it ends in are then its last message's own, or the exact bytes a message
+    # cut after its header lacks, plus one or two, which no reader can tell apart. A zero run
+    # longer than one message can hold is not read at all, which spares pyulog its walk
+    # through it, byte by byte.
     tail = _zero_tail(path)
     if tail is not None and tail[0] < FILE_HEADER:  # pyulog refuses the file on its header
         tail = None
