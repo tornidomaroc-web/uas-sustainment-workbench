@@ -6,9 +6,17 @@
   `uasw ingest` exit 1), on pyulog 1.2.4 and 1.3.0, as a damaged DataFlash log is; 0.6.3
   stored the flight read from what pyulog could parse, which on pyulog 1.3.0 (released
   2026-10-20) includes logs with a damaged definition or subscription that 1.2.4 refused.
-  Real logs read as before (LIMITS.md). A log that ends in zero bytes after its last whole
-  message, as one still being written when the power went can, is not refused for them: it
-  reads to that message, as 0.6.3 read it.
+  Real logs read as before (LIMITS.md).
+- A PX4 ULog that ends in zero bytes, as one still being written when the power went can, is
+  not refused for them: it reads as the log cut where they begin, to its last whole message
+  before them (closes #122). A message that runs into the zeros is dropped, as a cut log drops
+  its cut message, where 0.6.3 read it whole with its missing bytes taken from the zeros: a
+  battery_status sample cut in half stored -50.0 mAh for a flight of 475.0. A whole last
+  message whose own last bytes are zero is dropped too when zeros follow it, since its bytes
+  are those of a cut one: the PX4 fixture excerpt with zeros appended reads 2 ms shorter. A
+  zero run longer than 64 KiB is not read at all: on a 246 MB log, 16 MiB of zeros cost
+  2.8 to 3.1 s where the zero-tail re-read first built for this took 22.0 to 22.1, and 4096
+  zero bytes 5.6 to 5.8 s where it took 12.2 to 13.0.
 
 ## 0.6.3 (2026-10-20)
 
