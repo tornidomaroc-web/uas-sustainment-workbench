@@ -75,36 +75,37 @@ field-level tables. This file is about what that means for a maintenance tool.
   written when the power went can end in zero bytes, and the logger writes buffers, not whole
   messages, so the zeros can begin inside a message. pyulog reads a message header of zeros
   there and marks the file corrupt; the log is then read again as if the file ended where the
-  zeros begin, to its last whole message before them, and is refused only if pyulog finds
-  damage before them too. A message that runs into the zeros is dropped, as a cut log drops its
-  cut message, and no value is ever read from them: until #122, such a message was read whole
-  and its missing bytes taken from the zeros (a battery_status sample cut in half stored
-  -50.0 mAh for a flight of 475.0, a logged-text message cut after its header stored an error
-  at -57.5 s whose text was NUL bytes). The cost is that a whole last message whose own last
-  bytes are zero is dropped too when zeros follow it, since a message cut short and followed by
-  zeros has the same bytes: the PX4 fixture excerpt, whose last vehicle_land_detected sample
-  ends in a zero byte, reads with zeros appended to the record of the excerpt without that
-  sample (span 204.273695 s, not 204.275778). A file pyulog reads whole without damage is read
-  as it is, so a log whose last message ends in zero bytes with nothing after it reads as
-  before; a message cut short and followed by exactly the zero bytes it lacks, or by one or two
-  more, is read whole, since pyulog sees no damage there. Measured 2026-10-21 on pyulog 1.2.4
+  zeros begin, to its last whole message before them, and is refused only if pyulog finds damage
+  before them too. A message that runs into the zeros is dropped, as a cut log drops its cut
+  message, and no value is read from them but in the one shape below: until #122, such a message
+  was read whole and its missing bytes taken from the zeros (a battery_status sample cut in half
+  stored -50.0 mAh for a flight of 475.0, a logged-text message cut after its header stored an
+  error at -57.5 s whose text was NUL bytes). The cost is that a whole last message whose own
+  last bytes are zero is dropped too when zeros follow it, since a message cut short and
+  followed by zeros has the same bytes: the PX4 fixture excerpt, whose last
+  vehicle_land_detected sample ends in a zero byte, reads with zeros appended to the record of
+  the excerpt without that sample (span 204.273695 s, not 204.275778). A file pyulog reads whole
+  without damage is read as it is, so a log whose last message ends in zero bytes with nothing
+  after it reads as before; a message cut short after its 3-byte header and followed by exactly
+  the zero bytes it lacks, or by one or two more, is read whole, its missing bytes taken from
+  those zeros, since pyulog sees no damage there (cut inside its header, its type byte reads as
+  zero, which pyulog does see, and the message is dropped). Measured 2026-10-21 on pyulog 1.2.4
   and 1.3.0, the same on both: each of the 44 logs in `data/raw` with 512 or 4096 zero bytes
-  appended reads to its own record (9 of them end in a zero byte of their own), and the
-  fixture to the record above. On 441 damaged copies of three logs (the fixture, the flown log
-  of `tests/test_flight_px4.py` and a public log of 5.0 MB; cut at, and 1, 2, 3 bytes, half way
-  and one byte short into, each of the last 12 messages, cut at 12 random points, one byte
-  inverted at 24, the last message's size changed by up to 4, the last 1 to 256 bytes zeroed,
-  64 zero bytes inside at 12 points, each of the last 12 messages dropped), each kept as it is
-  and with 512 zero bytes appended: the version before stored 61 with a different record with
-  and without the zeros, each built from the zeros, and refused 97 with them that it stored
-  without; this one stores none of those, and 53 differ only in that the zeros drop a whole
-  last message ending in zero bytes (the span shorter by at most 0.211 s, and in one copy
-  faults unknown where the copy without zeros has none). The re-read reads nothing past where
-  the zeros begin, and a zero run longer than one message can hold (64 KiB) is not read at all,
-  so pyulog does not walk it byte by byte: on the largest real log (246 MB, read in
-  2.9 to 3.0 s), 4096 zero bytes appended cost 5.6 to 5.8 s where the version before took 12.2
-  to 13.0, and 16 MiB 2.8 to 3.1 s where it took 22.0 to 22.1 (medians of three, Windows,
-  Python 3.12).
+  appended reads to its own record (9 of them end in a zero byte of their own), and the fixture
+  to the record above. On 441 damaged copies of three logs (the fixture, the flown log of
+  `tests/test_flight_px4.py` and a public log of 5.0 MB; cut at, and 1, 2, 3 bytes, half way and
+  one byte short into, each of the last 12 messages, cut at 12 random points, one byte inverted
+  at 24, the last message's size changed by up to 4, the last 1 to 256 bytes zeroed, 64 zero
+  bytes inside at 12 points, each of the last 12 messages dropped), each kept as it is and with
+  512 zero bytes appended: the version before stored 61 with a different record with and without
+  the zeros, each built from the zeros, and refused 97 with them that it stored without; this
+  one stores none of those, and 53 differ only in that the zeros drop a whole last message
+  ending in zero bytes (the span shorter by at most 0.211 s, and in one copy faults unknown
+  where the copy without zeros has none). The re-read reads nothing past where the zeros begin,
+  and a zero run longer than one message can hold (64 KiB) is not read at all, so pyulog does
+  not walk it byte by byte: on the largest real log (246 MB, read in 2.9 to 3.0 s), 4096 zero
+  bytes appended cost 5.6 to 5.8 s where the version before took 12.2 to 13.0, and 16 MiB 2.8 to
+  3.1 s where it took 22.0 to 22.1 (medians of three, Windows, Python 3.12).
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
