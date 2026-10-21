@@ -64,24 +64,47 @@ field-level tables. This file is about what that means for a maintenance tool.
   definition declaring an array of more than 65 535 or fewer than 0 elements, which 1.3.0 marks
   corrupt and 1.2.4 reads, at a cost in time that grows with the size it declares: 33 s for a
   139-byte file declaring 10 million. None of the 45 real logs measured here (the fixture, the
-  43 PX4 logs above and the whole log the fixture is cut from, 2.3 GB) is marked corrupt by
-  either version; each gives the same
+  43 PX4 logs above and the 8.2 MB log the fixture is cut from; 2.29 GB in all, and 44
+  distinct, since two of the 3 consecutive logs are the same file byte for byte) is marked
+  corrupt by either version; each gives the same
   record on both, and `uasw ingest` prints the same lines for it, as before the check. What
   pyulog does not see, the check does not: a value damaged inside a message that still frames
   (a ULog carries no checksum) reads as written, and a log cut short reads to the cut, as
-  before. So does a log that ends in zero bytes after its last whole message, as a log still
-  being written when the power went can: pyulog reads a message header of zeros there and
-  marks the file corrupt, so the log is read again ending at that header, and reads to that
-  message as 0.6.3 read it; it is refused only if pyulog finds damage before the zeros too.
-  Measured 2026-10-21: each real log above but the 2.3 GB one (44), with 512 or 4096 zero
-  bytes appended, reads to the record of the log without them on both versions, where the
-  check alone refused all 88; with 512 bytes of 0xFF or random bytes appended, pyulog
-  marks none corrupt and each reads as the log without them. On 218 other damaged copies of
-  the same two logs (cut at 24 points, one byte inverted at 48, 64 bytes zeroed or randomised
-  at 16 each, zero, 0xFF or random bytes appended), the check stores 130 on both versions and
-  reading past a zero tail 135, each the same record on both versions and as before: the four
-  with zeros appended read to the record of the log without them, and the one whose last 64
-  bytes were zeroed reads to its last whole message, as a log cut there does.
+  before.
+- **A ULog that ends in zero bytes reads as the log cut where they begin.** A log still being
+  written when the power went can end in zero bytes, and the logger writes buffers, not whole
+  messages, so the zeros can begin inside a message. pyulog reads a message header of zeros
+  there and marks the file corrupt; the log is then read again as if the file ended where the
+  zeros begin, to its last whole message before them, and is refused only if pyulog finds
+  damage before them too. A message that runs into the zeros is dropped, as a cut log drops its
+  cut message, and no value is ever read from them: until #122, such a message was read whole
+  and its missing bytes taken from the zeros (a battery_status sample cut in half stored
+  -50.0 mAh for a flight of 475.0, a logged-text message cut after its header stored an error
+  at -57.5 s whose text was NUL bytes). The cost is that a whole last message whose own last
+  bytes are zero is dropped too when zeros follow it, since a message cut short and followed by
+  zeros has the same bytes: the PX4 fixture excerpt, whose last vehicle_land_detected sample
+  ends in a zero byte, reads with zeros appended to the record of the excerpt without that
+  sample (span 204.273695 s, not 204.275778). A file pyulog reads whole without damage is read
+  as it is, so a log whose last message ends in zero bytes with nothing after it reads as
+  before; a message cut short and followed by exactly the zero bytes it lacks, or by one or two
+  more, is read whole, since pyulog sees no damage there. Measured 2026-10-21 on pyulog 1.2.4
+  and 1.3.0, the same on both: each of the 44 logs in `data/raw` with 512 or 4096 zero bytes
+  appended reads to its own record (9 of them end in a zero byte of their own), and the
+  fixture to the record above. On 441 damaged copies of three logs (the fixture, the flown log
+  of `tests/test_flight_px4.py` and a public log of 5.0 MB; cut at, and 1, 2, 3 bytes, half way
+  and one byte short into, each of the last 12 messages, cut at 12 random points, one byte
+  inverted at 24, the last message's size changed by up to 4, the last 1 to 256 bytes zeroed,
+  64 zero bytes inside at 12 points, each of the last 12 messages dropped), each kept as it is
+  and with 512 zero bytes appended: the version before stored 61 with a different record with
+  and without the zeros, each built from the zeros, and refused 97 with them that it stored
+  without; this one stores none of those, and 53 differ only in that the zeros drop a whole
+  last message ending in zero bytes (the span shorter by at most 0.211 s, and in one copy
+  faults unknown where the copy without zeros has none). The re-read reads nothing past where
+  the zeros begin, and a zero run longer than one message can hold (64 KiB) is not read at all,
+  so pyulog does not walk it byte by byte: on the largest real log (246 MB, read in
+  2.9 to 3.0 s), 4096 zero bytes appended cost 5.6 to 5.8 s where the version before took 12.2
+  to 13.0, and 16 MiB 2.8 to 3.1 s where it took 22.0 to 22.1 (medians of three, Windows,
+  Python 3.12).
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
