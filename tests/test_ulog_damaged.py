@@ -148,13 +148,80 @@ def test_a_log_ending_in_zero_bytes_reads_as_the_log_without_them(
     source: str, zeros: int, tmp_path: Path
 ) -> None:
     """A log still being written when the power went can end in zero bytes: no message, but
-    pyulog reads a header of zeros there and marks the file corrupt.
-    Every message before them is whole, so the log reads as it would without them. The PX4
-    excerpt's own last message ends in zero bytes, which must still be read."""
+    pyulog reads a header of zeros there and marks the file corrupt. It reads as the log cut
+    where they begin. That is the log without them when its last byte is not zero, as the
+    flown log's. The PX4 excerpt's last message ends in a zero byte, so with zeros after it
+    the file is byte for byte the excerpt cut one byte short of its end and followed by
+    zeros: that message may have been cut, and is dropped, as a cut one is."""
     whole = flown_log(tmp_path / "whole.ulg") if source == "flown" else PX4_FIXTURE
+    written = whole.read_bytes().rstrip(b"\x00")
+    assert len(written) == len(whole.read_bytes()) - (source == "fixture")
+    cut = tmp_path / "cut.ulg"
+    cut.write_bytes(written)
     padded = tmp_path / "padded.ulg"
     padded.write_bytes(whole.read_bytes() + bytes(zeros))
-    assert replace(read_ulog(padded, **ATTR), log_ref=whole.stem) == read_ulog(whole, **ATTR)
+    assert padded.read_bytes() == written + bytes(zeros + (source == "fixture"))
+    assert replace(read_ulog(padded, **ATTR), log_ref=cut.stem) == read_ulog(cut, **ATTR)
+
+
+def cut_in(log: bytes, from_end: int, into: int) -> bytes:
+    """`log` cut `into` bytes after the start of its `from_end`-th message from the end,
+    counted from the first byte of that message's 3-byte header."""
+    at = messages(log)[-from_end][0]
+    return log[: at + into]
+
+
+# Each case is stored, with 512 zero bytes after it, with a record that differs from the
+# same cut without them on main (5bf52bc) on pyulog 1.2.4 and 1.3.0 (#122): the message that
+# runs into the zeros was read whole, its missing bytes taken from them. `into` is counted
+# from the message's header; the field named is one that differed.
+CUT_THEN_ZEROS = [
+    # A battery_status sample cut after 11 of its 22 body bytes: 475.0 mAh, -50.0 with zeros.
+    pytest.param("flown", 12, 3 + 11, "battery_mah", id="battery-mah"),
+    # The same sample one byte short: 7.6 Wh, 8.0 with zeros.
+    pytest.param("flown", 12, 3 + 21, "battery_wh", id="battery-wh"),
+    # A vehicle_land_detected sample cut inside its timestamp: 100 s of flight, 150 with zeros.
+    pytest.param("flown", 33, 3 + 8, "flight_time_s", id="flight-time"),
+    # The only failure_detector_status samples cut: faults unknown, none with zeros.
+    pytest.param("flown", 4, 3 + 5, "fault_events", id="faults-unknown"),
+    # A logged-text message cut right after its header: an error at -10 s whose text is NUL.
+    pytest.param("flown", 1, 3, "fault_events", id="logged-text"),
+    # The same on the PX4 excerpt: an error at -57.522763 s whose text is NUL.
+    pytest.param("fixture", 12, 3, "fault_events", id="fixture-logged-text"),
+    # A sample cut in the middle on the PX4 excerpt: the span ends later with zeros.
+    pytest.param("fixture", 11, 3 + 38, "log_span_s", id="fixture-span"),
+    # Cut inside a message header: stored as the cut log alone, refused with zeros.
+    pytest.param("flown", 12, 1, "battery_mah", id="inside-header"),
+]
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+@pytest.mark.parametrize(("source", "from_end", "into", "field"), CUT_THEN_ZEROS)
+def test_a_log_cut_inside_a_message_then_zeros_reads_as_the_cut_log(
+    source: str, from_end: int, into: int, field: str, tmp_path: Path
+) -> None:
+    """A log cut by power loss inside a message and followed by zero bytes reads as the same
+    cut without them: to its last whole message. No value is read from the zeros."""
+    whole = flown_log(tmp_path / "whole.ulg") if source == "flown" else PX4_FIXTURE
+    cut = tmp_path / "cut.ulg"
+    cut.write_bytes(cut_in(whole.read_bytes(), from_end, into))
+    padded = tmp_path / "padded.ulg"
+    padded.write_bytes(cut.read_bytes() + bytes(512))
+    alone = read_ulog(cut, **ATTR)
+    with_zeros = replace(read_ulog(padded, **ATTR), log_ref=cut.stem)
+    assert getattr(with_zeros, field) == getattr(alone, field)
+    assert with_zeros == alone
+
+
+def test_the_battery_sample_cut_in_half_reads_475_mah_with_zeros_after_it(
+    tmp_path: Path,
+) -> None:
+    """The repro of #122: main stored -50.0 mAh, the half-written sample's discharge read as 0."""
+    padded = tmp_path / "padded.ulg"
+    padded.write_bytes(cut_in(flown_log(tmp_path / "whole.ulg").read_bytes(), 12, 14) + bytes(512))
+    r = read_ulog(padded, **ATTR)
+    assert (r.battery_mah, r.battery_wh) == (475.0, 7.6)
 
 
 def test_a_damaged_log_ending_in_zero_bytes_is_still_refused(tmp_path: Path) -> None:
