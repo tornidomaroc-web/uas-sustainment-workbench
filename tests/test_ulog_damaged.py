@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,8 @@ from uas_workbench.service.cli import main
 from uas_workbench.service.store import Store
 
 KEY = "damaged-ulog-01"
+FIXTURES = Path(__file__).parent / "fixtures"
+PX4_FIXTURE = FIXTURES / "px4" / "flight_review_board_validation_2026-06-12_excerpt.ulg"
 PREFIX = "not a readable PX4 ULog or ArduPilot DataFlash log: "
 DAMAGED = (
     "pyulog found messages it could not parse and skipped them; nothing from this log is "
@@ -135,6 +138,44 @@ def test_uasw_ingest_refuses_a_damaged_log_and_reads_the_next(
     assert "Traceback" not in err
     store = Store(str(db))
     assert [f.log_ref for f in store.flights(KEY)] == ["whole"]
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+@pytest.mark.parametrize("zeros", [3, 512, 4096, 70_000])
+@pytest.mark.parametrize("source", ["flown", "fixture"])
+def test_a_log_ending_in_zero_bytes_reads_as_the_log_without_them(
+    source: str, zeros: int, tmp_path: Path
+) -> None:
+    """A log still being written when the power went can end in zero bytes: no message, but
+    pyulog reads a header of zeros there and marks the file corrupt.
+    Every message before them is whole, so the log reads as it would without them. The PX4
+    excerpt's own last message ends in zero bytes, which must still be read."""
+    whole = flown_log(tmp_path / "whole.ulg") if source == "flown" else PX4_FIXTURE
+    padded = tmp_path / "padded.ulg"
+    padded.write_bytes(whole.read_bytes() + bytes(zeros))
+    assert replace(read_ulog(padded, **ATTR), log_ref=whole.stem) == read_ulog(whole, **ATTR)
+
+
+def test_a_damaged_log_ending_in_zero_bytes_is_still_refused(tmp_path: Path) -> None:
+    log = damaged(tmp_path / "framing.ulg", "framing")
+    log.write_bytes(log.read_bytes() + bytes(4096))
+    with pytest.raises(ValueError) as refused:
+        read_ulog(log, **ATTR)
+    assert str(refused.value) == DAMAGED
+
+
+def test_post_ingest_stores_a_log_ending_in_zero_bytes(tmp_path: Path) -> None:
+    log = flown_log(tmp_path / "whole.ulg").read_bytes() + bytes(4096)
+    store = Store(":memory:")
+    client = TestClient(create_app(store, write_token=None), client=("127.0.0.1", 1))
+    response = client.post(
+        "/ingest",
+        data={"aircraft_key": KEY},
+        files={"log": ("padded.ulg", log, "application/octet-stream")},
+    )
+    assert response.status_code == 201, response.text
+    assert store.flight_count() == 1
 
 
 def test_uasw_ingest_of_damaged_logs_alone_exits_1_and_makes_no_store(tmp_path: Path) -> None:

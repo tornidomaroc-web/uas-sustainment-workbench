@@ -6,8 +6,10 @@ field is Unknown with that reason.
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from pyulog import ULog
@@ -189,11 +191,62 @@ def _lifetime(ulog: ULog) -> Maybe[LifetimeCounter]:
     return LifetimeCounter(at_boot, last_seen, last_at)
 
 
-def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
+class _EndsAtZeros:
+    """The open log as pyulog reads it, ending at the first message header it reads within
+    the zero bytes the file ends in: three zeros are no message, and all after them is zero."""
+
+    def __init__(self, handle: BinaryIO, zeros_from: int) -> None:
+        self._handle, self._zeros_from, self._ended = handle, zeros_from, False
+
+    def read(self, size: int = -1) -> bytes:
+        if self._ended:
+            return b""
+        at = self._handle.tell()
+        data = self._handle.read(size)
+        if size == 3 and at >= self._zeros_from and data == bytes(3):
+            self._ended = True
+            return b""
+        return data
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        return self._handle.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._handle.tell()
+
+    def close(self) -> None:
+        """The block that opened the file closes it."""
+
+
+def _zeros_from(path: Path) -> int | None:
+    """Where the zero bytes the file ends in begin, or None if its last byte is not zero."""
+    with path.open("rb") as handle:
+        size = end = handle.seek(0, io.SEEK_END)
+        while end > 0:
+            start = max(0, end - (1 << 16))
+            handle.seek(start)
+            if kept := handle.read(end - start).rstrip(b"\x00"):
+                return start + len(kept) if start + len(kept) < size else None
+            end = start
+    return 0 if size else None
+
+
+def _parse(path: Path, zeros_from: int | None = None) -> ULog:
     # Given a path, pyulog opens the file itself and leaves it open when parsing fails; given
     # a handle, it reads from it, and this block closes it either way.
     with path.open("rb") as handle:
-        ulog = ULog(handle, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+        log = handle if zeros_from is None else _EndsAtZeros(handle, zeros_from)
+        return ULog(log, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+
+
+def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
+    ulog = _parse(path)
+    # A log still being written when the power went can end in zero bytes: no message is
+    # there, but pyulog reads a header of zeros and marks the file corrupt. Read again ending
+    # at that header, the log reads as it would without them, to its last whole message, and
+    # is refused only if pyulog finds damage before them too.
+    if ulog.file_corruption and (zeros_from := _zeros_from(path)) is not None:
+        ulog = _parse(path, zeros_from)
     # pyulog skips what it cannot parse and says so: a data message whose framing breaks, and
     # from 1.3.0 a definition or a subscription too, where 1.2.4 raised. What is left can lack
     # a topic, the aircraft key or most of the span, so the log is refused, as a damaged
