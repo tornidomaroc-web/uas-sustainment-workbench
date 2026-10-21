@@ -6,7 +6,9 @@
   `uasw ingest` exit 1), on pyulog 1.2.4 and 1.3.0, as a damaged DataFlash log is; 0.6.3
   stored the flight read from what pyulog could parse, which on pyulog 1.3.0 (released
   2026-10-20) includes logs with a damaged definition or subscription that 1.2.4 refused.
-  Real logs read as before (LIMITS.md).
+  Real logs read as before (LIMITS.md). A log that ends in zero bytes after its last whole
+  message, as one still being written when the power went can, is not refused for them: it
+  reads to that message, as 0.6.3 read it.
 
 ## 0.6.3 (2026-10-20)
 

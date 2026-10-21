@@ -69,7 +69,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   record on both, and `uasw ingest` prints the same lines for it, as before the check. What
   pyulog does not see, the check does not: a value damaged inside a message that still frames
   (a ULog carries no checksum) reads as written, and a log cut short reads to the cut, as
-  before.
+  before. So does a log that ends in zero bytes after its last whole message, as a log still
+  being written when the power went can: pyulog reads a message header of zeros there and
+  marks the file corrupt, so the log is read again ending at that header, and reads to that
+  message as 0.6.3 read it; it is refused only if pyulog finds damage before the zeros too.
+  Measured 2026-10-21: each real log above but the 2.3 GB one (44), with 512 or 4096 zero
+  bytes appended, reads to the record of the log without them on both versions, where the
+  check alone refused all 88; with 512 bytes of 0xFF or random bytes appended, pyulog
+  marks none corrupt and each reads as the log without them. On 218 other damaged copies of
+  the same two logs (cut at 24 points, one byte inverted at 48, 64 bytes zeroed or randomised
+  at 16 each, zero, 0xFF or random bytes appended), the check stores 130 on both versions and
+  reading past a zero tail 135, each the same record on both versions and as before: the four
+  with zeros appended read to the record of the log without them, and the one whose last 64
+  bytes were zeroed reads to its last whole message, as a log cut there does.
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
