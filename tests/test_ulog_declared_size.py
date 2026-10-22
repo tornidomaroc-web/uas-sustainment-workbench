@@ -19,16 +19,18 @@ Each case that would cost that much runs in a process of its own, capped in time
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from capped import run_capped
 from fastapi.testclient import TestClient
-from test_flight_px4 import ATTR
-from test_ulog_damaged import DAMAGED, PREFIX
+from test_flight_px4 import ATTR, flown_log
+from test_ulog_damaged import DAMAGED, PREFIX, damaged
 
 from builders.ulog import ULogBuilder
 from uas_workbench.census.excerpt import excerpt_ulog
+from uas_workbench.flight import ulog_declared
 from uas_workbench.flight.px4 import read_ulog
 from uas_workbench.service.app import create_app
 from uas_workbench.service.cli import main
@@ -197,6 +199,38 @@ def test_a_log_that_stops_framing_is_refused_without_a_walk_through_the_rest(
     """main read 1 MiB of it in 15 s, a byte at a time, and then refused it as damaged."""
     log = flood(tmp_path / "flood.ulg", in_definitions=in_definitions, mib=8)
     assert capped_read(log, seconds=20) == DAMAGED
+
+
+@pytest.fixture
+def flag_never_fires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pyulog as it would be if it stopped setting the private `_file_corrupt` the read watches
+    to end early: the watch never fires."""
+    bounded = ulog_declared._bounded
+    monkeypatch.setattr(ulog_declared, "_bounded", lambda counts, _stop: bounded(counts, False))
+
+
+@pytest.mark.usefixtures("flag_never_fires")
+@pytest.mark.parametrize("zeros", [0, 4096])
+def test_a_damaged_log_is_refused_if_the_watched_flag_never_fires(
+    zeros: int, tmp_path: Path
+) -> None:
+    """pyulog's public `file_corruption` still refuses it: on a copy of pyulog 1.3.0 with only
+    that attribute renamed, this log was stored, with and without zeros after it."""
+    log = damaged(tmp_path / "framing.ulg", "framing")
+    log.write_bytes(log.read_bytes() + bytes(zeros))
+    with pytest.raises(ValueError) as refused:
+        read_ulog(log, **ATTR)
+    assert str(refused.value) == DAMAGED
+
+
+@pytest.mark.usefixtures("flag_never_fires")
+def test_a_log_ending_in_zero_bytes_reads_as_before_if_the_watched_flag_never_fires(
+    tmp_path: Path,
+) -> None:
+    whole = flown_log(tmp_path / "whole.ulg")
+    padded = tmp_path / "padded.ulg"
+    padded.write_bytes(whole.read_bytes() + bytes(4096))
+    assert replace(read_ulog(padded, **ATTR), log_ref=whole.stem) == read_ulog(whole, **ATTR)
 
 
 def test_uasw_ingest_refuses_a_log_declaring_too_much_and_reads_the_next(

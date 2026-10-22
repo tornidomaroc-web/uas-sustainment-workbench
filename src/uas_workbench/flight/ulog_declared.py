@@ -161,14 +161,18 @@ def read(
 ) -> ULog | None:
     """`handle` read by pyulog (only `topics`, if given), refused with ValueError once what it
     declares passes a bound. With `stop_at_damage`, None as soon as pyulog marks the file
-    corrupt: pyulog reads no further, where it would step through the rest a byte at a time."""
+    corrupt: pyulog reads no further, where it would step through the rest a byte at a time.
+    pyulog's public `file_corruption` is checked too, so a pyulog that stops setting the
+    attribute watched here still has a log it marks corrupt refused, only read to its end."""
     counts = _Counts()
     try:
-        return _bounded(counts, stop_at_damage)(
+        ulog = _bounded(counts, stop_at_damage)(
             handle, message_name_filter_list=topics, disable_str_exceptions=True
         )
     except _Damaged:
         return None
     except DeclaredTooMuch as too_much:
         what = str(too_much)
+    else:
+        return None if stop_at_damage and ulog.file_corruption else ulog
     raise ValueError(f"its format definitions {what}; {NOT_COUNTED}")

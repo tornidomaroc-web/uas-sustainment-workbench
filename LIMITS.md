@@ -126,7 +126,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   overwritten at 30 and zeroed at 20, and 70 of them with 512 zero bytes appended), 425 read
   as before (280 to the same record) and 15 that were refused with "[Errno 22] Invalid
   argument" (pyulog seeking back past the start of the file after a damaged header) are refused
-  as damaged; 2 still end in that error, where pyulog fails before it marks the file. The census
+  as damaged. pyulog marks a file before that seek, so no copy ends in pyulog's error any more;
+  2 still end in "[Errno 22]" raised by the workbench itself, a GPS time damaged inside a message
+  that still frames, which pyulog does not see, being past what the clock converts. The read
+  ends by watching an attribute private to pyulog, the same from 0.9.0 to 1.3.0; pyulog's public
+  `file_corruption` is checked as well, so a pyulog that stopped setting that attribute would
+  have a corrupt log read to its end and refused, not stored. The census
   and the excerpt cutter read a corrupt log on, as before, so a public log of that kind still
   costs the census that time.
 - **A ULog that ends in zero bytes reads as the log cut where they begin.** A log still being
