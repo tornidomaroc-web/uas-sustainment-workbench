@@ -1,12 +1,12 @@
-"""A ULog damaged inside is refused, as a damaged DataFlash log is, on pyulog 1.2.4 and 1.3.0.
+"""A ULog damaged inside is refused, as a damaged DataFlash log is.
 
 pyulog skips what it cannot parse and sets `file_corruption`: a data message whose framing
-breaks on both versions, and from 1.3.0 (PX4/pyulog#128) a definition or a subscription too,
-where 1.2.4 raised. The flight read from what is left can lose a topic, the aircraft key or
-most of its span, and a missing topic then reads as one the log never held. Measured on
-2026-10-21 over 448 damaged copies of two logs: 1.2.4 gave a flight for 37 that pyulog called
-corrupt, 1.3.0 for 62 (23 of them 1.2.4 refused); none of the 45 real logs in tests/fixtures
-and data/raw is called corrupt by either version.
+breaks, a definition or a subscription (PX4/pyulog#128, in 1.3.0, the lowest version the
+package allows; 1.2.4 raised on those two). The flight read from what is left can lose a
+topic, the aircraft key or most of its span, and a missing topic then reads as one the log
+never held. Measured on 2026-10-21 over 448 damaged copies of two logs: before the check,
+1.3.0 gave a flight for 62 that pyulog called corrupt; none of the 45 real logs in
+tests/fixtures and data/raw is called corrupt.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import pyulog
 from fastapi.testclient import TestClient
 from test_flight_px4 import ATTR, flown_log
 
@@ -75,18 +74,6 @@ def damaged(path: Path, where: str) -> Path:
     return path
 
 
-def refusal(where: str) -> str:
-    """The detail the ingest path gives. A broken framing is refused in the same words on both
-    versions. On a damaged definition or subscription 1.2.4 raises pyulog's KeyError, naming
-    the subscription it could not match (the inverted byte is not UTF-8 and is dropped), where
-    1.3.0 reads past it and the log is refused as damaged."""
-    if where == "framing" or hasattr(pyulog, "ULogException"):
-        return PREFIX + DAMAGED
-    return (
-        PREFIX + {"definition": "'battery_status'", "subscription": "'vehicle_lan_detected'"}[where]
-    )
-
-
 WHERE = ["framing", "definition", "subscription"]
 
 
@@ -115,7 +102,7 @@ def test_post_ingest_refuses_a_damaged_log_and_stores_nothing(
         files={"log": (f"{where}.ulg", log, "application/octet-stream")},
     )
     assert response.status_code == 422, response.text
-    assert response.json() == {"detail": refusal(where)}
+    assert response.json() == {"detail": PREFIX + DAMAGED}
     assert store.get_aircraft(KEY) is None
     assert store.flight_count() == 0
     assert list(uploads.iterdir()) == []
@@ -133,7 +120,7 @@ def test_uasw_ingest_refuses_a_damaged_log_and_reads_the_next(
     assert exit_.value.code == 1
     err = capsys.readouterr().err
     assert [line for line in err.splitlines() if line.startswith("refused")] == [
-        f"refused (422): {log}: {refusal(where)}"
+        f"refused (422): {log}: {PREFIX}{DAMAGED}"
     ]
     assert "Traceback" not in err
     store = Store(str(db))
@@ -258,6 +245,6 @@ def test_uasw_ingest_of_damaged_logs_alone_exits_1_and_makes_no_store(tmp_path: 
     assert done.returncode == 1, done.stderr
     assert "Traceback" not in done.stderr
     assert [line for line in done.stderr.splitlines() if line.startswith("refused")] == [
-        f"refused (422): {log}: {refusal(where)}" for log, where in zip(logs, WHERE, strict=True)
+        f"refused (422): {log}: {PREFIX}{DAMAGED}" for log in logs
     ]
     assert not db.exists()

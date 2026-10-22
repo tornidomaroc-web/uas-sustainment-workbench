@@ -263,10 +263,11 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
     if tail is not None and end is None and ulog.file_corruption:
         end = tail[0]
         ulog = _parse(path, end)
-    # pyulog skips what it cannot parse and says so: a data message whose framing breaks, and
-    # from 1.3.0 a definition or a subscription too, where 1.2.4 raised. What is left can lack
-    # a topic, the aircraft key or most of the span, so the log is refused, as a damaged
-    # DataFlash log is, and the operator is told what that leaves out of the counts.
+    # pyulog skips what it cannot parse and says so: a data message whose framing breaks, a
+    # definition or a subscription it cannot read, a definition declaring an array of more
+    # than 65 535 elements (PX4/pyulog#128). What is left can lack a topic, the aircraft key or
+    # most of the span, so the log is refused, as a damaged DataFlash log is, and the operator
+    # is told what that leaves out of the counts.
     if ulog.file_corruption:
         raise ValueError(
             f"pyulog found messages it could not parse and skipped them; {NOT_COUNTED}"
