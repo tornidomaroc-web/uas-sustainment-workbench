@@ -23,6 +23,7 @@ from uas_workbench.census.px4 import (
     syslog_level,
 )
 
+from . import ulog_declared
 from .record import NOT_COUNTED, FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
 
 TOPICS = (
@@ -42,7 +43,8 @@ def _has_data(path: Path, end: int | None) -> bool:
     evidence of a flight. pyulog keeps data only of the topics it is asked for, so a log with
     none of TOPICS is read again whole; the topics it holds then are the answer."""
     with _open(path, end) as handle:
-        return bool(ULog(handle, disable_str_exceptions=True).data_list)
+        ulog = ulog_declared.read(handle)
+        return ulog is not None and bool(ulog.data_list)
 
 
 def _dataset(ulog: ULog, name: str) -> ULog.Data | None:
@@ -237,11 +239,14 @@ def _open(path: Path, end: int | None) -> BinaryIO:
     return path.open("rb") if end is None else io.BufferedReader(_EndingAt(path, end), 1 << 16)
 
 
-def _parse(path: Path, end: int | None = None) -> ULog:
+def _parse(path: Path, end: int | None = None) -> ULog | None:
+    """The log as pyulog reads it, refused past what its definitions may declare (#125), or
+    None as soon as pyulog marks it corrupt, where the read ends: the log is then refused, or
+    read again to where its zero tail begins, whatever pyulog would find further on."""
     # Given a path, pyulog opens the file itself and leaves it open when parsing fails; given
     # a handle, it reads from it, and this block closes it either way.
     with _open(path, end) as handle:
-        return ULog(handle, message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+        return ulog_declared.read(handle, list(TOPICS), stop_at_damage=True)
 
 
 def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
@@ -260,7 +265,7 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
         tail = None
     end = None if tail is None or tail[1] <= LONGEST_MESSAGE else tail[0]
     ulog = _parse(path, end)
-    if tail is not None and end is None and ulog.file_corruption:
+    if tail is not None and end is None and ulog is None:
         end = tail[0]
         ulog = _parse(path, end)
     # pyulog skips what it cannot parse and says so: a data message whose framing breaks, a
@@ -268,7 +273,7 @@ def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
     # than 65 535 elements (PX4/pyulog#128). What is left can lack a topic, the aircraft key or
     # most of the span, so the log is refused, as a damaged DataFlash log is, and the operator
     # is told what that leaves out of the counts.
-    if ulog.file_corruption:
+    if ulog is None:
         raise ValueError(
             f"pyulog found messages it could not parse and skipped them; {NOT_COUNTED}"
         )

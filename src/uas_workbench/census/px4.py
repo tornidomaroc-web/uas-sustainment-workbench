@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 from pyulog import ULog
 
+from uas_workbench.flight import ulog_declared
+
 from .model import (
     ABSENT,
     FieldResult,
@@ -184,7 +186,10 @@ def firmware_version(ulog: ULog) -> str:
 
 
 def probe_ulog(path: Path, group: str) -> LogCensus:
-    ulog = ULog(str(path), message_name_filter_list=list(TOPICS), disable_str_exceptions=True)
+    # Bounded as the flight reader is (issue #125); a log past a bound is a census error.
+    with path.open("rb") as handle:
+        ulog = ulog_declared.read(handle, list(TOPICS))
+    assert ulog is not None
 
     fields: dict[str, FieldResult] = {INFO_SYS_UUID.key: _probe_uuid(ulog)}
     for tf in TOPIC_FIELDS:

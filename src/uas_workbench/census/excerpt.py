@@ -17,6 +17,8 @@ from pathlib import Path
 
 from pyulog import ULog
 
+from uas_workbench.flight import ulog_declared
+
 HEAD = b"\xa3\x95"
 FMT_TYPE = 0x80
 FMT_LENGTH = 89
@@ -117,7 +119,9 @@ def strip_identity(ulog: ULog) -> ULog:
 def excerpt_ulog(src: Path) -> ULog:
     """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
     Write the result with ULog.write_ulog()."""
-    ulog = ULog(str(src), message_name_filter_list=list(ULOG_KEEP), disable_str_exceptions=True)
+    with src.open("rb") as handle:
+        ulog = ulog_declared.read(handle, list(ULOG_KEEP))
+    assert ulog is not None
     strip_identity(ulog)
     for dataset in ulog.data_list:
         for name, values in dataset.data.items():
