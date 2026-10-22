@@ -4,8 +4,10 @@
 
 - The workbench needs pyulog 1.3.0 or later (closes #121), because on 1.2.4, which 0.6.3
   allowed, a log only 139 bytes long whose format definition declares an array of 10 million
-  elements took 33 s to read, where 1.3.0 refuses it at once; an existing install moves to
-  1.3.0 when it is installed again (`python -m pip install -e .`).
+  elements took 33 s to read, where 1.3.0 refuses it at once. An existing install keeps 1.2.4
+  after a `git pull`, and nothing reports it, until it is installed again (`python -m pip
+  install -e .`), which fetches 1.3.0. On 1.3.0 a log of many large fields, or of nested ones,
+  still takes time and memory that grow with the elements it declares (LIMITS.md, #125).
 - A PX4 ULog that pyulog reports damaged is refused with nothing stored (`POST /ingest` 422,
   `uasw ingest` exit 1), as a damaged DataFlash log is; 0.6.3 stored the flight read from what
   pyulog could parse, which on pyulog 1.3.0 (released 2026-10-20) includes logs with a damaged
