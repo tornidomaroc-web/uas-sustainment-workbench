@@ -114,10 +114,11 @@ def test_a_log_that_fails_to_parse_leaves_no_file_open(tmp_path: Path) -> None:
     the handle is collected, so pytest reports it as unraisable; both are errors here."""
     junk = tmp_path / "junk.ulg"
     junk.write_bytes(b"not a log at all")
-    # pyulog 1.3.0 raises its own ULogException where 1.2.4 raised TypeError, in the same
-    # words (PX4/pyulog#128); the ingest path refuses either with that sentence.
-    not_a_ulog = getattr(pyulog, "ULogException", TypeError)
-    with pytest.raises(not_a_ulog, match=r"^Invalid file format \(Failed to parse header\)$"):
+    # pyulog raises its own ULogException (PX4/pyulog#128); the ingest path refuses the log
+    # with its sentence.
+    with pytest.raises(
+        pyulog.ULogException, match=r"^Invalid file format \(Failed to parse header\)$"
+    ):
         read_ulog(junk, **ATTR)
     gc.collect()
 

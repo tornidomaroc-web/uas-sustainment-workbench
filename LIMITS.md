@@ -45,32 +45,39 @@ field-level tables. This file is about what that means for a maintenance tool.
   case.** Definitions, parameters and boot text alone are refused. A ULog with data only in
   topics the tool does not read is parsed a second time, with every topic, to find that data;
   a large log of that kind is read in full twice.
-- **A ULog that pyulog reports damaged is refused, on pyulog 1.2.4 and 1.3.0.** pyulog skips a
-  message it cannot parse and marks the file corrupt: a data message whose framing breaks, on
-  both versions, and from 1.3.0 (PX4/pyulog#128) a format definition or a subscription too,
-  where 1.2.4 raised and the log was refused in pyulog's words (a `KeyError` naming the
-  subscription it could not match). The flight read from what is left can miss a topic, which
-  then reads as one the log never held ("no vehicle_land_detected topic"), or most of its span,
-  so such a log is refused, as a damaged DataFlash log is, with the same words on what that
-  leaves out of the counts: "pyulog found messages it could not parse and skipped them;
-  nothing from this log is stored, ...". Measured 2026-10-21 on 448 damaged copies of two logs
-  (the PX4 fixture excerpt and the synthetic flown log of `tests/test_flight_px4.py`: cut short,
-  one byte inverted, 64 bytes overwritten, definitions and flags crafted): before this check
-  1.2.4 stored a flight for 322 copies, 37 of them marked corrupt, and 1.3.0 for 345, 62 marked
-  corrupt (23 of those 1.2.4 refused); in the 58 marked corrupt that 1.3.0 stored and that were
-  not crafted, the flight time or landings differed from the undamaged log's in 18 and the
-  span in 13, down to 17.1 s of 204.3 s. With the check 1.2.4 stores 285 and 1.3.0 283, none
-  marked corrupt, each record the same on both versions and as before. The two apart hold a
-  definition declaring an array of more than 65 535 or fewer than 0 elements, which 1.3.0 marks
-  corrupt and 1.2.4 reads, at a cost in time that grows with the size it declares: 33 s for a
-  139-byte file declaring 10 million. None of the 45 real logs measured here (the fixture, the
-  43 PX4 logs above and the 8.2 MB log the fixture is cut from; 2.29 GB in all, and 44
-  distinct, since two of the 3 consecutive logs are the same file byte for byte) is marked
-  corrupt by either version; each gives the same
-  record on both, and `uasw ingest` prints the same lines for it, as before the check. What
-  pyulog does not see, the check does not: a value damaged inside a message that still frames
-  (a ULog carries no checksum) reads as written, and a log cut short reads to the cut, as
-  before.
+- **A ULog that pyulog reports damaged is refused; the package needs pyulog 1.3.0 or later.**
+  pyulog skips a message it cannot parse and marks the file corrupt: a data message whose
+  framing breaks, a format definition or a subscription it cannot read, and a definition
+  declaring an array of more than 65 535 or fewer than 0 elements (PX4/pyulog#128, in 1.3.0).
+  The flight read from what is left can miss a topic, which then reads as one the log never held
+  ("no vehicle_land_detected topic"), or most of its span, so such a log is refused, as a
+  damaged DataFlash log is, with the same words on what that leaves out of the counts: "pyulog
+  found messages it could not parse and skipped them; nothing from this log is stored, ...".
+  Measured 2026-10-21 on 448 damaged copies of two logs (the PX4 fixture excerpt and the
+  synthetic flown log of `tests/test_flight_px4.py`: cut short, one byte inverted, 64 bytes
+  overwritten, definitions and flags crafted): before this check 1.3.0 stored a flight for 345
+  copies, 62 of them marked corrupt; in the 58 marked corrupt that were not crafted, the flight
+  time or landings differed from the undamaged log's in 18 and the span in 13, down to 17.1 s of
+  204.3 s. With the check 1.3.0 stores 283, none marked corrupt, each record as before. pyulog
+  1.2.4, which the package allowed until issue #121, reads a definition's array of any declared
+  size, at a cost in time that grows with that size (33 s for a 139-byte file declaring 10
+  million elements, where 1.3.0 refuses it at once), and raised on a damaged definition or
+  subscription, so those logs were refused in its words (a `KeyError` naming the subscription it
+  could not match). 1.3.0 bounds the cost per field, not per file: the arrays it allows still
+  take time that grows with the elements declared, when the log subscribes to their definition,
+  and with the number of such fields and subscriptions. One field of 65 535 elements cost 0.12
+  s, and a 347-byte file with 10 such fields and 10 subscriptions to them 17.6 s before it was
+  refused for holding no data (measured 2026-10-22 with the workbench's reader, Windows, Python
+  3.12). `POST /ingest` takes the write token or loopback, so such a file comes from an operator
+  or a trusted writer. An install made before the floor moved keeps 1.2.4 until it is installed
+  again (`python -m pip install -e .`, which then fetches 1.3.0); the workbench does not check
+  pyulog's version when it runs. None of the 45 real logs measured here (the fixture, the 43 PX4
+  logs above and the 8.2 MB log the fixture is cut from; 2.29 GB in all, and 44 distinct, since
+  two of the 3 consecutive logs are the same file byte for byte) is marked corrupt; each gives
+  the same record on 1.2.4 and 1.3.0, and `uasw ingest` prints the same lines for it, as before
+  the check. What pyulog does not see, the check does not: a value damaged inside a message that
+  still frames (a ULog carries no checksum) reads as written, and a log cut short reads to the
+  cut, as before.
 - **A ULog that ends in zero bytes reads as the log cut where they begin.** A log still being
   written when the power went can end in zero bytes, and the logger writes buffers, not whole
   messages, so the zeros can begin inside a message. pyulog reads a message header of zeros
