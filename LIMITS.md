@@ -63,13 +63,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   size, at a cost in time that grows with that size (33 s for a 139-byte file declaring 10
   million elements, where 1.3.0 refuses it at once), and raised on a damaged definition or
   subscription, so those logs were refused in its words (a `KeyError` naming the subscription it
-  could not match). 1.3.0 bounds the cost per field, not per file: the arrays it allows still
-  take time that grows with the elements declared, when the log subscribes to their definition,
-  and with the number of such fields and subscriptions. One field of 65 535 elements cost 0.12
-  s, and a 347-byte file with 10 such fields and 10 subscriptions to them 17.6 s before it was
-  refused for holding no data (measured 2026-10-22 with the workbench's reader, Windows, Python
-  3.12). `POST /ingest` takes the write token or loopback, so such a file comes from an operator
-  or a trusted writer. An install made before the floor moved keeps 1.2.4 until it is installed
+  could not match). 1.3.0 bounds each array to 65 535 elements, not the elements a log declares:
+  pyulog lays out every element of a definition once per subscription to it, before the
+  workbench sees the log, and a field whose type is another definition holds that definition's
+  elements once per element of its own array, so nesting multiplies them. One field of 65 535
+  elements cost 0.12 s, and a 347-byte file with 10 such fields and 10 subscriptions to them
+  16.4 to 17.6 s and 2.6 GiB of memory before it was refused for holding no data; a 118-byte
+  file whose one field holds 64 of a definition of 65 535 elements cost 11.1 s and 2.3 GiB, and
+  at the 65 535 a field allows the same file declares 4.3 billion elements, about 3 hours and 2
+  TiB at that rate (not run; measured 2026-10-22 with the workbench's reader, Windows, Python
+  3.12). Issue #125 proposes refusing a log whose definitions declare more than a bound, before
+  pyulog reads it. `POST /ingest` takes the write token or loopback, so such a file comes from an
+  operator or a trusted writer, and `uasw ingest` reads the files it is given. An install made
+  before the floor moved keeps 1.2.4 until it is installed
   again (`python -m pip install -e .`, which then fetches 1.3.0); the workbench does not check
   pyulog's version when it runs. None of the 45 real logs measured here (the fixture, the 43 PX4
   logs above and the 8.2 MB log the fixture is cut from; 2.29 GB in all, and 44 distinct, since
