@@ -72,9 +72,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   file whose one field holds 64 of a definition of 65 535 elements cost 11.1 s and 2.3 GiB, and
   at the 65 535 a field allows the same file declares 4.3 billion elements, about 3 hours and 2
   TiB at that rate (not run; measured 2026-10-22 with the workbench's reader, Windows, Python
-  3.12). Issue #125 proposes refusing a log whose definitions declare more than a bound, before
-  pyulog reads it. `POST /ingest` takes the write token or loopback, so such a file comes from an
-  operator or a trusted writer, and `uasw ingest` reads the files it is given. An install made
+  3.12). Since issue #125 such a log is refused before pyulog lays it out (below). `POST /ingest`
+  takes the write token or loopback, so such a file comes from an operator or a trusted writer,
+  and `uasw ingest` reads the files it is given. An install made
   before the floor moved keeps 1.2.4 until it is installed
   again (`python -m pip install -e .`, which then fetches 1.3.0); the workbench does not check
   pyulog's version when it runs. None of the 45 real logs measured here (the fixture, the 43 PX4
@@ -84,6 +84,51 @@ field-level tables. This file is about what that means for a maintenance tool.
   the check. What pyulog does not see, the check does not: a value damaged inside a message that
   still frames (a ULog carries no checksum) reads as written, and a log cut short reads to the
   cut, as before.
+- **A ULog whose definitions declare more than the workbench reads is refused before pyulog lays
+  them out.** As pyulog reads, the workbench counts what it is about to lay out, from pyulog's
+  own parsed definitions: each definition and each field once, and before a subscription is laid
+  out, its elements, nested definitions multiplied out, and the characters of the names pyulog
+  gives them. A read past 1,048,576 definitions, fields and elements, or past 33,554,432
+  characters of element names, or with a definition nested more than 16 deep or in itself, is
+  refused in one line naming the bound, with nothing stored and the same words on what that
+  leaves out of the counts ("its format definitions declare more than 1,048,576 definitions,
+  fields and elements for pyulog to lay out, the most the workbench reads; nothing from this
+  log is stored, ..."), by `uasw ingest` (exit 1), `POST /ingest` (422), the census (counted as
+  an unreadable log) and the excerpt cutter. The count is a total over the read, not per
+  subscription: pyulog lays out a subscription the reader filters out too, so the time grows
+  with the total. The bounds are constants in `src/uas_workbench/flight/ulog_declared.py`, not
+  settings: a setting would make the bound a property of each install rather than of the code,
+  and a real log that ever passes one is refused in a line that names it, which is the case for
+  raising it in the code. The 45 real logs above reach at most 20,344, 440,552 and 2 (and 210
+  subscriptions), 51, 76 and 8 times under the bounds, and read to the same records as before
+  (measured 2026-10-22, pyulog 1.3.0). What the bound still allows is paid: a log of 1,048,576
+  exactly, a header and three definitions and no data, takes about 2.5 s and 600 MiB before it
+  is refused for holding no data (two reads; Windows, Python 3.12). Before the bound, a 117-byte
+  log of one field holding 64 definitions of 65 535 elements took 19.2 s and 2.3 GiB, the same
+  file with 65 535 of them declared 4.3 billion elements, and a definition that held itself, or
+  a chain of 3 000, ended in a RecursionError; each is now refused within 10 ms. The count is
+  taken from pyulog's own objects on every path pyulog reads by, so it holds on 1.2.4 as on
+  1.3.0 (on 1.2.4 a definition naming a type never defined still ends in a `KeyError`), and no
+  byte is read twice for it: the largest real log (246 MB) read in 2.69 s at best of 9
+  interleaved reads, 2.83 s on the code before, single reads ranging from 2.7 to 4.3 s on
+  both. A file's own bytes still cost time in proportion to their number:
+  512 MiB of definitions of one field each with a 65 000-character name, within the bounds,
+  take 1.7 s and 1 GiB to be refused for holding no data, as before. The census and the excerpt
+  cutter read through a handle they close, where they gave pyulog the path, which pyulog leaves
+  open when it fails.
+- **A ULog that pyulog marks corrupt is refused without pyulog reading on.** The flight
+  reader refuses such a log, or reads it again only to where its zero tail begins, whatever
+  follows, so the read ends where pyulog marks it. pyulog read on through bytes that do not
+  frame one at a time, each read as a damaged header and the bytes it claims (up to 65 535)
+  read with it: 1 MiB of 0xFF bytes after a log's first messages took 15.2 s before the
+  refusal, 8 MiB 122 s; both now take 2 ms. On 440 damaged copies of the fixture and the flown
+  log of `tests/test_flight_px4.py` (cut at 40 points, one byte inverted at 60, 64 bytes
+  overwritten at 30 and zeroed at 20, and 70 of them with 512 zero bytes appended), 425 read
+  as before (280 to the same record) and 15 that were refused with "[Errno 22] Invalid
+  argument" (pyulog seeking back past the start of the file after a damaged header) are refused
+  as damaged; 2 still end in that error, where pyulog fails before it marks the file. The census
+  and the excerpt cutter read a corrupt log on, as before, so a public log of that kind still
+  costs the census that time.
 - **A ULog that ends in zero bytes reads as the log cut where they begin.** A log still being
   written when the power went can end in zero bytes, and the logger writes buffers, not whole
   messages, so the zeros can begin inside a message. pyulog reads a message header of zeros

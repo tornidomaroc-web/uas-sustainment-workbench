@@ -6,8 +6,16 @@
   allowed, a log only 139 bytes long whose format definition declares an array of 10 million
   elements took 33 s to read, where 1.3.0 refuses it at once. An existing install keeps 1.2.4
   after a `git pull`, and nothing reports it, until it is installed again (`python -m pip
-  install -e .`), which fetches 1.3.0. On 1.3.0 a log of many large fields, or of nested ones,
-  still takes time and memory that grow with the elements it declares (LIMITS.md, #125).
+  install -e .`), which fetches 1.3.0. On 1.3.0 alone a log of many large fields, or of nested
+  ones, takes time and memory that grow with the elements it declares; the next line bounds them.
+- A PX4 ULog whose format definitions declare more than the reader lays out is refused in one
+  line naming the bound, with nothing stored (`uasw ingest` exit 1, `POST /ingest` 422, the
+  census an unreadable log), before pyulog lays it out (closes #125): past 1,048,576
+  definitions, fields and elements in one read, past 33,554,432 characters of element names,
+  or with definitions nested more than 16 deep or in themselves. A 120-byte log could declare
+  4.3 billion elements, and a definition holding itself ended in a RecursionError. A log pyulog
+  marks corrupt is refused without pyulog reading on: 8 MiB of 0xFF bytes after a log's first
+  messages took 122 s, now 2 ms. The 45 real logs read to the same records (LIMITS.md).
 - A PX4 ULog that pyulog reports damaged is refused with nothing stored (`POST /ingest` 422,
   `uasw ingest` exit 1), as a damaged DataFlash log is; 0.6.3 stored the flight read from what
   pyulog could parse, which on pyulog 1.3.0 (released 2026-10-20) includes logs with a damaged
