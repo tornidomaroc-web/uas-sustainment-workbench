@@ -64,9 +64,9 @@ uasw verify                               # the write journal: intact, and its h
 uasw serve                                # the HTTP API; then open http://localhost:8000/docs
 ```
 
-**Released and unreleased.** The latest release is 0.6.3. Main can also hold changes made
+**Released and unreleased.** The latest release is 0.6.4. Main can also hold changes made
 after it, listed under Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main;
-`git checkout v0.6.3` gives you the release.
+`git checkout v0.6.4` gives you the release.
 
 **What it does not do, and how it is checked.** It does not certify airworthiness or release
 an aircraft to service. It takes each entry at the word of the person who made it: there are
