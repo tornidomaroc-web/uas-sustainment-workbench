@@ -2,12 +2,50 @@
 
 ## Unreleased
 
+## 0.6.4 (2026-10-23)
+
+What operators see change: a PX4 ULog that pyulog marks corrupt is refused with nothing stored,
+where 0.6.3 stored the flight read from what pyulog could parse; a ULog that ends in zero bytes
+reads as the log cut where they begin; a ULog whose format definitions declare more than the
+reader lays out is refused before pyulog lays it out; and the workbench needs pyulog 1.3.0 or
+later, which an existing install gets only when it is installed again (`python -m pip install
+-e .`). pyulog 1.3.0 reached PyPI on 2026-10-20 at 14:34 UTC, and 0.6.3 allowed it: an install
+of 0.6.3 made since then holds 1.3.0, on which 0.6.3 also stored a log whose format definition
+or subscription was damaged, which 1.2.4 refused, as a flight missing that topic. A flight 0.6.3
+stored from a damaged log stays in the store: this release reads new logs and does not look
+again at flights already stored. The 46 real logs measured (45 distinct, 2.29 GB) read to the
+same records as on 0.6.3, and so do 45 of them with 4096 zero bytes appended; the fixture
+excerpt with zeros appended reads 2 ms shorter (below). On a sound store, with the clock frozen,
+every GET answer and every exported file is what 0.6.3 gave apart from the version string.
+
+- A PX4 ULog that pyulog reports damaged is refused with nothing stored (`POST /ingest` 422,
+  `uasw ingest` exit 1), as a damaged DataFlash log is (#120). Why: pyulog skips what it cannot
+  parse and reads on, so the record built from the rest is not the flight. On 1.3.0 a damaged
+  definition or subscription drops its topic (the record then said "no vehicle_land_detected
+  topic" of a log that held it), and damaged data framing changed flight time or landings in
+  18 and the span in 13 of 58 damaged copies, down to 17.1 s of a 204.3 s log. The read ends
+  where pyulog marks the file, and pyulog's public `file_corruption` is checked after a whole
+  read as well, so a pyulog that stopped setting the private attribute the read watches still
+  has such a log refused, read to its end, not stored. What pyulog does not see is not refused:
+  a value damaged inside a message that still frames reads as written (LIMITS.md).
+- A PX4 ULog that ends in zero bytes, as one still being written when the power went can, reads
+  as the log cut where they begin, to its last whole message before them (closes #122). A
+  message that runs into the zeros is dropped, as a cut log drops its cut message, where 0.6.3
+  read it whole with its missing bytes taken from the zeros: a battery_status sample cut in half
+  stored -50.0 mAh for a flight of 475.0. One shape cannot be told apart and is still read
+  whole: a message cut after its 3-byte header and followed by exactly the zero bytes it lacks,
+  or by one or two more, which pyulog reads as undamaged (LIMITS.md). A whole last message
+  whose own last bytes are zero is dropped too when zeros follow it, since its bytes are those
+  of a cut one: the PX4 fixture excerpt with zeros appended reads 2 ms shorter. A zero run
+  longer than 64 KiB is not read at all. On the largest real log (246 MB), measured 2026-10-21
+  against the zero-tail re-read first built for this: 16 MiB of zeros 2.8 to 3.1 s where that
+  took 22.0 to 22.1, and 4096 zero bytes 5.6 to 5.8 s where it took 12.2 to 13.0.
 - The workbench needs pyulog 1.3.0 or later (closes #121), because on 1.2.4, which 0.6.3
   allowed, a log only 139 bytes long whose format definition declares an array of 10 million
   elements took 33 s to read, where 1.3.0 refuses it at once. An existing install keeps 1.2.4
   after a `git pull`, and nothing reports it, until it is installed again (`python -m pip
   install -e .`), which fetches 1.3.0. On 1.3.0 alone a log of many large fields, or of nested
-  ones, takes time and memory that grow with the elements it declares; the next line bounds them.
+  ones, takes time and memory that grow with the elements it declares; the bounds below cap them.
 - A PX4 ULog whose format definitions declare more than the reader lays out is refused in one
   line naming the bound, with nothing stored (`uasw ingest` exit 1, `POST /ingest` 422, the
   census an unreadable log), before pyulog lays it out (closes #125): past 1,048,576
@@ -15,23 +53,21 @@
   or with definitions nested more than 16 deep or in themselves. A 120-byte log could declare
   4.3 billion elements, and a definition holding itself ended in a RecursionError. A log pyulog
   marks corrupt is refused without pyulog reading on: 8 MiB of 0xFF bytes after a log's first
-  messages took 122 s, now 2 ms. The 45 real logs read to the same records (LIMITS.md).
-- A PX4 ULog that pyulog reports damaged is refused with nothing stored (`POST /ingest` 422,
-  `uasw ingest` exit 1), as a damaged DataFlash log is; 0.6.3 stored the flight read from what
-  pyulog could parse, which on pyulog 1.3.0 (released 2026-10-20) includes logs with a damaged
-  definition or subscription that 1.2.4 refused. Real logs read as before (LIMITS.md).
-- A PX4 ULog that ends in zero bytes, as one still being written when the power went can, is
-  not refused for them: it reads as the log cut where they begin, to its last whole message
-  before them (closes #122). A message that runs into the zeros is dropped, as a cut log drops
-  its cut message, where 0.6.3 read it whole with its missing bytes taken from the zeros: a
-  battery_status sample cut in half stored -50.0 mAh for a flight of 475.0. One shape is still
-  read whole: a message cut after its header and followed by exactly the zero bytes it lacks,
-  or by one or two more, which pyulog reads as undamaged (LIMITS.md). A whole last
-  message whose own last bytes are zero is dropped too when zeros follow it, since its bytes
-  are those of a cut one: the PX4 fixture excerpt with zeros appended reads 2 ms shorter. A
-  zero run longer than 64 KiB is not read at all: on a 246 MB log, 16 MiB of zeros cost
-  2.8 to 3.1 s where the zero-tail re-read first built for this took 22.0 to 22.1, and 4096
-  zero bytes 5.6 to 5.8 s where it took 12.2 to 13.0.
+  messages took 122 s, now 2 ms (measured 2026-10-22). The 45 distinct real logs reach at most
+  20,344 elements, 440,552 characters and depth 2 (LIMITS.md).
+
+Known issues, not fixed in this release (each is in 0.6.3 too):
+
+- #127: a write through the service can be refused 503, "another write held the store for
+  longer than this one waits", when no write held it: another connection was closing, and its
+  closing checkpoint was waiting for an older reader. Nothing is written, so the write can be
+  sent again. With a reader open and the default 5 s wait, 4 of 7 such writes were refused
+  after 5.6 s on 0.6.4's code and 4 of 4 on 0.6.3; with no reader open, the write landed in
+  0.02 s.
+- #128: some damaged PX4 ULogs that still frame are refused with a raw Python reason, or none,
+  in place of the damaged-log sentence; nothing from them is stored, only the words are wrong.
+  Of 5,592 copies of the synthetic flown log with one byte changed, 162 were refused that way,
+  72 of them with an empty reason from the assert at `flight/px4.py:132`.
 
 ## 0.6.3 (2026-10-20)
 
