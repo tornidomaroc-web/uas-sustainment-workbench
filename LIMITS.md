@@ -166,9 +166,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   ending in zero bytes (the span shorter by at most 0.211 s, and in one copy faults unknown
   where the copy without zeros has none). The re-read reads nothing past where the zeros begin,
   and a zero run longer than one message can hold (64 KiB) is not read at all, so pyulog does
-  not walk it byte by byte: on the largest real log (246 MB, read in 2.9 to 3.0 s), 4096 zero
-  bytes appended cost 5.6 to 5.8 s where the version before took 12.2 to 13.0, and 16 MiB 2.8 to
-  3.1 s where it took 22.0 to 22.1 (medians of three, Windows, Python 3.12).
+  not walk it byte by byte. A shorter zero run costs a second read (#129): the log is read whole
+  once to learn whether pyulog sees damage in it, then again to where the zeros begin. On the
+  largest real log (246 MB), against 0.6.3: as it is, 2.9 to 3.4 s where 0.6.3 took 2.7 to 3.6;
+  with 4096 zero bytes appended, 5.9 to 7.1 s where 0.6.3 took 2.9 to 3.7, about twice; with
+  16 MiB, 2.9 to 3.5 s where 0.6.3, walking the zeros, took 13.8 to 15.0 (single reads, each in
+  a process of its own, Windows, Python 3.12, pyulog 1.3.0, measured 2026-10-23).
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of
