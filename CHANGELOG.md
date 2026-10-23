@@ -37,9 +37,14 @@ every GET answer and every exported file is what 0.6.3 gave apart from the versi
   or by one or two more, which pyulog reads as undamaged (LIMITS.md). A whole last message
   whose own last bytes are zero is dropped too when zeros follow it, since its bytes are those
   of a cut one: the PX4 fixture excerpt with zeros appended reads 2 ms shorter. A zero run
-  longer than 64 KiB is not read at all. On the largest real log (246 MB), measured 2026-10-21
-  against the zero-tail re-read first built for this: 16 MiB of zeros 2.8 to 3.1 s where that
-  took 22.0 to 22.1, and 4096 zero bytes 5.6 to 5.8 s where it took 12.2 to 13.0.
+  longer than 64 KiB is not read at all. The cost: a log with a small zero tail now reads in
+  about twice 0.6.3's time, because it is read twice (#129), once whole to learn whether pyulog
+  sees damage in it and then again to where the zeros begin. On the largest real log (246 MB)
+  with 4096 zero bytes appended, single reads took 5.9 to 7.1 s, where 0.6.3 took 2.9 to 3.7. A
+  longer zero run is read once and costs less than on 0.6.3, which walked it: with 16 MiB of
+  zeros, 2.9 to 3.5 s where 0.6.3 took 13.8 to 15.0. The same log as it is reads in the time
+  0.6.3 took, 2.9 to 3.4 s against 2.7 to 3.6 (Windows, Python 3.12, pyulog 1.3.0, each read
+  in a process of its own, measured 2026-10-23).
 - The workbench needs pyulog 1.3.0 or later (closes #121), because on 1.2.4, which 0.6.3
   allowed, a log only 139 bytes long whose format definition declares an array of 10 million
   elements took 33 s to read, where 1.3.0 refuses it at once. An existing install keeps 1.2.4
@@ -53,7 +58,8 @@ every GET answer and every exported file is what 0.6.3 gave apart from the versi
   or with definitions nested more than 16 deep or in themselves. A 120-byte log could declare
   4.3 billion elements, and a definition holding itself ended in a RecursionError. A log pyulog
   marks corrupt is refused without pyulog reading on: 8 MiB of 0xFF bytes after a log's first
-  messages took 122 s, now 2 ms (measured 2026-10-22). The 45 distinct real logs reach at most
+  messages took 0.6.3 244 to 259 s, ending in "holds a header but no recorded data", and are
+  now refused as damaged in 1 ms (measured 2026-10-23). The 45 distinct real logs reach at most
   20,344 elements, 440,552 characters and depth 2 (LIMITS.md).
 
 Known issues, not fixed in this release (each is in 0.6.3 too):
