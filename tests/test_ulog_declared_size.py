@@ -9,8 +9,9 @@ to 65 535 elements, not the log: measured on main (d45e5cf, Windows, Python 3.12
 65 535-element definition 19.2 s and 2.3 GiB; 10 such fields with 10 subscriptions ran out of a
 3 GiB cap after 26.4 s, and a 65 KB file of one field with a 65 000-character name after 1.4 s.
 A definition that holds itself, or a chain of 3 000, ended the read in a RecursionError. A file
-of 1 MiB of 0xFF bytes after its first messages took 15.0 s: pyulog reads each byte as a damaged
-header 65 535 bytes long, reads those bytes, and steps on by one.
+of 1 MiB of 0xFF bytes after its first messages took 0.6.3 26 s: pyulog reads each byte as a
+damaged header 65 535 bytes long, reads those bytes, and steps on by one, and 0.6.3 read the file
+twice.
 
 Each case that would cost that much runs in a process of its own, capped in time and memory
 (tests/capped.py), so main fails these tests by the cap, not by taking the run down with it.
@@ -196,7 +197,8 @@ def flood(path: Path, *, in_definitions: bool, mib: int) -> Path:
 def test_a_log_that_stops_framing_is_refused_without_a_walk_through_the_rest(
     in_definitions: bool, tmp_path: Path
 ) -> None:
-    """main read 1 MiB of it in 15 s, a byte at a time, and then refused it as damaged."""
+    """0.6.3 read 1 MiB of it in 26 s, twice and a byte at a time, and then refused it for
+    holding no data."""
     log = flood(tmp_path / "flood.ulg", in_definitions=in_definitions, mib=8)
     assert capped_read(log, seconds=20) == DAMAGED
 

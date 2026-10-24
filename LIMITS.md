@@ -103,15 +103,15 @@ field-level tables. This file is about what that means for a maintenance tool.
   subscriptions), 51, 76 and 8 times under the bounds, and read to the same records as before
   (measured 2026-10-22, pyulog 1.3.0). What the bound still allows is paid: a log of 1,048,576
   exactly, a header and three definitions and no data, takes about 2.5 s and 600 MiB before it
-  is refused for holding no data (two reads; Windows, Python 3.12). Before the bound, a 117-byte
-  log of one field holding 64 definitions of 65 535 elements took 19.2 s and 2.3 GiB, the same
-  file with 65 535 of them declared 4.3 billion elements, and a definition that held itself, or
-  a chain of 3 000, ended in a RecursionError; each is now refused within 10 ms. The count is
+  is refused for holding no data (two reads; Windows, Python 3.12). On 0.6.3, a 117-byte log of
+  one field holding 64 definitions of 65 535 elements took 10.6 to 11.4 s, as the 118-byte file
+  above did, the same file with 65 535 of them declared 4.3 billion elements, and a definition
+  that held itself, or a chain of 3 000, ended in a RecursionError; each is now refused within
+  10 ms. The count is
   taken from pyulog's own objects on every path pyulog reads by, so it holds on 1.2.4 as on
   1.3.0 (on 1.2.4 a definition naming a type never defined still ends in a `KeyError`), and no
-  byte is read twice for it: the largest real log (246 MB) read in 2.69 s at best of 9
-  interleaved reads, 2.83 s on the code before, single reads ranging from 2.7 to 4.3 s on
-  both. A file's own bytes still cost time in proportion to their number:
+  byte is read twice for it: the largest real log (246 MB) as it is reads in the time 0.6.3
+  took (below). A file's own bytes still cost time in proportion to their number:
   512 MiB of definitions of one field each with a 65 000-character name, within the bounds,
   take 1.7 s and 1 GiB to be refused for holding no data, as before. The census and the excerpt
   cutter read through a handle they close, where they gave pyulog the path, which pyulog leaves
@@ -120,9 +120,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   reader refuses such a log, or reads it again only to where its zero tail begins, whatever
   follows, so the read ends where pyulog marks it. pyulog read on through bytes that do not
   frame one at a time, each read as a damaged header and the bytes it claims (up to 65 535)
-  read with it: 1 MiB of 0xFF bytes after a log's first messages took 15.2 s before the
-  refusal, 8 MiB 122 s; both now take 2 ms. On 440 damaged copies of the fixture and the flown
-  log of `tests/test_flight_px4.py` (cut at 40 points, one byte inverted at 60, 64 bytes
+  read with it: 1 MiB of 0xFF bytes after a log's first messages took 0.6.3 26 s, 8 MiB 239 to
+  256 s, before it refused them for holding no data (it walked them twice, the second time in
+  a whole read looking for data); both are now refused as damaged in under 1 ms of reading
+  (a whole `uasw ingest` of either takes 0.4 to 0.5 s, nearly all of it Python and the
+  workbench loading; Windows, Python 3.12, pyulog 1.3.0, three reads each in a process of its
+  own, measured 2026-10-24). On 440 damaged copies of the fixture and the flown log of
+  `tests/test_flight_px4.py` (cut at 40 points, one byte inverted at 60, 64 bytes
   overwritten at 30 and zeroed at 20, and 70 of them with 512 zero bytes appended), 425 read
   as before (280 to the same record) and 15 that were refused with "[Errno 22] Invalid
   argument" (pyulog seeking back past the start of the file after a damaged header) are refused

@@ -58,9 +58,9 @@ every GET answer and every exported file is what 0.6.3 gave apart from the versi
   or with definitions nested more than 16 deep or in themselves. A 120-byte log could declare
   4.3 billion elements, and a definition holding itself ended in a RecursionError. A log pyulog
   marks corrupt is refused without pyulog reading on: 8 MiB of 0xFF bytes after a log's first
-  messages took 0.6.3 244 to 259 s, ending in "holds a header but no recorded data", and are
-  now refused as damaged in 1 ms (measured 2026-10-23). The 45 distinct real logs reach at most
-  20,344 elements, 440,552 characters and depth 2 (LIMITS.md).
+  messages took 0.6.3 239 to 256 s, ending in "holds a header but no recorded data", and are
+  now refused as damaged in under 1 ms of reading (measured 2026-10-24). The 45 distinct real
+  logs reach at most 20,344 elements, 440,552 characters and depth 2 (LIMITS.md).
 
 Known issues, not fixed in this release (each is in 0.6.3 too):
 
