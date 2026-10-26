@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `uasw-census run` and `uasw-census px4-excerpt` read a PX4 ULog as `uasw ingest` does
+  (#132): a log pyulog marks corrupt is counted as unreadable, or refused in one line, at
+  once, where 0.6.4 read on, without end for 64 KiB of 0xFF bytes among a log's definitions,
+  and a log ending in zero bytes is read as the log cut where they begin; `uasw ingest` and
+  `POST /ingest` also refuse as damaged a log of none of the topics they read in which pyulog
+  finds damage only on reading it whole, which 0.6.4 stored. The 45 real ULogs and 10
+  DataFlash logs read to the same records, census counts and excerpts as on 0.6.4.
+
 ## 0.6.4 (2026-10-23)
 
 What operators see change: a PX4 ULog that pyulog marks corrupt is refused with nothing stored,

@@ -6,11 +6,8 @@ field is Unknown with that reason.
 
 from __future__ import annotations
 
-import io
-from collections.abc import Buffer
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import BinaryIO
 
 import numpy as np
 from pyulog import ULog
@@ -24,7 +21,7 @@ from uas_workbench.census.px4 import (
 )
 
 from . import ulog_declared
-from .record import NOT_COUNTED, FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
+from .record import FaultEvent, FlightRecord, LifetimeCounter, Maybe, Unknown
 
 TOPICS = (
     "vehicle_status",
@@ -41,10 +38,12 @@ def _has_data(path: Path, end: int | None) -> bool:
     """Whether the log holds a data message of any topic. Definitions, info, parameters and
     logged text with no data are a logger started and stopped before its first sample, no
     evidence of a flight. pyulog keeps data only of the topics it is asked for, so a log with
-    none of TOPICS is read again whole; the topics it holds then are the answer."""
-    with _open(path, end) as handle:
-        ulog = ulog_declared.read(handle)
-        return ulog is not None and bool(ulog.data_list)
+    none of TOPICS is read again whole; the topics it holds then are the answer. That read can
+    find damage the first could not: pyulog checks the size of a data message only for a topic
+    it is asked for. The log is then refused as damaged, as it would be had the first read
+    found it (#132)."""
+    with ulog_declared.open_to(path, end) as handle:
+        return bool(ulog_declared.read(handle).data_list)
 
 
 def _dataset(ulog: ULog, name: str) -> ULog.Data | None:
@@ -194,89 +193,9 @@ def _lifetime(ulog: ULog) -> Maybe[LifetimeCounter]:
     return LifetimeCounter(at_boot, last_seen, last_at)
 
 
-# The most bytes one message takes, its 3-byte header included. A zero run longer than this
-# cannot lie wholly inside the log's last message, so three zeros at least follow that message
-# and pyulog would mark the file corrupt for them.
-LONGEST_MESSAGE = 3 + 0xFFFF
-FILE_HEADER = 16
-
-
-class _EndingAt(io.FileIO):
-    """The file as if it ended at `end`: a reader sees nothing past it. Wrapped in a buffered
-    reader, it runs once per buffer, not once per message."""
-
-    def __init__(self, path: Path, end: int) -> None:
-        super().__init__(path, "rb")
-        self._end = end
-
-    def readinto(self, buffer: Buffer) -> int:
-        return super().readinto(memoryview(buffer)[: max(0, self._end - self.tell())])
-
-    def read(self, size: int | None = -1) -> bytes:
-        room = max(0, self._end - self.tell())
-        return super().read(room if size is None or size < 0 else min(size, room))
-
-    def readall(self) -> bytes:
-        return self.read()
-
-
-def _zero_tail(path: Path) -> tuple[int, int] | None:
-    """Where the zero bytes the file ends in begin and how many there are, or None if its last
-    byte is not zero."""
-    with path.open("rb") as handle:
-        size = end = handle.seek(0, io.SEEK_END)
-        while end > 0:
-            start = max(0, end - (1 << 16))
-            handle.seek(start)
-            if kept := handle.read(end - start).rstrip(b"\x00"):
-                zeros_from = start + len(kept)
-                return (zeros_from, size - zeros_from) if zeros_from < size else None
-            end = start
-    return (0, size) if size else None
-
-
-def _open(path: Path, end: int | None) -> BinaryIO:
-    return path.open("rb") if end is None else io.BufferedReader(_EndingAt(path, end), 1 << 16)
-
-
-def _parse(path: Path, end: int | None = None) -> ULog | None:
-    """The log as pyulog reads it, refused past what its definitions may declare (#125), or
-    None as soon as pyulog marks it corrupt, where the read ends: the log is then refused, or
-    read again to where its zero tail begins, whatever pyulog would find further on."""
-    # Given a path, pyulog opens the file itself and leaves it open when parsing fails; given
-    # a handle, it reads from it, and this block closes it either way.
-    with _open(path, end) as handle:
-        return ulog_declared.read(handle, list(TOPICS), stop_at_damage=True)
-
-
 def read_ulog(path: Path, *, licence: str, attribution: str) -> FlightRecord:
-    # A log still being written when the power went can end in zero bytes, which pyulog reads
-    # as message headers and marks the file corrupt for. The log is then read as if it ended
-    # where they begin, as a log cut there reads: to its last whole message. A message that
-    # runs into the zeros is dropped as a cut one is, since a cut message followed by zeros has
-    # the bytes of a whole message whose last bytes are zero, and no record is built from
-    # zeros pyulog reads as damage. A file pyulog reads whole without damage is read as it
-    # is: the zeros it ends in are then its last message's own, or the exact bytes a message
-    # cut after its header lacks, plus one or two, which no reader can tell apart. A zero run
-    # longer than one message can hold is not read at all, which spares pyulog its walk
-    # through it, byte by byte.
-    tail = _zero_tail(path)
-    if tail is not None and tail[0] < FILE_HEADER:  # pyulog refuses the file on its header
-        tail = None
-    end = None if tail is None or tail[1] <= LONGEST_MESSAGE else tail[0]
-    ulog = _parse(path, end)
-    if tail is not None and end is None and ulog is None:
-        end = tail[0]
-        ulog = _parse(path, end)
-    # pyulog skips what it cannot parse and says so: a data message whose framing breaks, a
-    # definition or a subscription it cannot read, a definition declaring an array of more
-    # than 65 535 elements (PX4/pyulog#128). What is left can lack a topic, the aircraft key or
-    # most of the span, so the log is refused, as a damaged DataFlash log is, and the operator
-    # is told what that leaves out of the counts.
-    if ulog is None:
-        raise ValueError(
-            f"pyulog found messages it could not parse and skipped them; {NOT_COUNTED}"
-        )
+    # Refused if damaged or declaring past a bound; a zero tail read as the log cut there.
+    ulog, end = ulog_declared.read_file(path, list(TOPICS))
     if not ulog.data_list and not _has_data(path, end):
         raise ValueError("holds a header but no recorded data")
     flight_s, landings = _flight_and_landings(ulog)
