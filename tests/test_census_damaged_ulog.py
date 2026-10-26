@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 import struct
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,8 @@ from test_ulog_damaged import DAMAGED
 from test_ulog_declared_size import flood
 
 from builders.ulog import ULogBuilder
+from uas_workbench.census.excerpt import excerpt_ulog
+from uas_workbench.census.px4 import probe_ulog
 from uas_workbench.flight.px4 import read_ulog
 
 MIB, SECONDS = 1024, 20
@@ -117,6 +120,25 @@ def test_px4_excerpt_refuses_it_in_one_line_and_writes_nothing(flooded: Path) ->
     assert outcome.said == 1, outcome
     assert outcome.stderr.splitlines() == [f"refused: {flooded}: {DAMAGED}"]
     assert not dest.exists()
+
+
+@pytest.mark.parametrize("zeros", [3, 512, 70_000])
+def test_the_census_readers_read_a_log_ending_in_zeros_as_the_flight_reader_does(
+    zeros: int, tmp_path: Path
+) -> None:
+    """As the log cut where the zeros begin, the census counting what it counted before. A
+    power cut can end a log in zero bytes, which pyulog reads as damage; stopping there and
+    refusing would have the census count such a log unreadable where `uasw ingest` stores it."""
+    sound = flown_log(tmp_path / "sound.ulg")
+    tailed = tmp_path / "tailed.ulg"
+    tailed.write_bytes(sound.read_bytes() + bytes(zeros))
+
+    assert probe_ulog(tailed, "fixed_wing") == replace(
+        probe_ulog(sound, "fixed_wing"), log_ref="tailed"
+    )
+    for log in (sound, tailed):
+        excerpt_ulog(log).write_ulog(str(log.with_suffix(".cut")))
+    assert tailed.with_suffix(".cut").read_bytes() == sound.with_suffix(".cut").read_bytes()
 
 
 def other_topic(path: Path, *, sound_data: bool) -> Path:
