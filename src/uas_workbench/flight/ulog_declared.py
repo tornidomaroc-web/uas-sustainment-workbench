@@ -256,7 +256,9 @@ def _parse(path: Path, end: int | None, topics: list[str] | None) -> ULog | None
 def read_file(path: Path, topics: list[str] | None = None) -> tuple[ULog, int | None]:
     """The log at `path` (only `topics`, if given) and where it was read to (None: the whole
     file), refused as `read` refuses one. The flight reader, the census and the excerpt cutter
-    all read a file by this, so they agree on what a log holds (#132)."""
+    all read a file by this (#132), each for its own topics: pyulog checks the size of a data
+    message only for a topic it is asked for, so damage there is found only by a reader that
+    asks for that topic."""
     # A log still being written when the power went can end in zero bytes, which pyulog reads
     # as message headers and marks the file corrupt for. The log is then read as if it ended
     # where they begin, as a log cut there reads: to its last whole message. A message that

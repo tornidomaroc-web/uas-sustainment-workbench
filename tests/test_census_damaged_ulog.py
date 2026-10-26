@@ -148,7 +148,8 @@ def other_topic(path: Path, *, sound_data: bool) -> Path:
     topic = log.subscribe("t")
     if sound_data:
         log.data(topic, {"timestamp": 2_000_000, "x": 1.0})
-    log._message(log._data, "D", struct.pack("<HQ", topic, 3_000_000) + bytes(2))
+    # Not zeros: a log ending in zero bytes is read as the log cut where they begin.
+    log._message(log._data, "D", struct.pack("<HQ", topic, 3_000_001) + b"\x01\x01")
     if sound_data:
         log.data(topic, {"timestamp": 4_000_000, "x": 2.0})
     return log.write(path)
@@ -163,6 +164,37 @@ def test_damage_found_looking_for_data_of_any_topic_refuses_the_log(
     log = other_topic(tmp_path / "other.ulg", sound_data=sound_data)
     with pytest.raises(ValueError) as refused:
         read_ulog(log, **ATTR)
+    assert str(refused.value) == DAMAGED
+
+
+def test_the_second_read_cuts_a_zero_tail_as_the_first_does(tmp_path: Path) -> None:
+    """A last message two bytes short of its definition whose bytes end in zeros: read whole,
+    pyulog finds it damaged; cut where the zeros begin, it is a message cut short, dropped. The
+    first read, not asked for its topic, sees neither, so the second must cut the tail too, as
+    0.6.4 read the log (it read on) and as a message of a topic the first read asks for is."""
+    log = ULogBuilder().format("t", ["uint64_t timestamp", "float x"])
+    topic = log.subscribe("t")
+    log.data(topic, {"timestamp": 2_000_000, "x": 1.0})
+    log._message(log._data, "D", struct.pack("<HQ", topic, 3_000_000))  # ends in 5 zero bytes
+    path = log.write(tmp_path / "cut.ulg")
+
+    assert read_ulog(path, **ATTR).source == "px4"
+
+
+def test_damage_in_a_topic_only_the_census_reads_is_found_by_the_census_only(
+    tmp_path: Path,
+) -> None:
+    """pyulog checks the size of a data message only for a topic it is asked for (LIMITS.md)."""
+    log = tmp_path / "esc.ulg"
+    sound = flown_log(tmp_path / "sound.ulg").read_bytes()
+    esc = re.search(rb"A\x00(..)esc_status", sound, re.DOTALL)
+    assert esc is not None
+    # Two bytes of an esc_status sample, not zeros: a zero tail would be cut, not read as damage.
+    log.write_bytes(sound + struct.pack("<HB", 4, ord("D")) + esc[1] + b"\x01\x01")
+
+    assert read_ulog(log, **ATTR).source == "px4"
+    with pytest.raises(ValueError) as refused:
+        probe_ulog(log, "fixed_wing")
     assert str(refused.value) == DAMAGED
 
 
