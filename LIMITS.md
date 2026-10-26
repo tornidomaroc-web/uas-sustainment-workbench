@@ -194,12 +194,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   not walk it byte by byte. A shorter zero run is read once (#129), where 0.6.4 read the log whole
   to learn whether pyulog sees damage in it, then again to where the zeros begin. The log is read
   to where the zeros begin; pyulog is then given a small file of the log's formats, the
-  subscriptions read so far and the bytes from the message it is reading on (25 to 42 KiB on the
+  subscriptions read so far and the bytes from the message it is reading on (21 to 43 KiB on the
   logs measured), and the read stops there if pyulog marks that file corrupt, or goes on through
   the zeros if not, as a whole read. A log pyulog reads whole without damage is read once, as on
-  0.6.4, plus that small file: on the 9 real logs that end in a zero byte of their own and the
-  fixture, 134 to 304 more message headers parsed, at most 0.08% of a log's, 3.5 ms on the
-  fixture. On the largest real log (246 MB), against 0.6.4, medians of three single reads
+  0.6.4, plus that small file: on the 9 real logs that end in a zero byte of their own, 134 to
+  304 more message headers parsed, at most 0.2% of a log's; on the fixture, 132 more, 3.5% of
+  its own, 3.5 ms. On the largest real log (246 MB), against 0.6.4, medians of three single reads
   interleaved, each in a process of its own (Windows, pyulog 1.3.0, measured 2026-10-26): as it
   is, 2.67 s where 0.6.4 took 2.70 on Python 3.12, 2.23 where it took 2.25 on 3.14; with 4096
   zero bytes appended, 2.76 s where 0.6.4 took 6.22, 2.37 where it took 4.86; with 16 MiB,
