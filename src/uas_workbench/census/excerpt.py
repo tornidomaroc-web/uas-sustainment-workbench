@@ -118,10 +118,9 @@ def strip_identity(ulog: ULog) -> ULog:
 
 def excerpt_ulog(src: Path) -> ULog:
     """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
-    Write the result with ULog.write_ulog()."""
-    with src.open("rb") as handle:
-        ulog = ulog_declared.read(handle, list(ULOG_KEEP))
-    assert ulog is not None
+    Write the result with ULog.write_ulog(). Read as the flight reader reads a file: a log
+    past a bound, or one pyulog marks corrupt, is refused with ValueError (#125, #132)."""
+    ulog, _ = ulog_declared.read_file(src, list(ULOG_KEEP))
     strip_identity(ulog)
     for dataset in ulog.data_list:
         for name, values in dataset.data.items():

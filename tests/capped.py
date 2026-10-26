@@ -13,9 +13,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import IO, Any
 
 # Run first in the child: cap its memory, then hand over to the snippet.
 _CAP = """
@@ -69,18 +70,31 @@ class Outcome:
 def run_capped(snippet: str, *, mib: int, seconds: float, args: list[str]) -> Outcome:
     """Run `snippet` (which prints one JSON line last) with `args` as sys.argv[1:]."""
     env = dict(os.environ, CAPPED_MIB=str(mib), OPENBLAS_NUM_THREADS="1", PYTHONWARNINGS="ignore")
-    started = time.monotonic()
-    try:
-        done = subprocess.run(
-            [sys.executable, "-c", _CAP + snippet, *args],
-            capture_output=True,
-            text=True,
-            timeout=seconds,
-            env=env,
-        )
-    except subprocess.TimeoutExpired as late:
-        return Outcome("timeout", time.monotonic() - started, str(late.stderr or "")[-2000:])
-    taken = time.monotonic() - started
-    lines = done.stdout.strip().splitlines()
-    said = json.loads(lines[-1]) if lines and done.returncode == 0 else f"exit {done.returncode}"
-    return Outcome(said, taken, done.stderr[-2000:])
+    # Files, not pipes: a process the snippet started that outlives it would hold a pipe open,
+    # and reading it to its end would wait for that process, past the cap.
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        started = time.monotonic()
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", _CAP + snippet, *args],
+                stdout=out,
+                stderr=err,
+                timeout=seconds,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            code: int | None = None
+        else:
+            code = done.returncode
+        taken = time.monotonic() - started
+        stdout, stderr = (_text(f) for f in (out, err))
+    if code is None:
+        return Outcome("timeout", taken, stderr[-2000:])
+    lines = stdout.strip().splitlines()
+    said = json.loads(lines[-1]) if lines and code == 0 else f"exit {code}"
+    return Outcome(said, taken, stderr[-2000:])
+
+
+def _text(file: IO[bytes]) -> str:
+    file.seek(0)
+    return file.read().decode(errors="replace").replace("\r\n", "\n")

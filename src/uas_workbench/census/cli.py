@@ -105,8 +105,13 @@ def cmd_alfa_excerpt(args: argparse.Namespace) -> None:
 
 
 def cmd_px4_excerpt(args: argparse.Namespace) -> None:
+    try:
+        ulog = excerpt_ulog(args.src)
+    except ValueError as refused:  # damaged, or declaring past a bound: nothing is written
+        print(f"refused: {args.src}: {refused}", file=sys.stderr)
+        raise SystemExit(1) from None
     args.dest.parent.mkdir(parents=True, exist_ok=True)
-    excerpt_ulog(args.src).write_ulog(str(args.dest))
+    ulog.write_ulog(str(args.dest))
     log.info("wrote %s (%d bytes)", args.dest, args.dest.stat().st_size)
 
 

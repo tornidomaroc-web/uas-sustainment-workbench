@@ -186,10 +186,9 @@ def firmware_version(ulog: ULog) -> str:
 
 
 def probe_ulog(path: Path, group: str) -> LogCensus:
-    # Bounded as the flight reader is (issue #125); a log past a bound is a census error.
-    with path.open("rb") as handle:
-        ulog = ulog_declared.read(handle, list(TOPICS))
-    assert ulog is not None
+    # Read as the flight reader reads a file (issues #125, #132): a log past a bound, or one
+    # pyulog marks corrupt, is a census error; a zero tail is read as the log cut there.
+    ulog, _ = ulog_declared.read_file(path, list(TOPICS))
 
     fields: dict[str, FieldResult] = {INFO_SYS_UUID.key: _probe_uuid(ulog)}
     for tf in TOPIC_FIELDS:
