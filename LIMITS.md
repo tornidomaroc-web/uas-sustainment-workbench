@@ -144,21 +144,21 @@ field-level tables. This file is about what that means for a maintenance tool.
   read a file as the flight reader does, each for its own topics (#132): `uasw-census run`
   counts a log pyulog marks corrupt as unreadable, with the flight reader's reason, and
   `uasw-census px4-excerpt` refuses it in one line, exit 1, writing nothing; a log ending in
-  zero bytes is read as the log cut where they begin, as it was counted before. On 0.6.4 both read on: each of these commands on
-  64 KiB or 1 MiB of 0xFF bytes among a log's definitions, or 8 MiB after a subscription, was
-  still reading at a 30 s cap, and a census run waits for every log; they now end in 0.2 to
-  0.5 s (whole commands, Windows, Python 3.12, pyulog 1.3.0, measured 2026-10-26). The flight
-  reader's second, whole read, made when a log holds none of the topics it reads, stops at
-  damage too: pyulog checks the size of a data message only for a topic it is asked to read,
-  so that read can find damage the first cannot. 0.6.4 then stored the log as a flight of no
-  known value, or refused it for holding no recorded data when the damaged messages were all
-  it held; it is now refused as damaged, and that read cuts a zero tail as the first does. For
-  the same reason the census and `uasw ingest` can differ on damage inside a message that
-  frames: a log damaged only in `esc_status` or `actuator_outputs`, which the census reads
-  and the flight reader does not, is counted unreadable by the census and stored by `uasw
-  ingest`; a log holding none of the flight reader's topics, damaged in a topic neither reads,
-  is refused by `uasw ingest` and counted by the census. None of the 45 real ULogs read here
-  is marked corrupt by any of these reads.
+  zero bytes is read as the log cut where they begin, as it was counted before. On 0.6.4 both
+  read on: each of these commands on 64 KiB or 1 MiB of 0xFF bytes among a log's definitions, or
+  8 MiB after a subscription, was still reading at a 30 s cap, and a census run waits for every
+  log; they now end in 0.2 to 0.5 s (whole commands, Windows, Python 3.12, pyulog 1.3.0,
+  measured 2026-10-26). The flight reader's second, whole read, made when a log holds none of
+  the topics it reads, stops at damage too: pyulog checks the size of a data message only for a
+  topic it is asked to read, so that read can find damage the first cannot. 0.6.4 then stored
+  the log as a flight of no known value, or refused it for holding no recorded data when the
+  damaged messages were all it held; it is now refused as damaged, and that read cuts a zero
+  tail as the first does. For the same reason the census and `uasw ingest` can differ on damage
+  inside a message that frames: a log damaged only in `esc_status` or `actuator_outputs`, which
+  the census reads and the flight reader does not, is counted unreadable by the census and
+  stored by `uasw ingest`; a log holding none of the flight reader's topics, damaged in a topic
+  neither reads, is refused by `uasw ingest` and counted by the census. None of the 45 real
+  ULogs read here is marked corrupt by any of these reads.
 - **A ULog that ends in zero bytes reads as the log cut where they begin.** A log still being
   written when the power went can end in zero bytes, and the logger writes buffers, not whole
   messages, so the zeros can begin inside a message. pyulog reads a message header of zeros
