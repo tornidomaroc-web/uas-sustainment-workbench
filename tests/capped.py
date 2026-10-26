@@ -3,7 +3,8 @@
 A crafted log that makes a reader lay out billions of elements must not take the test run's
 own memory or time with it: the read runs in a process of its own, which the OS refuses
 memory past the cap (a job object's process memory limit on Windows, the address space limit
-elsewhere), and which is terminated once the time cap passes.
+elsewhere), and which is terminated once the time cap passes. On Windows the processes it
+starts end with it; elsewhere they outlive it.
 """
 
 from __future__ import annotations
@@ -43,7 +44,9 @@ if sys.platform == "win32":
     k32.GetCurrentProcess.restype = wintypes.HANDLE
     job = wintypes.HANDLE(k32.CreateJobObjectW(None, None))
     limit = Extended()
-    limit.basic.flags = 0x100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+    # The process memory limit, and the end of every process in the job (the snippet's own
+    # children too) when its last handle closes, as it does when the time cap ends the snippet.
+    limit.basic.flags = 0x100 | 0x2000
     limit.process = mib << 20
     assert k32.SetInformationJobObject(job, 9, ctypes.byref(limit), ctypes.sizeof(limit))
     assert k32.AssignProcessToJobObject(job, wintypes.HANDLE(k32.GetCurrentProcess()))
