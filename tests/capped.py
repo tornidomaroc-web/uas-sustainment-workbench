@@ -49,8 +49,12 @@ if sys.platform == "win32":
     # children too) when its last handle closes, as it does when the time cap ends the snippet.
     limit.basic.flags = 0x100 | 0x2000
     limit.process = mib << 20
-    assert k32.SetInformationJobObject(job, 9, ctypes.byref(limit), ctypes.sizeof(limit))
-    assert k32.AssignProcessToJobObject(job, wintypes.HANDLE(k32.GetCurrentProcess()))
+    # Checked, not asserted: some snippets run with python -O, which skips an assert and its
+    # call with it, and the child then ran uncapped.
+    if not k32.SetInformationJobObject(job, 9, ctypes.byref(limit), ctypes.sizeof(limit)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not k32.AssignProcessToJobObject(job, wintypes.HANDLE(k32.GetCurrentProcess())):
+        raise ctypes.WinError(ctypes.get_last_error())
 else:
     import resource
     resource.setrlimit(resource.RLIMIT_AS, (mib << 20, mib << 20))

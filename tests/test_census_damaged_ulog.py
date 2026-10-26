@@ -93,6 +93,32 @@ def test_the_census_readers_refuse_a_log_pyulog_marks_corrupt(
     assert outcome.said == {"said": [True, DAMAGED], "optimize": int(optimize)}, outcome
 
 
+ALLOCATE = """
+import json, sys
+try:
+    held = bytearray(1 << 30)
+    refused = False
+except MemoryError:
+    refused = True
+print(json.dumps({"refused": refused, "optimize": sys.flags.optimize}))
+"""
+
+
+@pytest.mark.parametrize("optimize", [False, True], ids=["plain", "python -O"])
+def test_a_child_run_with_python_O_is_capped_too(
+    optimize: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The -O cases above run in a capped child. On Windows the cap was set by `assert` calls,
+    which -O skips: that child refused no memory, and its own children outlived it (the memory
+    limit and their end are set in the same call)."""
+    if optimize:
+        monkeypatch.setenv("PYTHONOPTIMIZE", "1")
+    else:
+        monkeypatch.delenv("PYTHONOPTIMIZE", raising=False)
+    outcome = run_capped(ALLOCATE, mib=256, seconds=SECONDS, args=[])
+    assert outcome.said == {"refused": True, "optimize": int(optimize)}, outcome
+
+
 def test_a_census_run_records_the_log_as_unreadable_and_counts_the_rest(flooded: Path) -> None:
     px4 = flooded.parent
     flown_log(px4 / "flown.ulg")
