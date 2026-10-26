@@ -486,8 +486,9 @@ uasw ask "..." --as-of 2026-10-01T00:00:00Z --record run.json   # a replayable r
 
 The census that measured the public logs is `uasw-census` (`px4-select`, `px4-fetch`,
 `alfa-fetch`, `run`); downloaded logs go to `data/raw/`, which git ignores. It reads a PX4 ULog
-as `uasw ingest` does: a log pyulog marks damaged is counted as unreadable, with the reason
-`uasw ingest` gives, and `px4-excerpt` refuses it in one line and writes nothing.
+file the way `uasw ingest` does, for the topics it counts: a log pyulog marks damaged is counted
+as unreadable, with the reason `uasw ingest` gives, and `px4-excerpt` refuses it in one line and
+writes nothing.
 
 ## Licence
 

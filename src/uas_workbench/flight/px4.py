@@ -41,9 +41,11 @@ def _has_data(path: Path, end: int | None) -> bool:
     none of TOPICS is read again whole; the topics it holds then are the answer. That read can
     find damage the first could not: pyulog checks the size of a data message only for a topic
     it is asked for. The log is then refused as damaged, as it would be had the first read
-    found it (#132)."""
-    with ulog_declared.open_to(path, end) as handle:
-        return bool(ulog_declared.read(handle).data_list)
+    found it (#132). It is read as the first was, a zero tail read as the log cut there."""
+    if end is not None:
+        with ulog_declared.open_to(path, end) as handle:
+            return bool(ulog_declared.read(handle).data_list)
+    return bool(ulog_declared.read_file(path)[0].data_list)
 
 
 def _dataset(ulog: ULog, name: str) -> ULog.Data | None:
