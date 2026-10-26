@@ -10,6 +10,9 @@
   they read in which pyulog finds damage only on reading it whole, which 0.6.4 stored, or
   refused for holding no recorded data. The 45 real ULogs and 10 DataFlash logs read to the
   same records, census counts and excerpts as on 0.6.4.
+- A PX4 ULog ending in a zero run of 64 KiB or less is read once, where 0.6.4 read it twice
+  (#129): the largest real log (246 MB) with 4096 zero bytes appended reads in 2.76 s where 0.6.4
+  took 6.22 (Python 3.12; 2.37 where 4.86 on 3.14), to the same record, with the same peak memory.
 
 ## 0.6.4 (2026-10-23)
 

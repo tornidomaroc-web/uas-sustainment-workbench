@@ -191,12 +191,24 @@ field-level tables. This file is about what that means for a maintenance tool.
   ending in zero bytes (the span shorter by at most 0.211 s, and in one copy faults unknown
   where the copy without zeros has none). The re-read reads nothing past where the zeros begin,
   and a zero run longer than one message can hold (64 KiB) is not read at all, so pyulog does
-  not walk it byte by byte. A shorter zero run costs a second read (#129): the log is read whole
-  once to learn whether pyulog sees damage in it, then again to where the zeros begin. On the
-  largest real log (246 MB), against 0.6.3: as it is, 2.9 to 3.4 s where 0.6.3 took 2.7 to 3.6;
-  with 4096 zero bytes appended, 5.9 to 7.1 s where 0.6.3 took 2.9 to 3.7, about twice; with
-  16 MiB, 2.9 to 3.5 s where 0.6.3, walking the zeros, took 13.8 to 15.0 (single reads, each in
-  a process of its own, Windows, Python 3.12, pyulog 1.3.0, measured 2026-10-23).
+  not walk it byte by byte. A shorter zero run is read once (#129), where 0.6.4 read the log whole
+  to learn whether pyulog sees damage in it, then again to where the zeros begin. The log is read
+  to where the zeros begin; pyulog is then given a small file of the log's formats, the
+  subscriptions read so far and the bytes from the message it is reading on (25 to 42 KiB on the
+  logs measured), and the read stops there if pyulog marks that file corrupt, or goes on through
+  the zeros if not, as a whole read. A log pyulog reads whole without damage is read once, as on
+  0.6.4, plus that small file: on the 9 real logs that end in a zero byte of their own and the
+  fixture, 134 to 304 more message headers parsed, at most 0.08% of a log's, 3.5 ms on the
+  fixture. On the largest real log (246 MB), against 0.6.4, medians of three single reads
+  interleaved, each in a process of its own (Windows, pyulog 1.3.0, measured 2026-10-26): as it
+  is, 2.67 s where 0.6.4 took 2.70 on Python 3.12, 2.23 where it took 2.25 on 3.14; with 4096
+  zero bytes appended, 2.76 s where 0.6.4 took 6.22, 2.37 where it took 4.86; with 16 MiB,
+  2.71 s where it took 2.76, 2.38 where it took 2.37. Peak memory is within 2 MiB of 0.6.4's
+  on each. Every record, refusal and reason is what it was: on 3,606 crafted and damaged shapes
+  (tails of 0 to 131,072 zero bytes, cuts in the last messages, the shape above whose missing
+  bytes come from zeros, each message kind last, appended data, definitions only) read by the
+  flight reader, the census and the excerpt cutter, Python 3.12 and 3.14, and on the 45 real
+  ULogs as they are and with 512 and 4096 zero bytes appended and the 10 DataFlash logs.
 - **A DataFlash file that does not frame is refused before pymavlink reads it, in one line.**
   pymavlink's indexer prints one `bad header` line on standard error for every byte it cannot
   frame, from compiled C in the wheels published for Linux and Windows, so no redirect of

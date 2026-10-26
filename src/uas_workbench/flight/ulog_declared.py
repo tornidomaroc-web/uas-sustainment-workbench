@@ -27,7 +27,8 @@ fewer bytes than a damaged header claims, then seeks back by all it claims.
 from __future__ import annotations
 
 import io
-from collections.abc import Buffer
+import struct
+from collections.abc import Buffer, Callable
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -138,7 +139,7 @@ class _Counts:
         return elements, characters, deepest
 
 
-def _bounded(counts: _Counts, stop_at_damage: bool) -> type[ULog]:
+def _bounded(counts: _Counts, stop_at_damage: bool, watch: _Watch | None) -> type[ULog]:
     class Format(ULog.MessageFormat):  # type: ignore[misc]
         def __init__(self, data: bytes, header: Any) -> None:
             super().__init__(data, header)
@@ -152,10 +153,27 @@ def _bounded(counts: _Counts, stop_at_damage: bool) -> type[ULog]:
                 )
                 counts.add(elements, characters)
             super().__init__(data, header, message_formats)
+            if watch is not None:
+                watch.subscriptions.append(bytes(data))
+
+    class Header(ULog._MessageHeader):  # type: ignore[misc]
+        """pyulog's own, until the read nears the zeros; from there it notes where each header
+        was read and the size it gives (`watch.track`)."""
+
+    def noted(header: Any, data: bytes) -> None:
+        assert watch is not None and watch.handle is not None
+        at = watch.handle.tell() - len(data)
+        ULog._MessageHeader.initialize(header, data)
+        watch.last_header = (at, header.msg_size)
 
     class Bounded(ULog):  # type: ignore[misc]
         MessageFormat = Format
         _MessageAddLogged = Subscription
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            if watch is not None:
+                watch.ulog = self
+            super().__init__(*args, **kwargs)
 
         # pyulog sets the flag False first, in __init__, so it is always set when read.
         @property
@@ -168,6 +186,9 @@ def _bounded(counts: _Counts, stop_at_damage: bool) -> type[ULog]:
             if value and stop_at_damage:
                 raise _Damaged
 
+    if watch is not None:
+        Bounded._MessageHeader = Header
+        watch.track = lambda: setattr(Header, "initialize", noted)
     return Bounded
 
 
@@ -178,9 +199,13 @@ def read(handle: BinaryIO, topics: list[str] | None = None) -> ULog:
     no reading on: no caller does anything with what pyulog finds after damage but refuse it.
     pyulog's public `file_corruption` is checked too, so a pyulog that stops setting the
     attribute watched here still has a log it marks corrupt refused, only read to its end."""
+    return _read(handle, topics, None)
+
+
+def _read(handle: BinaryIO, topics: list[str] | None, watch: _Watch | None) -> ULog:
     counts = _Counts()
     try:
-        ulog = _bounded(counts, True)(
+        ulog = _bounded(counts, True, watch)(
             handle, message_name_filter_list=topics, disable_str_exceptions=True
         )
     except _Damaged:
@@ -253,6 +278,152 @@ def _parse(path: Path, end: int | None, topics: list[str] | None) -> ULog | None
             return None
 
 
+_SECTION_ENDS = (
+    ULog.MSG_TYPE_ADD_LOGGED_MSG,
+    ULog.MSG_TYPE_LOGGING,
+    ULog.MSG_TYPE_LOGGING_TAGGED,
+)
+
+
+# What of the definitions decides how pyulog reads a message after them: the formats, and the
+# flag bits (appended data). Information and parameters only fill dictionaries.
+_DECIDING = (ULog.MSG_TYPE_FORMAT, ULog.MSG_TYPE_FLAG_BITS)
+
+
+def _definitions(path: Path, limit: int) -> tuple[int, bytes] | None:
+    """Where pyulog's definitions end, at the first subscription or logged text, and the file's
+    header with the formats and flag bits before it; the messages framed one after another,
+    as pyulog reads them when it marks none corrupt. None if no such message starts and ends
+    before `limit`."""
+    with path.open("rb") as handle:
+        kept = bytearray(handle.read(FILE_HEADER))
+        at = FILE_HEADER
+        while at + 3 <= limit:
+            header = handle.read(3)
+            size, kind = struct.unpack("<HB", header)
+            if at + 3 + size > limit:
+                return None
+            if kind in _SECTION_ENDS:
+                return at, bytes(kept)
+            if kind in _DECIDING:
+                kept += header + handle.read(size)
+                at += 3 + size
+            else:
+                at = handle.seek(size, io.SEEK_CUR)
+    return None
+
+
+class _Watch:
+    """A read of a file whose zero tail is short, stopped where the zeros begin until it is
+    known whether pyulog, reading on, marks the file corrupt (#129)."""
+
+    def __init__(self, path: Path, zeros_from: int, size: int, topics: list[str] | None) -> None:
+        self.path, self.zeros_from, self.size, self.topics = path, zeros_from, size, topics
+        self.handle: BinaryIO | None = None
+        self.ulog: ULog | None = None
+        self.subscriptions: list[bytes] = []
+        self.last_header: tuple[int, int] | None = None
+        self.track: Callable[[], None] = lambda: None
+        # "cut": pyulog reads on into the zeros and marks the file corrupt, so the read ends
+        # where they begin; "whole": anything else, and the read goes on through them.
+        self.verdict: str | None = None
+
+    def decide(self) -> None:
+        try:
+            marked = self._marked_corrupt_reading_on()
+        except Exception:  # undecided: read on, as the whole file is read
+            marked = False
+        self.verdict = "cut" if marked else "whole"
+
+    def _marked_corrupt_reading_on(self) -> bool:
+        """Whether pyulog, reading on from the message it is reading where the zeros begin,
+        marks the file corrupt before it stops or refuses the file for anything else. Found by
+        pyulog itself, reading a file of the formats and flag bits, every subscription read so
+        far and the bytes from that message on: what decides how pyulog reads a message; no
+        other message read before can change it. False wherever that cannot be told: data appended
+        further on (pyulog then reads by offsets), a message other than the one pyulog was
+        framing, definitions still being read."""
+        ulog, header = self.ulog, self.last_header
+        if ulog is None or header is None or ulog.has_data_appended:
+            return False
+        at, size = header
+        if at + 3 <= self.zeros_from < at + 3 + size:
+            start = at  # pyulog is reading the body of the message whose header was at `at`
+        elif self.zeros_from - 3 < at + 3 + size <= self.zeros_from:
+            start = at + 3 + size  # pyulog is reading the next header
+        else:
+            return False
+        found = _definitions(self.path, self.zeros_from)
+        if found is None or start < found[0]:
+            return False
+        data_from, definitions = found
+        if not self.subscriptions and start > data_from:
+            return False  # pyulog would read that message among the definitions
+        with self.path.open("rb") as handle:
+            handle.seek(start)
+            rest = handle.read(self.size - start)
+        subscribed = b"".join(
+            struct.pack("<HB", len(body), ULog.MSG_TYPE_ADD_LOGGED_MSG) + body
+            for body in self.subscriptions
+        )
+        try:
+            read(io.BytesIO(definitions + subscribed + rest), self.topics)
+        except DamagedLog:
+            return True
+        return False
+
+
+class _ToZeros(_EndingAt):
+    """The file as if it ended where its zeros begin, until pyulog first asks for a byte
+    there: then it ends there for good, or not at all, as the watch decides."""
+
+    def __init__(self, watch: _Watch) -> None:
+        super().__init__(watch.path, watch.zeros_from)
+        self._watch = watch
+        # A message holds at most LONGEST_MESSAGE bytes, so the headers pyulog reads from here
+        # on include the last before the zeros and the one before it.
+        self._noting_from: int | None = watch.zeros_from - 2 * LONGEST_MESSAGE
+
+    def _reaching(self, wanted: int) -> None:
+        at = self.tell()
+        if self._noting_from is not None and at + wanted > self._noting_from:
+            self._noting_from = None
+            self._watch.track()
+        if at >= self._end and self._watch.verdict is None:
+            self._watch.decide()
+            if self._watch.verdict == "whole":
+                self._end = self._watch.size
+
+    def readinto(self, buffer: Buffer) -> int:
+        self._reaching(memoryview(buffer).nbytes)
+        return super().readinto(buffer)
+
+    def read(self, size: int | None = -1) -> bytes:
+        self._reaching(self._watch.size if size is None or size < 0 else size)
+        return super().read(size)
+
+
+def _read_once(
+    path: Path, zeros_from: int, size: int, topics: list[str] | None
+) -> tuple[ULog | None, int | None]:
+    """The file read as `read_file` reads it, in one read unless pyulog, read on through the
+    zeros, marks it corrupt where it could not be told so beforehand."""
+    watch = _Watch(path, zeros_from, size, topics)
+    with io.BufferedReader(_ToZeros(watch), 1 << 16) as handle:
+        watch.handle = handle
+        try:
+            ulog: ULog | None = _read(handle, topics, watch)
+        except DamagedLog:
+            ulog = None
+    if watch.verdict == "cut":
+        return ulog, zeros_from
+    if watch.verdict == "whole" and ulog is None:
+        return _parse(path, zeros_from, topics), zeros_from
+    # Read whole, or never reached the zeros: stopped before them, or marked corrupt before
+    # them, as the read cut where they begin would be.
+    return ulog, None
+
+
 def read_file(path: Path, topics: list[str] | None = None) -> tuple[ULog, int | None]:
     """The log at `path` (only `topics`, if given) and where it was read to (None: the whole
     file), refused as `read` refuses one. The flight reader, the census and the excerpt cutter
@@ -268,14 +439,15 @@ def read_file(path: Path, topics: list[str] | None = None) -> tuple[ULog, int | 
     # is: the zeros it ends in are then its last message's own, or the exact bytes a message
     # cut after its header lacks, plus one or two, which no reader can tell apart. A zero run
     # longer than one message can hold is not read at all, which spares pyulog its walk
-    # through it, byte by byte.
+    # through it, byte by byte. A shorter one is read once (#129): to where it begins, then
+    # on through it only if pyulog would not mark the file corrupt there.
     tail = _zero_tail(path)
     if tail is not None and tail[0] < FILE_HEADER:  # pyulog refuses the file on its header
         tail = None
-    end = None if tail is None or tail[1] <= LONGEST_MESSAGE else tail[0]
-    ulog = _parse(path, end, topics)
-    if tail is not None and end is None and ulog is None:
-        end = tail[0]
+    if tail is not None and tail[1] <= LONGEST_MESSAGE:
+        ulog, end = _read_once(path, tail[0], tail[0] + tail[1], topics)
+    else:
+        end = None if tail is None else tail[0]
         ulog = _parse(path, end, topics)
     # pyulog skips what it cannot parse and says so: a data message whose framing breaks, a
     # definition or a subscription it cannot read, a definition declaring an array of more
