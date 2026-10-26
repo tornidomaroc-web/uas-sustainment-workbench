@@ -209,7 +209,9 @@ def flag_never_fires(monkeypatch: pytest.MonkeyPatch) -> None:
     """pyulog as it would be if it stopped setting the private `_file_corrupt` the read watches
     to end early: the watch never fires."""
     bounded = ulog_declared._bounded
-    monkeypatch.setattr(ulog_declared, "_bounded", lambda counts, _stop: bounded(counts, False))
+    monkeypatch.setattr(
+        ulog_declared, "_bounded", lambda counts, _stop, watch: bounded(counts, False, watch)
+    )
 
 
 @pytest.mark.usefixtures("flag_never_fires")
