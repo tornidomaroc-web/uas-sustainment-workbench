@@ -7,13 +7,13 @@
 What operators see change: `uasw-census run` and `uasw-census px4-excerpt` read a PX4 ULog as
 `uasw ingest` does, so a log pyulog marks corrupt is counted as unreadable, or refused in one
 line, at once, where 0.6.4 read on; a ULog ending in a zero run of 64 KiB or less is read once,
-where 0.6.4 read it twice; and `uasw ingest` and `POST /ingest` refuse as damaged one shape of
-log that 0.6.4 stored, or refused with another reason (below). The 45 real ULog files (44
-distinct, the fixture excerpt among them) and 10 DataFlash logs read to the same records and
-census probes as on 0.6.4, each log in a capped process of its own. On a sound store, with the
-clock frozen, the 184 GET answers captured (every GET route but `/metrics` and the docs pages,
-each aircraft, with and without `as_of`) and the 9 exported files are what 0.6.4 gave apart
-from the version string.
+where 0.6.4 read it twice when pyulog marked it corrupt; and `uasw ingest` and `POST /ingest`
+refuse as damaged one shape of log that 0.6.4 stored, or refused with another reason (below).
+The 45 real ULog files (44 distinct, the fixture excerpt among them) and 10 DataFlash logs read
+to the same records and census probes as on 0.6.4, each log in a capped process of its own. On a
+sound store, with the clock frozen, the 184 GET answers captured (every GET route but `/metrics`
+and the docs pages, each aircraft, with and without `as_of`) and the 9 exported files are what
+0.6.4 gave apart from the version string.
 
 - `uasw-census run` and `uasw-census px4-excerpt` stop where pyulog marks a ULog corrupt (#133,
   closes #132). With 64 KiB of 0xFF bytes among a log's definitions, `uasw-census run` over that
