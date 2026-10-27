@@ -50,19 +50,60 @@ open-source maintainers to read and reuse, and for anyone reviewing how it was b
 - Every aircraft, flight, component and work order is marked synthetic or real. The seven
   synthetic aircraft of the demo fleet describe no real aircraft.
 
-**Try it in a few minutes.** You need git and Python 3.12 or later. Run these from the
-clone's folder; the store goes to `data/local/fleet.sqlite`, which git ignores.
+**Try it in a few minutes.** You need git and Python 3.12 or later; `python --version` says
+which Python you have. Some Linux systems ship an older one, name the command `python3`, or
+keep the `venv` module in a system package of its own: there, install 3.12 or later and type
+`python3 -m venv .venv` for the third line below. Once the environment is active, `python`
+is its own. Every line works in bash, cmd and PowerShell, one at a time, except the line that
+activates the environment, which differs by shell.
 
 ```bash
 git clone https://github.com/tornidomaroc-web/uas-sustainment-workbench
 cd uas-sustainment-workbench
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m venv .venv
+```
+
+Activate it with the line for your shell, then run the rest in that same window:
+
+```text
+. .venv/bin/activate              # bash or zsh on Linux or macOS
+. .venv/Scripts/activate          # bash on Windows
+.venv\Scripts\activate.bat        # cmd
+.venv\Scripts\Activate.ps1        # PowerShell
+```
+
+If PowerShell answers that running scripts is disabled on this system, use cmd for these
+steps. Then, from the clone's folder:
+
+```bash
 python -m pip install -e .
-uasw seed                                 # the demo fleet: 7 synthetic aircraft, 2 from public logs
+uasw seed                                 # the demo fleet: 7 synthetic aircraft plus 2 real ones from public logs
 uasw records SYN-04 --out records.html    # a draft records summary; open it in a browser
 uasw verify                               # the write journal: intact, and its head
-uasw serve                                # the HTTP API; then open http://localhost:8000/docs
+uasw serve                                # the HTTP API until Ctrl+C; open http://localhost:8000/docs
 ```
+
+The store goes to `data/local/fleet.sqlite`, which git ignores. If `uasw` is not found, or the
+system blocks it, `python -m uas_workbench.service.cli` is the same command, with the same
+arguments: `python -m uas_workbench.service.cli seed`.
+
+**Your own logs, in a store of their own.** Without `--db`, every command uses
+`data/local/fleet.sqlite`, the store `uasw seed` fills with the demo fleet, and `uasw serve`
+fills too when it finds it empty. A log ingested there sits beside those nine aircraft in
+every list and in the fleet summary. Give your own logs another file and name it with `--db`,
+before the command, every time:
+
+```bash
+uasw --db data/local/own.sqlite ingest my-aircraft tests/fixtures/alfa/2018-07-30_16-30-14.bin
+uasw --db data/local/own.sqlite records my-aircraft --out own-records.html
+uasw --db data/local/own.sqlite verify
+uasw --db data/local/own.sqlite serve     # a store that holds anything is not seeded
+```
+
+As written, the first line makes the store and reads a short public ArduPilot log excerpt
+kept in this repository. For your own, put your aircraft's name in place of `my-aircraft` and
+the path of its `.ulg` (PX4) or `.bin` (ArduPilot) log in place of the excerpt's; several logs
+may follow one another on the line. A log is read into a flight record and never stored raw.
 
 **Released and unreleased.** The latest release is 0.6.5. Main can also hold changes made
 after it, listed under Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main;
@@ -442,22 +483,26 @@ Docker bridge, not from loopback, so they need a token:
 `Authorization: Bearer <token>`. Without one, reads work and every write is refused with a
 message saying so.
 
-Without Docker:
+Without Docker, in an environment made and activated as in "Try it" above (your own logs go
+in a store of their own, as shown there):
 
 ```bash
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[dev,fetch]"
-uasw serve                                        # seeds an empty store; /docs, /metrics
-uasw ingest my-aircraft path/to/log.ulg           # add your own logs (never stored raw)
+python -m pip install -e ".[dev,fetch]"
+uasw serve                                        # seeds an empty store with the demo fleet; /docs, /metrics
 uasw export-static --out site                     # the static demo, from the same store
-ruff check . && mypy && pytest                    # no network, no downloads needed
+python -m ruff check .                            # lint, types and tests: no network, no downloads
+python -m mypy
+python -m pytest
 ```
 
 CI runs lint, strict types, the tests and the static export on every pull request on Linux
 (Python 3.12) and on Windows (Python 3.12 and 3.14); the container and the headless-browser
 checks run on Linux.
 
-Recording maintenance, on the same store, with no service running:
+Recording maintenance, with no service running, on the store that holds the aircraft; for
+your own, put `--db` and its path after `uasw` on each line, as in "Try it". These lines are
+written for bash, which continues a line ending in `\`; in cmd or PowerShell, type each command
+on one line:
 
 ```bash
 uasw record work-order open my-aircraft --state awaiting_parts --by "A. Name, maintenance" \
