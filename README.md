@@ -51,11 +51,14 @@ open-source maintainers to read and reuse, and for anyone reviewing how it was b
   synthetic aircraft of the demo fleet describe no real aircraft.
 
 **Try it in a few minutes.** You need git and Python 3.12 or later; `python --version` says
-which Python you have. Some Linux systems ship an older one, name the command `python3`, or
-keep the `venv` module in a system package of its own: there, install 3.12 or later and type
-`python3 -m venv .venv` for the third line below. Once the environment is active, `python`
-is its own. Every line works in bash, cmd and PowerShell, one at a time, except the line that
-activates the environment, which differs by shell.
+which Python you have. Some Linux and macOS systems ship an older one, name the command
+`python3`, or keep the `venv` module in a system package of its own: there, install 3.12 or
+later and make the environment with the one you installed, by the name it has there, such as
+`python3.12 -m venv .venv`, in place of the third line below; `python3` can still be the
+older one. Once the environment is active, `python` is its own. Every line works in bash, cmd
+and PowerShell, one at a time, except the line that activates the environment, which differs
+by shell. Past the shell names beside those, no line carries a comment: cmd has none, and
+would pass the words after `#` to the command.
 
 ```bash
 git clone https://github.com/tornidomaroc-web/uas-sustainment-workbench
@@ -77,11 +80,16 @@ steps. Then, from the clone's folder:
 
 ```bash
 python -m pip install -e .
-uasw seed                                 # the demo fleet: 7 synthetic aircraft plus 2 real ones from public logs
-uasw records SYN-04 --out records.html    # a draft records summary; open it in a browser
-uasw verify                               # the write journal: intact, and its head
-uasw serve                                # the HTTP API until Ctrl+C; open http://localhost:8000/docs
+uasw seed
+uasw records SYN-04 --out records.html
+uasw verify
+uasw serve
 ```
+
+`uasw seed` puts the demo fleet in the store: 7 synthetic aircraft plus 2 real ones from
+public logs. `uasw records` writes a draft records summary of SYN-04 to `records.html`; open
+it in a browser. `uasw verify` checks the write journal and prints its head. `uasw serve` runs
+the HTTP API until Ctrl+C; open http://localhost:8000/docs in a browser meanwhile.
 
 The store goes to `data/local/fleet.sqlite`, which git ignores. If `uasw` is not found, or the
 system blocks it, `python -m uas_workbench.service.cli` is the same command, with the same
@@ -97,11 +105,12 @@ before the command, every time:
 uasw --db data/local/own.sqlite ingest my-aircraft tests/fixtures/alfa/2018-07-30_16-30-14.bin
 uasw --db data/local/own.sqlite records my-aircraft --out own-records.html
 uasw --db data/local/own.sqlite verify
-uasw --db data/local/own.sqlite serve     # a store that holds anything is not seeded
+uasw --db data/local/own.sqlite serve
 ```
 
 As written, the first line makes the store and reads a short public ArduPilot log excerpt
-kept in this repository. For your own, put your aircraft's name in place of `my-aircraft` and
+kept in this repository, and the last serves that store alone: a store that holds anything
+is not seeded. For your own, put your aircraft's name in place of `my-aircraft` and
 the path of its `.ulg` (PX4) or `.bin` (ArduPilot) log in place of the excerpt's; several logs
 may follow one another on the line. A log is read into a flight record and never stored raw.
 
@@ -488,37 +497,45 @@ in a store of their own, as shown there):
 
 ```bash
 python -m pip install -e ".[dev,fetch]"
-uasw serve                                        # seeds an empty store with the demo fleet; /docs, /metrics
-uasw export-static --out site                     # the static demo, from the same store
-python -m ruff check .                            # lint, types and tests: no network, no downloads
+uasw serve
+uasw export-static --out site
+python -m ruff check .
 python -m mypy
 python -m pytest
 ```
 
-CI runs lint, strict types, the tests and the static export on every pull request on Linux
+`uasw serve` seeds an empty store with the demo fleet and serves `/docs` and `/metrics` until
+Ctrl+C. `uasw export-static` writes the static demo from the same store. The last three lines
+run lint, strict types and the tests, with no network and no downloads. CI runs lint, strict types, the tests and the static export on every pull request on Linux
 (Python 3.12) and on Windows (Python 3.12 and 3.14); the container and the headless-browser
 checks run on Linux.
 
-Recording maintenance, with no service running, on the store that holds the aircraft; for
-your own, put `--db` and its path after `uasw` on each line, as in "Try it". These lines are
-written for bash, which continues a line ending in `\`; in cmd or PowerShell, type each command
-on one line:
+Recording maintenance, with no service running, on the store of your own logs from "Try it".
+Each line names that store with `--db`: without it, a line writes to the demo store, where an
+entry, once written, stays. Each command is one line, in bash, cmd and PowerShell alike, and
+the lines run as written, in order, after the four lines of "Try it" that made that store:
 
 ```bash
-uasw record work-order open my-aircraft --state awaiting_parts --by "A. Name, maintenance" \
-    --statement "replacement propeller set on order after a ground strike"
-uasw record component register PACK-7 --kind "battery pack" --since 2026-08-01 --by "..." --statement "..."
-uasw record component install PACK-7 my-aircraft --by "..." --statement "..."
-uasw record inspection my-aircraft "100-hour inspection" --by "..." --statement "..."
-uasw record history my-aircraft --all              # superseded entries too, with the reasons
-uasw record time-in-service my-aircraft 42.5 --supersedes 9 --by "..." --reason "misread" \
-    --statement "..."                             # a correction; it keeps entry 9's date
-uasw record retract 12 --by "..." --reason "entered against the wrong aircraft"
-uasw records my-aircraft --out records.html       # the draft records summary, journal head in it
-uasw fleet-records --out fleet-records.html        # the same for the whole fleet, one row each
-uasw verify                                        # the journal: intact or the first bad link
-uasw verify --head <head from an earlier run>      # unchanged since that head, or not
+uasw --db data/local/own.sqlite record work-order open my-aircraft --state awaiting_parts --by "A. Name, maintenance" --statement "replacement propeller set on order after a hard landing"
+uasw --db data/local/own.sqlite record component register PACK-7 --kind "battery pack" --since 2026-08-01 --by "A. Name, maintenance" --statement "new pack received"
+uasw --db data/local/own.sqlite record component install PACK-7 my-aircraft --by "A. Name, maintenance" --statement "pack fitted"
+uasw --db data/local/own.sqlite record inspection my-aircraft "100-hour inspection" --by "A. Name, maintenance" --statement "no findings"
+uasw --db data/local/own.sqlite record time-in-service my-aircraft 42.5 --by "A. Name, maintenance" --statement "hours from the paper logbook"
+uasw --db data/local/own.sqlite record time-in-service my-aircraft 24.5 --supersedes 5 --by "A. Name, maintenance" --reason "misread" --statement "hours from the paper logbook"
+uasw --db data/local/own.sqlite record retract 4 --by "A. Name, maintenance" --reason "entered against the wrong aircraft"
+uasw --db data/local/own.sqlite record history my-aircraft --all
+uasw --db data/local/own.sqlite records my-aircraft --out own-records.html
+uasw --db data/local/own.sqlite fleet-records --out own-fleet-records.html
+uasw --db data/local/own.sqlite verify
 ```
+
+Each `record` line prints the number of the entry it wrote; in a store with no entries before
+them, these are entries 1 to 7. The second `time-in-service` line corrects entry 5 and keeps
+its date; `retract 4` supersedes the inspection with nothing. `record history --all` shows
+superseded entries too, with the reasons. `records` and `fleet-records` write the draft
+records summary of one aircraft and of the whole store, one row each, the journal head in
+it. `verify` says whether the journal is intact or names the first bad link; given the head an
+earlier run printed, after `--head`, it says whether the records are unchanged since then.
 
 The assistant needs a running service and a local [Ollama](https://ollama.com) with the
 model pulled (`ollama pull qwen3:8b`, Apache-2.0, about 5 GB; no account, no key). Ollama
