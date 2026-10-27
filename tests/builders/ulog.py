@@ -55,6 +55,12 @@ class ULogBuilder:
         self._message(self._definitions, "I", bytes([len(typed_key)]) + typed_key + encoded)
         return self
 
+    def typed_info(self, typed_key: str, value: bytes) -> ULogBuilder:
+        """An information message of any declared type, "uint32_t[2] key", with its bytes."""
+        key = typed_key.encode()
+        self._message(self._definitions, "I", bytes([len(key)]) + key + value)
+        return self
+
     def param(self, name: str, value: int | float) -> ULogBuilder:
         typed_key, packed = (
             (f"int32_t {name}", struct.pack("<i", value))
