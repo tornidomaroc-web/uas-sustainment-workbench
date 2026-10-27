@@ -26,8 +26,11 @@ def _formats(b: ULogBuilder) -> ULogBuilder:
     )
 
 
-def flown_log(path: Path) -> Path:
+def flown_log(path: Path, *info: tuple[str, bytes]) -> Path:
+    """`info`: information messages to add, each a typed key and its bytes."""
     b = _formats(ULogBuilder(start_us=10 * S)).info("sys_uuid", "synthetic-vehicle-0001")
+    for typed_key, value in info:
+        b.typed_info(typed_key, value)
     b.param("LND_FLIGHT_T_HI", 1).param("LND_FLIGHT_T_LO", 705_032_704)  # 5 000 000 000 us
     status = b.subscribe("vehicle_status")
     land = b.subscribe("vehicle_land_detected")
