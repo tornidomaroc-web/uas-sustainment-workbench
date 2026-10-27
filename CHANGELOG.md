@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- README: "Try it" shows how to load your own logs into a store of their own with `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store; it gives the line that activates the environment in bash, cmd and PowerShell, chains no commands with `&&`, which Windows PowerShell 5.1 cannot parse, names `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what to do where Python is older or named `python3`, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones; `tests/test_front.py` holds the front to all of it.
+
 ## 0.6.5 (2026-10-27)
 
 What operators see change: `uasw-census run` and `uasw-census px4-excerpt` read a PX4 ULog as
