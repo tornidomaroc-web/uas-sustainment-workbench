@@ -143,7 +143,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   have a corrupt log read to its end and refused, not stored. The census and the excerpt cutter
   read a file as the flight reader does, each for its own topics (#132): `uasw-census run`
   counts a log pyulog marks corrupt as unreadable, with the flight reader's reason, and
-  `uasw-census px4-excerpt` refuses it in one line, exit 1, writing nothing; a log ending in
+  `uasw-census px4-excerpt` refuses it in one line, exit 1, writing nothing. The cutter refuses
+  the same way a log holding an information message pyulog reads but cannot write back, such as
+  a `uint32_t[2]`, naming each one (#138); that check reads two tables private to pyulog (the
+  scalar types its writer packs and each message's declared type), and the excerpt is made whole
+  in memory before anything is written, so a write pyulog cannot finish leaves no file or folder
+  at `--dest` and an excerpt already there as it was. A log ending in
   zero bytes is read as the log cut where they begin, as it was counted before. On 0.6.4 both
   read on: each of these commands on 64 KiB or 1 MiB of 0xFF bytes among a log's definitions, or
   8 MiB after a subscription, was still reading at a 30 s cap, and a census run waits for every
