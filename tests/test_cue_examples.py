@@ -117,6 +117,7 @@ RELEASED_CUES = {
     "0.6.2 (2026-10-18)": 0,
     "0.6.3 (2026-10-20)": 0,
     "0.6.4 (2026-10-23)": 0,
+    "0.6.5 (2026-10-27)": 0,
 }
 # A checked section's whole quotation of a cue the code no longer gives, kept on purpose to say
 # what changed: section heading -> the quoted cues. None today.
