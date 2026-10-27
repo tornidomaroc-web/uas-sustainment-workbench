@@ -2,17 +2,72 @@
 
 ## Unreleased
 
-- `uasw-census run` and `uasw-census px4-excerpt` read a PX4 ULog file as `uasw ingest` does,
-  each for its own topics (#132): a log pyulog marks corrupt is counted as unreadable, or
-  refused in one line, at once, where 0.6.4 read on, without end for 64 KiB of 0xFF bytes
-  among a log's definitions, and a log ending in zero bytes is read as the log cut where they
-  begin; `uasw ingest` and `POST /ingest` also refuse as damaged a log of none of the topics
-  they read in which pyulog finds damage only on reading it whole, which 0.6.4 stored, or
-  refused for holding no recorded data. The 45 real ULogs and 10 DataFlash logs read to the
-  same records, census counts and excerpts as on 0.6.4.
-- A PX4 ULog ending in a zero run of 64 KiB or less is read once, where 0.6.4 read it twice
-  (#129): the largest real log (246 MB) with 4096 zero bytes appended reads in 2.76 s where 0.6.4
-  took 6.22 (Python 3.12; 2.37 where 4.86 on 3.14), to the same record, with the same peak memory.
+## 0.6.5 (2026-10-27)
+
+What operators see change: `uasw-census run` and `uasw-census px4-excerpt` read a PX4 ULog as
+`uasw ingest` does, so a log pyulog marks corrupt is counted as unreadable, or refused in one
+line, at once, where 0.6.4 read on; a ULog ending in a zero run of 64 KiB or less is read once,
+where 0.6.4 read it twice; and `uasw ingest` and `POST /ingest` refuse as damaged one shape of
+log that 0.6.4 stored, or refused with another reason (below). The 45 real ULog files (44
+distinct, the fixture excerpt among them) and 10 DataFlash logs read to the same records and
+census probes as on 0.6.4, each log in a capped process of its own. On a sound store, with the
+clock frozen, every GET answer and every exported file is what 0.6.4 gave apart from the
+version string.
+
+- `uasw-census run` and `uasw-census px4-excerpt` stop where pyulog marks a ULog corrupt (#133,
+  closes #132). With 64 KiB of 0xFF bytes among a log's definitions, `uasw-census run` over that
+  log and a sound one finished in 0.45 s, counting the first as unreadable with the damaged-log
+  sentence and the sound one as before, and `uasw-census px4-excerpt` printed one `refused:`
+  line, exited 1 and wrote nothing, in 0.23 s; on 0.6.4 each was still reading when a 30 s cap
+  stopped it (Windows, Python 3.12.10, pyulog 1.3.0, each command in a capped process of its
+  own, measured 2026-10-27). The census and the excerpt cutter now read a file through the
+  flight reader's own path, each for its own topics, so all three read a log ending in zero
+  bytes as the log cut where they begin. pyulog checks a data message's size only for a topic
+  it is asked for, and the census asks for two the flight reader does not (`esc_status`,
+  `actuator_outputs`), so damage inside a message that still frames can be found by one reader
+  and not the other (LIMITS.md).
+- `uasw ingest` and `POST /ingest` refuse as damaged a log of none of the topics they read in
+  which pyulog finds damage only on reading it whole (#133). 0.6.4 stored such a log as a
+  flight with every value unknown when it also held sound data of that topic, and refused it
+  with "holds a header but no recorded data" when the damaged message was all it held. A real
+  log does not reach this read: each holds data of a topic the flight reader reads.
+- A PX4 ULog ending in a zero run of 64 KiB or less is read once (#134, closes #129), where 0.6.4
+  read it whole, to learn whether pyulog marks it corrupt, then again to where the zeros begin.
+  On the largest real log (246 MB) with 4096 zero bytes appended, medians of three single reads
+  interleaved, each in a capped process of its own: 2.64 s where 0.6.4 took 5.30 (Python
+  3.12.10), 2.37 s where 0.6.4 took 4.61 (3.14.3). Every read gave the same span, 5157.39927 s,
+  and peak commit memory was 41 to 43 MiB on both; the same log as it is reads in 0.6.4's time
+  (2.68 s against 2.68 on 3.12, 2.24 against 2.25 on 3.14; Windows, pyulog 1.3.0, measured
+  2026-10-27). A log pyulog reads whole without damage is read once, as on 0.6.4, plus a small
+  file of the log's formats, subscriptions and last messages that pyulog reads to decide
+  (LIMITS.md).
+- Tests (e1e68bd): `tests/capped.py`, which runs a crafted read in a child process capped in
+  memory and time, sets the cap by calls it checks, where it set it in `assert` statements that
+  `python -O` skips with their calls; the census reader's `-O` cases now run capped too, and
+  `test_a_child_run_with_python_O_is_capped_too` covers it. Nothing under `src` changed.
+
+Known issues, not fixed in this release:
+
+- #136: a PX4 ULog whose `ver_sw_release` information message is not an integer (text, a
+  float, or a type pyulog does not know) is refused by `uasw ingest` and `POST /ingest`, and
+  counted as unreadable by the census, with Python's own text as the reason ("unsupported
+  operand type(s) for >>"), though the rest of the log reads; nothing is stored. PX4 writes the
+  field as `uint32_t`. Measured on this release's code, on 0.6.4 and on 0.1.0.
+- #128: some damaged PX4 ULogs that still frame are refused with a raw Python reason, or none,
+  in place of the damaged-log sentence; nothing from them is stored, only the words are wrong.
+- #127: a write through the service can be refused 503, "another write held the store for
+  longer than this one waits", when no write held it: another connection was closing, and its
+  closing checkpoint was waiting for an older reader. Nothing is written, so the write can be
+  sent again.
+- #117: the whole-file check runs twice when `serve` or `seed` opens a store that holds data,
+  and under the write lock at every checkpoint the service makes.
+- #118: a `seed` refused with 409 because the store holds data folds a sound `-wal` into the
+  file and removes it.
+- #135: no test checks that the time cap of `tests/capped.py` ends the child's own processes
+  under `python -O`; the memory cap set by the same call is covered. A test gap, not a change
+  in what the workbench does.
+
+Each of #136, #128, #127, #117 and #118 is in 0.6.4 too.
 
 ## 0.6.4 (2026-10-23)
 
