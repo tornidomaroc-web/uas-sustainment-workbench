@@ -176,7 +176,15 @@ def _probe_logged_errors(ulog: ULog) -> FieldResult:
 
 def firmware_version(ulog: ULog) -> str:
     """pyulog's own formatter returns None for development builds (release type < 64), which
-    are half of public logs; keep their version number and mark them instead."""
+    are half of public logs; keep their version number and mark them instead.
+
+    PX4 writes `ver_sw_release` as a `uint32_t`. pyulog keeps another type's value as it reads
+    it (text, a float, a bool, raw bytes), and its version shift raises on most of them, which
+    refused the whole log for a label (#136). Any value PX4 could not have written is read as
+    no `ver_sw_release` at all."""
+    release = ulog.msg_info_dict.get("ver_sw_release")
+    if type(release) is not int or not 0 <= release <= 0xFFFFFFFF:
+        return "unknown"
     version = ulog.get_version_info()
     if version is None:
         return "unknown"
