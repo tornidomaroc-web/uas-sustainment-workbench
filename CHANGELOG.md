@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- README: "Try it" shows how to load your own logs into a store of their own with `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store; it gives the line that activates the environment in bash, cmd and PowerShell, chains no commands with `&&`, which Windows PowerShell 5.1 cannot parse, names `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what to do where Python is older or named `python3`, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones; `tests/test_front.py` holds the front to all of it.
+- README: "Try it" shows how to load your own logs into a store of their own with `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store; it gives the line that activates the environment in bash, cmd and PowerShell, chains no commands with `&&`, which Windows PowerShell 5.1 cannot parse, names `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what to do where Python is older or named `python3`, puts no comment after a command, which cmd would pass to it, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones; `tests/test_front.py` holds the front to all of it. The recording lines under "Run it" name that store with `--db` on every line, one command per line with no bash continuation, and run as written in order; a test holds every `record` and `ingest` line of the README off the demo store.
 
 ## 0.6.5 (2026-10-27)
 

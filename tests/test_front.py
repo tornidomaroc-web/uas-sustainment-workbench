@@ -8,8 +8,9 @@ parser accepts, every relative link as a file in the tree, and every web address
 repository already carries. Neither uses a dash longer than a hyphen, or a word the records
 summary never uses about itself. The README's command lines are typed into whatever shell a
 reader has, so none chains two commands, each shell has its line to activate the environment,
-the command the launcher stands for is named, and a log of the reader's own goes to a store
-apart from the demo fleet.
+the command the launcher stands for is named and runs, no command carries a comment cmd would
+pass on, and a log of the reader's own goes to a store apart from the demo fleet, as does
+every line of the README that records an entry.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from __future__ import annotations
 import html
 import re
 import shlex
+import subprocess
+import sys
 import tomllib
 from collections.abc import Callable
 from importlib import resources
@@ -159,6 +162,22 @@ def test_the_front_names_the_command_the_launcher_stands_for() -> None:
     scripts = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]["scripts"]
     module = scripts["uasw"].removesuffix(":main")
     assert f"`python -m {module}`" in readme_front()
+    done = subprocess.run(
+        [sys.executable, "-m", module, "--help"], capture_output=True, text=True, timeout=120
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("usage: uasw "), done.stdout[:200]
+
+
+def test_no_command_of_the_front_carries_a_comment() -> None:
+    """cmd has no comment: a line typed with `# ...` after the command hands those words to it
+    as arguments, which the parser refuses. Only the activation lines carry their shell's
+    name, and the activation scripts take no arguments."""
+    for block in FENCE.findall(readme_front()):
+        for line in block.splitlines():
+            if line.split("  #", 1)[0].strip() in ACTIVATE.values():
+                continue
+            assert "#" not in line, line
 
 
 def test_your_own_log_goes_to_a_store_apart_from_the_demo_fleet() -> None:
@@ -175,3 +194,24 @@ def test_your_own_log_goes_to_a_store_apart_from_the_demo_fleet() -> None:
     assert demo and own, (demo, own)
     assert not own & demo, own & demo
     assert any(a.db in own for a in parsed if a.command in {"records", "serve"})
+
+
+def test_every_readme_line_that_records_names_a_store_apart_from_the_demo_fleet() -> None:
+    """An entry, once written, stays, so a `record` or `ingest` line anywhere in the README,
+    copied as it stands, never writes to the store `uasw seed` fills; and none is continued
+    on the next line with a backslash, which only bash reads as a continuation."""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    lines = [
+        line.rstrip()
+        for block in FENCE.findall(text)
+        for line in block.splitlines()
+        if line.startswith("uasw ")
+    ]
+    for line in lines:
+        assert not line.endswith("\\"), line
+    parsed = [build_parser().parse_args(shlex.split(line.split("  #", 1)[0])[1:]) for line in lines]
+    demo = {a.db for a in parsed if a.command == "seed"}
+    writes = [a for a in parsed if a.command in {"record", "ingest"}]
+    assert demo and len(writes) >= 7, (demo, len(writes))
+    for a in writes:
+        assert a.db not in demo, vars(a)
