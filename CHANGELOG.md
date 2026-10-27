@@ -2,9 +2,97 @@
 
 ## Unreleased
 
-- README: "Try it" shows how to load your own logs into a store of their own with `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store; it gives the line that activates the environment in bash, cmd and PowerShell, chains no commands with `&&`, which Windows PowerShell 5.1 cannot parse, names `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what to do where Python is older or named `python3`, puts no comment after a command, which cmd would pass to it, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones; `tests/test_front.py` holds the front to all of it. The recording lines under "Run it" name that store with `--db` on every line, one command per line with no bash continuation, and run as written in order; a test holds every `record` and `ingest` line of the README off the demo store.
-- A PX4 ULog whose `ver_sw_release` holds a value PX4 could not have written, anything but an integer from 0 to 2^32 - 1 (text, a float, a bool, a type pyulog does not know), is read as a log without it: firmware unknown, every other value the same (#136). 0.6.5 refused such a log in `uasw ingest` and `POST /ingest`, and the census counted it unreadable, with Python's text "unsupported operand type(s) for >>" when the value was text, a float or raw bytes, so its flight counted toward no limit; a bool read as "v0.0.0 (dev)", a negative number or one past 32 bits as a version made from its low 32 bits. A `uint32_t` or other integer in range reads as before; `tests/test_firmware_field.py`.
-- `uasw-census px4-excerpt` refuses a ULog holding an information message pyulog reads but cannot write back (a `uint32_t[2]` or any array or type name pyulog does not pack) in one line, `refused: <file>: it holds an information message pyulog cannot write back ('uint32_t[2] some_key'); nothing is written`, exit 1, and makes no file or folder at `--dest` (#138). 0.6.5 ended in pyulog's KeyError traceback, exit 1, with a partial file at `--dest` (389 bytes for the flown log of the tests) that replaced an excerpt already there. The excerpt is now made whole in memory before anything is written; `tests/test_px4_excerpt_unwritable.py`.
+## 0.6.6 (2026-10-27)
+
+What operators see change: a PX4 ULog whose `ver_sw_release` holds a value PX4 could not have
+written is read as the same log without it, where 0.6.5 refused it in `uasw ingest` and
+`POST /ingest` and counted it unreadable in the census, or gave it a version no firmware has;
+and `uasw-census px4-excerpt` makes nothing at `--dest` when pyulog cannot write the excerpt
+back, where 0.6.5 left a partial file there. The README shows how to load your own logs into a
+store of their own. Every changed outcome below was measured on the synthetic flown log of the
+tests (150.0 s of flight time) with one information or parameter message added, on 0.6.5 and on
+this release's code, each command in a process of its own (Windows, Python 3.12.10, pyulog
+1.3.0, measured 2026-10-27). The 45 real ULog files (44 distinct, the fixture excerpt among
+them) and 10 DataFlash logs read to the same records and census probes as on 0.6.5, each log in
+a capped process of its own. On a freshly seeded store, with the clock frozen, the 168 GET
+answers captured (every GET route but `/metrics` and the docs pages, for each aircraft, entry
+and component) and the 9 files `export-static` writes are what 0.6.5 gave apart from the
+version string, and the SYN-04 pack and the 94-link journal head are the same.
+
+- The firmware label is read from `ver_sw_release` only when it is an integer from 0 to
+  2^32 - 1, the `uint32_t` PX4 writes, a bool excluded; any other value is read as a log
+  without the message: firmware unknown, every other value the same (#140, closes #136).
+  Outcomes that change:
+  - `char[7]`, `float`, `double`, `uint32_t[2]` (any type pyulog keeps as raw bytes): 0.6.5
+    refused the log, `uasw ingest` with `refused (422): ... not a readable PX4 ULog or
+    ArduPilot DataFlash log ...` and exit 1, `POST /ingest` with 422 and Python's text
+    "unsupported operand type(s) for >>", and the census probe failed with the same TypeError,
+    so the flight counted toward no limit. Now `uasw ingest` stores it (exit 0), `POST /ingest`
+    answers 201, and the census counts it, each with firmware unknown.
+  - `bool`: 0.6.5 read "v0.0.0 (dev)"; now unknown.
+  - an integer below 0 (`int64_t` -1): 0.6.5 read "v255.255.255"; now unknown.
+  - an integer past 32 bits (`uint64_t` 2^32 + 0x010F02FF): 0.6.5 read its low 32 bits,
+    "v1.15.2"; now unknown.
+
+  Unchanged: a log without `ver_sw_release`, and a `uint32_t` or `int32_t` in range ("v1.15.2"
+  for 0x010F02FF). `uasw-census px4-excerpt` cuts the `char[7]`, `float`, `double`, `bool`,
+  `int64_t` and `uint64_t` shapes on both versions; the `uint32_t[2]` one is refused as below.
+  `tests/test_firmware_field.py`.
+- `uasw-census px4-excerpt` refuses a ULog holding an information message pyulog reads but
+  cannot write back in one line, exit 1, and makes no file or folder at `--dest` (#140, closes
+  #138): `refused: <file>: it holds an information message pyulog cannot write back
+  ('uint32_t[2] some_key'); nothing is written`. Outcomes that change: an information message
+  of type `uint32_t[2]` (under any key), `float[3]`, or a type name pyulog does not know
+  (`vector3`). 0.6.5 ended in pyulog's KeyError traceback (18 lines), exit 1, with a 389-byte
+  partial file at `--dest` that replaced an excerpt already there. `char[N]` and `uint8_t[N]`
+  messages are cut as before. `tests/test_px4_excerpt_unwritable.py`.
+- `uasw-census px4-excerpt` now makes the excerpt whole in memory before it writes anything,
+  so any other failure of pyulog's writer makes no file or folder at `--dest` and leaves an
+  excerpt already there as it was (#140). Outcomes that change: a parameter pyulog reads but
+  cannot write back, `char[3]`, `uint32_t[2]`, an `int64_t` or `uint32_t` of 2^31, or a
+  `char[3]` default. Both versions end in pyulog's TypeError or struct.error traceback, exit 1
+  (#141, below); 0.6.5 also made the folders and a 451-byte partial file at `--dest`, replacing
+  an excerpt already there, and 0.6.6 makes nothing.
+- README (#139): "Try it" shows how to load your own logs into a store of their own with
+  `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store. It
+  gives the line that activates the environment in bash, cmd and PowerShell, chains no commands
+  with `&&`, which Windows PowerShell 5.1 cannot parse, names
+  `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what
+  to do where Python is older or named `python3`, puts no comment after a command, which cmd
+  would pass to it, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones. The
+  recording lines under "Run it" name that store with `--db` on every line, one command per
+  line, and run as written in order. `tests/test_front.py` holds the README to all of it,
+  every `record` and `ingest` line off the demo store included.
+- LIMITS.md gives the #134 read times of the 0.6.5 release measurement, the figures of the
+  0.6.5 section above, in place of those measured while #134 was built (85b76d4). Text only.
+
+Code that changed: `firmware_version` in `census/px4.py`, which the flight reader and the
+census probe both call, and `census/excerpt.py` and `census/cli.py` for the excerpt cutter;
+nothing else under `src` but `__version__`.
+
+Known issues, not fixed in this release:
+
+- #141: `uasw-census px4-excerpt` on a ULog holding a parameter pyulog reads but cannot write
+  back (`char[3]`, `uint32_t[2]`, an `int64_t` or `uint32_t` above 2^31 - 1, or such a
+  default) ends in pyulog's traceback, exit 1, in place of a one-line refusal. Nothing is
+  written at `--dest`, and an excerpt already there is kept. PX4 writes only `int32_t` and
+  `float` parameters, so this takes a log from another writer; the flight reader reads such a
+  log as usual.
+- #128: some damaged PX4 ULogs that still frame are refused with a raw Python reason, or none,
+  in place of the damaged-log sentence; nothing from them is stored, only the words are wrong.
+- #127: a write through the service can be refused 503, "another write held the store for
+  longer than this one waits", when no write held it: another connection was closing, and its
+  closing checkpoint was waiting for an older reader. Nothing is written, so the write can be
+  sent again.
+- #117: the whole-file check runs twice when `serve` or `seed` opens a store that holds data,
+  and under the write lock at every checkpoint the service makes.
+- #118: a `seed` refused with 409 because the store holds data folds a sound `-wal` into the
+  file and removes it.
+- #135: no test checks that the time cap of `tests/capped.py` ends the child's own processes
+  under `python -O`; the memory cap set by the same call is covered. A test gap, not a change
+  in what the workbench does.
+
+Each of #141, #128, #127, #117 and #118 is in 0.6.5 too.
 
 ## 0.6.5 (2026-10-27)
 

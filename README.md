@@ -114,9 +114,9 @@ is not seeded. For your own, put your aircraft's name in place of `my-aircraft` 
 the path of its `.ulg` (PX4) or `.bin` (ArduPilot) log in place of the excerpt's; several logs
 may follow one another on the line. A log is read into a flight record and never stored raw.
 
-**Released and unreleased.** The latest release is 0.6.5. Main can also hold changes made
+**Released and unreleased.** The latest release is 0.6.6. Main can also hold changes made
 after it, listed under Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main;
-`git checkout v0.6.5` gives you the release.
+`git checkout v0.6.6` gives you the release.
 
 **What it does not do, and how it is checked.** It does not certify airworthiness or release
 an aircraft to service. It takes each entry at the word of the person who made it: there are
