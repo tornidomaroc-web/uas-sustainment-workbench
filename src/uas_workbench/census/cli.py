@@ -13,6 +13,7 @@ import dataclasses
 import datetime as dt
 import gzip
 import hashlib
+import io
 import json
 import logging
 import os
@@ -107,11 +108,15 @@ def cmd_alfa_excerpt(args: argparse.Namespace) -> None:
 def cmd_px4_excerpt(args: argparse.Namespace) -> None:
     try:
         ulog = excerpt_ulog(args.src)
-    except ValueError as refused:  # damaged, or declaring past a bound: nothing is written
+    except ValueError as refused:  # damaged, past a bound, or not writable: nothing is written
         print(f"refused: {args.src}: {refused}", file=sys.stderr)
         raise SystemExit(1) from None
+    # Written whole in memory first: a write pyulog cannot finish makes no file or folder at
+    # --dest and leaves an excerpt already there as it was (#138).
+    excerpt = io.BytesIO()
+    ulog.write_ulog(excerpt)
     args.dest.parent.mkdir(parents=True, exist_ok=True)
-    ulog.write_ulog(str(args.dest))
+    args.dest.write_bytes(excerpt.getvalue())
     log.info("wrote %s (%d bytes)", args.dest, args.dest.stat().st_size)
 
 

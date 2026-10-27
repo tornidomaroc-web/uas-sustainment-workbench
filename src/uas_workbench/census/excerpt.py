@@ -119,11 +119,34 @@ def strip_identity(ulog: ULog) -> ULog:
 def excerpt_ulog(src: Path) -> ULog:
     """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
     Write the result with ULog.write_ulog(). Read as the flight reader reads a file: a log
-    past a bound, or one pyulog marks corrupt, is refused with ValueError (#125, #132)."""
+    past a bound, or one pyulog marks corrupt, is refused with ValueError (#125, #132), as is
+    one holding an information message pyulog cannot write back (#138)."""
     ulog, _ = ulog_declared.read_file(src, list(ULOG_KEEP))
     strip_identity(ulog)
+    unwritable = unwritable_info(ulog)
+    if unwritable:
+        named = ", ".join(f"'{typed_key}'" for typed_key in unwritable)
+        raise ValueError(
+            f"it holds an information message pyulog cannot write back ({named}); "
+            "nothing is written"
+        )
     for dataset in ulog.data_list:
         for name, values in dataset.data.items():
             if ULOG_ZERO.match(name):
                 values[:] = 0
     return ulog
+
+
+def unwritable_info(ulog: ULog) -> list[str]:
+    """The typed keys of the information messages ULog.write_ulog() cannot pack, in file order.
+
+    pyulog reads an information message of a type it does not know (`uint32_t[2] some_key`)
+    without marking damage and keeps its value as raw bytes; its writer packs only text, byte
+    arrays and the scalar types it knows, and raises KeyError on the rest (#138)."""
+    types = ulog._msg_info_dict_types | ulog._msg_info_multiple_dict_types
+    keys = [*ulog.msg_info_dict, *ulog.msg_info_multiple_dict]
+    return [
+        f"{types[key]} {key}"
+        for key in keys
+        if not types[key].startswith(("char[", "uint8_t[")) and types[key] not in ULog._UNPACK_TYPES
+    ]
