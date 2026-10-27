@@ -51,15 +51,17 @@ version string, and the SYN-04 pack and the 94-link journal head are the same.
   excerpt already there as it was (#140). Outcomes that change: a parameter pyulog reads but
   cannot write back, `char[3]`, `uint32_t[2]`, an `int64_t` or `uint32_t` of 2^31, or a
   `char[3]` default. Both versions end in pyulog's TypeError or struct.error traceback, exit 1
-  (#141, below); 0.6.5 also made the folders and a 451-byte partial file at `--dest`, replacing
-  an excerpt already there, and 0.6.6 makes nothing.
+  (#141, below); 0.6.5 also made the folders and a partial file at `--dest` (389 or 451 bytes
+  for the flown log, by where the message sits among its parameters), replacing an excerpt
+  already there, and 0.6.6 makes nothing.
 - README (#139): "Try it" shows how to load your own logs into a store of their own with
   `--db`, apart from the demo fleet `uasw seed` and `uasw serve` put in the default store. It
   gives the line that activates the environment in bash, cmd and PowerShell, chains no commands
   with `&&`, which Windows PowerShell 5.1 cannot parse, names
   `python -m uas_workbench.service.cli` for a system that blocks the `uasw` launcher, says what
-  to do where Python is older or named `python3`, puts no comment after a command, which cmd
-  would pass to it, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones. The
+  to do where Python is older or named `python3`, puts no comment after a command past the
+  shell name beside each activation line, as cmd would pass the words after `#` to the
+  command, and counts the demo fleet as 7 synthetic aircraft plus 2 real ones. The
   recording lines under "Run it" name that store with `--db` on every line, one command per
   line, and run as written in order. `tests/test_front.py` holds the README to all of it,
   every `record` and `ingest` line off the demo store included.
