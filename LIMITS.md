@@ -562,7 +562,9 @@ field-level tables. This file is about what that means for a maintenance tool.
     at 9.4 MiB, 1.71 against 1.47 s at 83 MiB).
   - *One writer at a time, as before.* A second writer (`uasw record` beside a running service)
     waits up to 5 s (`PRAGMA busy_timeout`) for the write lock, then is refused with 503
-    (`StoreBusy`); a refused commit is rolled back and moves nothing kept. A ledger entry takes that
+    (`StoreBusy`) naming the lock and what can hold it, another write or another store's own
+    checkpoint waiting for an older read (issue #127, below); a refused commit is rolled back
+    and moves nothing kept. A ledger entry takes that
     lock before its check, so it is refused with 503 and nothing checked or written. SQLite's rollback journal
     had no wait at all, so that failure came at once.
   - *Durability is as it was.* `PRAGMA synchronous` is FULL, the WAL default: a journal link is
@@ -690,10 +692,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   meanwhile (471 ms, 72 answered); 3.36 s with 32 (1.62 s); with 8 readers asking once a
   second each, 25 ms (25 ms), 213 ms at the 90th percentile (341 ms). Nothing in the service
   limits a caller's rate, which is the reverse proxy's or the operator's to do. A
-  `wal_checkpoint(TRUNCATE)`, which every `uasw` command that writes and every store the
-  service opens runs on close, moves other connections' `data_version` as a commit does, so a
-  `uasw record` run beside the service makes the service walk the journal and read the whole
-  store once more on its next call. A command that only reads runs none and commits nothing
+  commit from another connection moves the service's `data_version`, so a `uasw record` run
+  beside the service makes the service walk the journal and read the whole store once more on
+  its next call; the fold that command's close runs (`wal_checkpoint(PASSIVE)`, issue #127)
+  moves it no further, where the `TRUNCATE` it ran before moved it once more (measured with
+  raw `sqlite3`: `PASSIVE` left another connection's `data_version` as the commit had set it,
+  `TRUNCATE` moved it by one). A command that only reads runs none and commits nothing
   (issue #107), so it does not move them. The reading connections are closed by `Store.close`,
   from the closing thread, after the threads that read are done: `uasw` closes its store when
   the command ends, `uasw serve` after the server has stopped; a read after the close is refused
@@ -726,9 +730,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   Python 3.12.10 and 3.14.3, 2026-10-12, 50 rounds each with and without a 0.4 s pause between
   check and write), where the version before recorded both in 20 of 20 with the pause and 18
   of 20 without. Reads go on beside the check on their own connections and wait for neither
-  lock. A writer that waits more than the 5 s busy timeout for another is refused with 503,
-  `refused (503)` on the command line, before anything is checked or written, so send it
-  again. Opening a store no longer takes the write lock once the store is journaled, so a
+  lock. A writer that waits more than the 5 s busy timeout for the write lock is refused with
+  503, `refused (503)` on the command line, before anything is checked or written, so send it
+  again; the sentence names the lock and what holds it, another write or another store's own
+  checkpoint waiting for an older read, since the refused side cannot tell the two apart
+  (issue #127). Opening a store no longer takes the write lock once the store is journaled, so a
   `uasw` command starts while the service writes. A store in memory has one connection and
   keeps the process's lock alone. An ingest writes a new aircraft's row and its flight in one
   transaction, so a writer that takes the store meanwhile leaves both or neither; one that
@@ -896,7 +902,25 @@ field-level tables. This file is about what that means for a maintenance tool.
   0.3 s after it answered 201 in 3.4 s and 3.1 s; held 8 s, in 5.6 s and 5.3 s; `/health`,
   `/aircraft` and `/metrics` sent meanwhile answered in 10 to 70 ms, and a `uasw record` run
   meanwhile recorded its entry; no 500, every write in the ledger and the journal intact,
-  on this version as on the one before.
+  on this version as on the one before. The close of a `uasw` command that writes, or of a
+  service stopping, waited the same way up to 0.6.6: it folded the WAL with `TRUNCATE`,
+  holding the WAL's write lock for up to the busy timeout while a read of an older state went
+  on, so a write through the service sent meanwhile waited as long and, when its own wait
+  ended first, was refused 503 as if a write held the store (issue #127). It now folds without
+  waiting (`PASSIVE`): what no open read still needs goes into the file, the rest is folded by
+  the connections that stay open at their own checkpoint, and when the closing one was the
+  last connection SQLite folds the rest and removes both side files, so a closed store is one
+  file with the bytes `TRUNCATE` left (measured: the same seeded store written and closed on
+  each version, the same SHA-256). Measured through `uasw serve` beside a `uasw record`
+  closing while a reader in a third process held an older state (Windows, Python 3.12.10,
+  SQLite 3.49.1, 2026-10-28, each a process of its own): with the service write sent as the
+  close began, 0.6.6 refused 7 of 8 with 503 after 5.4 to 5.6 s and the eighth waited 5.6 s;
+  sent 0.3 s after, it refused 0 of 6 and every one waited 5.2 to 5.4 s; the close took 5.4 to
+  5.7 s each time. This version: 0 of 8 and 0 of 6 refused, every service write answered 201
+  in 30 ms or less, the close done in 50 ms or less. The refusal that stays is the store's own
+  checkpoint above, which holds the lock while it waits for an older read: a writer in another
+  process refused meanwhile is told that the lock was held, by a write or by a checkpoint
+  waiting for a read of an older state, since it cannot tell the two apart.
   Damage to the `-wal` or `-shm` side files is not looked for. `/metrics` gauges describe the
   state the service read after its last write or ingest; a commit from outside is in them
   from the service's next write on.
