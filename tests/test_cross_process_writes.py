@@ -265,8 +265,9 @@ def test_two_stores_on_one_file_check_one_after_the_other(
 # ---- a writer that cannot get the write transaction --------------------------------------
 
 BUSY = (
-    "another write held the store for longer than this one waits; nothing was written, "
-    "so send it again"
+    "another connection held the store's write lock for longer than this write waits, a write "
+    "or a checkpoint waiting for a read of an older state to end; nothing was written, so send "
+    "it again"
 )
 
 
