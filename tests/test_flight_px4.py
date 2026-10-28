@@ -1,4 +1,5 @@
 import gc
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,12 +27,21 @@ def _formats(b: ULogBuilder) -> ULogBuilder:
     )
 
 
-def flown_log(path: Path, *info: tuple[str, bytes]) -> Path:
-    """`info`: information messages to add, each a typed key and its bytes."""
+def flown_log(
+    path: Path, *info: tuple[str, bytes], parameters: Sequence[tuple[str, str, bytes]] = ()
+) -> Path:
+    """`info`: information messages to add, each a typed key and its bytes. `parameters`:
+    parameter messages to add, each where it goes ("P" among the definitions, "Q" a default
+    there, "changed" in the data section after every sample), its typed key and its bytes."""
     b = _formats(ULogBuilder(start_us=10 * S)).info("sys_uuid", "synthetic-vehicle-0001")
     for typed_key, value in info:
         b.typed_info(typed_key, value)
     b.param("LND_FLIGHT_T_HI", 1).param("LND_FLIGHT_T_LO", 705_032_704)  # 5 000 000 000 us
+    for where, typed_key, value in parameters:
+        if where == "P":
+            b.typed_param(typed_key, value)
+        elif where == "Q":
+            b.param_default(typed_key, value)
     status = b.subscribe("vehicle_status")
     land = b.subscribe("vehicle_land_detected")
     battery = b.subscribe("battery_status")
@@ -49,6 +59,9 @@ def flown_log(path: Path, *info: tuple[str, bytes]) -> Path:
     b.data(fd, {"timestamp": 160 * S, "fd_motor": True})
     b.log(3, "Battery low", 250 * S)
     b.log(6, "Landing detected", 261 * S)
+    for where, typed_key, value in parameters:
+        if where == "changed":
+            b.typed_param(typed_key, value, changed=True)
     return b.write(path)
 
 

@@ -71,6 +71,21 @@ class ULogBuilder:
         self._message(self._definitions, "P", bytes([len(key)]) + key + packed)
         return self
 
+    def typed_param(self, typed_key: str, value: bytes, *, changed: bool = False) -> ULogBuilder:
+        """A parameter message of any declared type, "double SOME_PARAM", with its bytes: among
+        the definitions or, `changed`, in the data section, a parameter changed in flight."""
+        key = typed_key.encode()
+        section = self._data if changed else self._definitions
+        self._message(section, "P", bytes([len(key)]) + key + value)
+        return self
+
+    def param_default(self, typed_key: str, value: bytes, default_types: int = 1) -> ULogBuilder:
+        """A parameter default message (Q) of any declared type, with its bytes; `default_types`
+        bit 0 marks the system default, bit 1 the configuration default."""
+        key = typed_key.encode()
+        self._message(self._definitions, "Q", bytes([default_types, len(key)]) + key + value)
+        return self
+
     def subscribe(self, topic: str, multi_id: int = 0) -> int:
         msg_id = len(self._topic_of)
         self._topic_of[msg_id] = topic
