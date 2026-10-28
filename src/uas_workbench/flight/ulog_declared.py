@@ -140,6 +140,8 @@ class _Counts:
 
 
 def _bounded(counts: _Counts, stop_at_damage: bool, watch: _Watch | None) -> type[ULog]:
+    parameters: list[str] = []
+
     class Format(ULog.MessageFormat):  # type: ignore[misc]
         def __init__(self, data: bytes, header: Any) -> None:
             super().__init__(data, header)
@@ -156,6 +158,21 @@ def _bounded(counts: _Counts, stop_at_damage: bool, watch: _Watch | None) -> typ
             if watch is not None:
                 watch.subscriptions.append(bytes(data))
 
+    # pyulog parses the declared type of a parameter message and drops it, keeping the value as
+    # a Python int or float, text or raw bytes (#143). Each is noted here as pyulog reads it, in
+    # file order, as "type key": an initial parameter (P, among the definitions), a changed one
+    # (P, in the data section) and a default (Q). An information message (I) is left as it is.
+    class Info(ULog._MessageInfo):  # type: ignore[misc]
+        def __init__(self, data: bytes, header: Any, is_info_multiple: bool = False) -> None:
+            super().__init__(data, header, is_info_multiple)
+            if header.msg_type == ULog.MSG_TYPE_PARAMETER:
+                parameters.append(f"{self.type} {self.key}")
+
+    class Default(ULog._MessageParameterDefault):  # type: ignore[misc]
+        def __init__(self, data: bytes, header: Any) -> None:
+            super().__init__(data, header)
+            parameters.append(f"{self.type} {self.key}")
+
     class Header(ULog._MessageHeader):  # type: ignore[misc]
         """pyulog's own, until the read nears the zeros; from there it notes where each header
         was read and the size it gives (`watch.track`)."""
@@ -169,8 +186,12 @@ def _bounded(counts: _Counts, stop_at_damage: bool, watch: _Watch | None) -> typ
     class Bounded(ULog):  # type: ignore[misc]
         MessageFormat = Format
         _MessageAddLogged = Subscription
+        _MessageInfo = Info
+        _MessageParameterDefault = Default
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
+            # The declared type and key of every parameter message, in file order (#143).
+            self.parameter_types = parameters
             if watch is not None:
                 watch.ulog = self
             super().__init__(*args, **kwargs)
@@ -198,7 +219,9 @@ def read(handle: BinaryIO, topics: list[str] | None = None) -> ULog:
     pyulog reads no further, where it would step through the rest a byte at a time. There is
     no reading on: no caller does anything with what pyulog finds after damage but refuse it.
     pyulog's public `file_corruption` is checked too, so a pyulog that stops setting the
-    attribute watched here still has a log it marks corrupt refused, only read to its end."""
+    attribute watched here still has a log it marks corrupt refused, only read to its end.
+    The ULog returned carries `parameter_types`, the declared type and key of every parameter
+    message as "double SOME_PARAM", in file order, which pyulog itself does not keep (#143)."""
     return _read(handle, topics, None)
 
 

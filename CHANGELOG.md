@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- `uasw-census px4-excerpt` refuses a ULog holding a parameter of a type the ULog format does
+  not allow, any other than `int32_t` or `float`, in one line, exit 1, and makes no file or
+  folder at `--dest` (closes #141 and #143): `refused: <file>: it holds a parameter of a type
+  the ULog format does not allow ('double SOME_PARAM'); nothing is written`, every such
+  parameter named with its type in file order, an initial parameter (P), a default (Q) or one
+  changed in flight (P in the data section) alike. pyulog reads any declared type without
+  marking damage and keeps no record of it, so its writer packed the value as `int32_t` or
+  `float`, or raised. Outcomes that change, measured on the synthetic flown log with one
+  parameter message added (Windows, Python 3.12.10 and 3.14.3, pyulog 1.3.0, 2026-10-28, each
+  command in a process of its own): a `double` of 0.1, an `int64_t` of 2^31 - 1 or -2^31 and a
+  `uint32_t` of 7, as P, Q or changed, 0.6.6 wrote back as `float` or `int32_t`, exit 0, with
+  no word (0.1 read again as 0.10000000149011612), replacing an excerpt already at `--dest`; a
+  `char[3]` or `uint32_t[2]` parameter, a `uint32_t` or `int64_t` of 2^31, a `char[3]`
+  default and a changed `char[3]` or `int64_t` of 2^31 ended in pyulog's TypeError or
+  struct.error traceback (17 to 24 lines), exit 1, making nothing. Unchanged: a log whose
+  parameters are all `int32_t` or `float` is cut as before, byte for byte, its declared types
+  kept; `uasw ingest`, `POST /ingest` and `uasw-census run` read every such log as before,
+  since the declared type is noted where pyulog parses it, in the bounded reader, and only the
+  cutter refuses by it; the 45 real public ULogs and the 10 DataFlash logs read to the same
+  records and census probes, and none of the ULogs holds a parameter of another type (51,755
+  initial, 7,456 default and 102 changed parameters over the 45, read from the message bytes).
+  `tests/test_px4_excerpt_parameter_types.py`.
+
 ## 0.6.6 (2026-10-27)
 
 What operators see change: a PX4 ULog whose `ver_sw_release` holds a value PX4 could not have

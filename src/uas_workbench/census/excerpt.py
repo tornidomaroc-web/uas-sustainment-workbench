@@ -5,7 +5,9 @@ byte, zeroes position fields and masks the flight controller's unique id in boot
 PX4 ULog: keeps only the topics the counters read, zeroes position fields, removes the
 sys_uuid info message and the multi-line info blocks (boot console output). Both outputs
 are genuine log files that pymavlink and pyulog read as usual. This is how the fixtures in
-tests/fixtures/ are made (see DATA.md).
+tests/fixtures/ are made (see DATA.md). A ULog that pyulog could not write back as it was
+read, an information message its writer cannot pack or a parameter of a type the format does
+not allow, is refused rather than cut into a different log (#138, #141, #143).
 """
 
 from __future__ import annotations
@@ -120,7 +122,8 @@ def excerpt_ulog(src: Path) -> ULog:
     """Load a ULog keeping only ULOG_KEEP, then strip identity and position in memory.
     Write the result with ULog.write_ulog(). Read as the flight reader reads a file: a log
     past a bound, or one pyulog marks corrupt, is refused with ValueError (#125, #132), as is
-    one holding an information message pyulog cannot write back (#138)."""
+    one holding an information message pyulog cannot write back (#138) or a parameter of a
+    type the ULog format does not allow, which pyulog would write back as another (#141, #143)."""
     ulog, _ = ulog_declared.read_file(src, list(ULOG_KEEP))
     strip_identity(ulog)
     unwritable = unwritable_info(ulog)
@@ -128,6 +131,13 @@ def excerpt_ulog(src: Path) -> ULog:
         named = ", ".join(f"'{typed_key}'" for typed_key in unwritable)
         raise ValueError(
             f"it holds an information message pyulog cannot write back ({named}); "
+            "nothing is written"
+        )
+    disallowed = disallowed_parameters(ulog)
+    if disallowed:
+        named = ", ".join(f"'{typed_key}'" for typed_key in disallowed)
+        raise ValueError(
+            f"it holds a parameter of a type the ULog format does not allow ({named}); "
             "nothing is written"
         )
     for dataset in ulog.data_list:
@@ -150,3 +160,21 @@ def unwritable_info(ulog: ULog) -> list[str]:
         for key in keys
         if not types[key].startswith(("char[", "uint8_t[")) and types[key] not in ULog._UNPACK_TYPES
     ]
+
+
+# The ULog format restricts a parameter message to these two types, the two pyulog's writer
+# packs: a Python int as int32_t, a Python float as float.
+PARAMETER_TYPES: frozenset[str] = frozenset({"int32_t", "float"})
+
+
+def disallowed_parameters(ulog: ULog) -> list[str]:
+    """The typed keys of the parameters whose declared type the ULog format does not allow, in
+    file order: initial (P), changed in flight (P in the data section) and default (Q) alike.
+
+    pyulog reads a parameter of any declared type without marking damage and keeps no record
+    of the type, so its writer would pack a `double` back as `float` and an `int64_t` or
+    `uint32_t` in the int32 range as `int32_t`, with no word (#143), and raise on text, an
+    array or an integer past int32 (#141). The declared type is read in the bounded reader,
+    where pyulog parses it (`ulog_declared.read`)."""
+    types: list[str] = ulog.parameter_types
+    return [typed_key for typed_key in types if typed_key.split(" ", 1)[0] not in PARAMETER_TYPES]
