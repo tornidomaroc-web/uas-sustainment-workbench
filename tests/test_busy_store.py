@@ -42,8 +42,9 @@ CONFIG = load_config()
 STORE = importlib.import_module("uas_workbench.service.store")
 LOG = next((Path(__file__).parent / "fixtures" / "px4").glob("*.ulg"))
 BUSY = (
-    "another write held the store for longer than this one waits; nothing was written, "
-    "so send it again"
+    "another connection held the store's write lock for longer than this write waits, a write "
+    "or a checkpoint waiting for a read of an older state to end; nothing was written, so send "
+    "it again"
 )
 BUSY_OPEN = (
     "another connection held the store's write lock for longer than opening the store "
