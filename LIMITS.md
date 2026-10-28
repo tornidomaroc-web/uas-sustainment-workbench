@@ -148,7 +148,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   a `uint32_t[2]`, naming each one (#138); that check reads two tables private to pyulog (the
   scalar types its writer packs and each message's declared type), and the excerpt is made whole
   in memory before anything is written, so a write pyulog cannot finish leaves no file or folder
-  at `--dest` and an excerpt already there as it was. A log ending in
+  at `--dest` and an excerpt already there as it was. It refuses the same way a log holding a
+  parameter of a type the ULog format does not allow, any other than `int32_t` or `float`,
+  naming each with its type (`'double SOME_PARAM'`): pyulog keeps no record of a parameter's
+  declared type and its writer packs the value as `int32_t` or `float`, or raises, so the type
+  is noted where pyulog parses it, in the bounded reader, through two more of pyulog's private
+  classes (#141, #143); the flight reader and the census read such a log as before, and none of
+  the 45 real logs holds one. A log ending in
   zero bytes is read as the log cut where they begin, as it was counted before. On 0.6.4 both
   read on: each of these commands on 64 KiB or 1 MiB of 0xFF bytes among a log's definitions, or
   8 MiB after a subscription, was still reading at a 30 s cap, and a census run waits for every

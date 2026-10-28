@@ -85,7 +85,9 @@ the public log <https://review.px4.io/plot_app?log=60f0a65f-fea3-46cc-b8db-23ac2
   `sys_uuid` info message, the hardware name, hardware subtype and firmware branch info
   messages (`ver_hw`, `ver_hw_subtype`, `ver_sw_branch`) and the multi-line info blocks
   (boot console output) are removed.
-  Formats, parameters and logged text messages are kept unchanged.
+  Formats, parameters and logged text messages are kept unchanged: every parameter of this log
+  is an `int32_t` or a `float`, the two types the ULog format allows, and the cutter refuses a
+  log holding a parameter of any other type rather than write it back as one of these.
 - The excerpt is not endorsed by the uploader or by the PX4 project.
 
 ## Synthetic fleet
