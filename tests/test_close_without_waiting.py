@@ -1,4 +1,4 @@
-"""`Store.close()` makes no writer wait and refuses none (issue #127).
+"""`Store.close()` makes no writer wait the busy timeout and refuses none (issue #127).
 
 `close` folded the WAL into the file with `PRAGMA wal_checkpoint(TRUNCATE)`, which takes the
 WAL's write lock and holds it while it waits, up to the busy timeout, for a read of an older
@@ -7,12 +7,13 @@ busy timeout, the same length, and when its wait ended first it was refused 503 
 write held the store for longer than this one waits" when no write held it: the connection
 closing was any `uasw` command that writes, the older read any request still building its
 answer. Now `close` folds what it can without waiting (`PASSIVE`), which takes no write lock
-and invokes no busy handler; the store's last connection folds the rest as it closes, so a
-closed store is one file as before, and beside another connection the fold is left to that
-connection's own checkpoint. A writer can still be refused while another store's own
-checkpoint (`_checkpoint`, every 200 of its commits and after each batch) waits for an older
-read with the lock held; that is not a write, so the refusal names what held it: the store's
-write lock, by a write or by a checkpoint waiting for a read of an older state to end.
+and invokes no busy handler, then starts the WAL over (`TRUNCATE`) waiting no more than
+`CLOSE_WAIT_MS` (`tests/test_close_bounds_the_wal.py`); a closed store is one file as before,
+and a `-wal` a reader still needs is left as it was. A writer can still be refused while
+another store's own checkpoint (`_checkpoint`, every 200 of its commits and after each batch)
+waits for an older read with the lock held; that is not a write, so the refusal names what
+held it: the store's write lock, by a write or by a checkpoint waiting for a read of an older
+state to end.
 
 The reader and the command run in processes of their own; the service is served in this
 process. Assertions are about statuses, times against the busy timeout, exit codes and the

@@ -3,25 +3,32 @@
 ## Unreleased
 
 - A `uasw` command that writes, or a service stopping, closing its store beside a running
-  service makes no write there wait and refuses none (closes #127): `Store.close()` folds the
-  WAL into the file without waiting for a read of an older state to end
-  (`PRAGMA wal_checkpoint(PASSIVE)`, which takes no write lock), where `TRUNCATE` held the
-  WAL's write lock for up to the 5 s busy timeout while such a read went on, so a write through
-  the service sent meanwhile waited as long and could be refused 503 as if a write held the
-  store. Measured through `uasw serve` beside a `uasw record` closing while a reader in a third
-  process held an older state (Windows, Python 3.12.10, SQLite 3.49.1, 2026-10-28, each a
-  process of its own): 0.6.6 refused 7 of 8 service writes sent as the close began, 503 after
-  5.4 to 5.6 s, and made 14 of 14 wait over 5 s (the 6 sent 0.3 s after the close began all
-  landed, after 5.2 to 5.4 s); this version refused 0 of 14 and answered each in 30 ms or
-  less, the close done in 50 ms or less. A closed store is one file as before, with the same
-  bytes (the same seeded store written and closed on each version has the same SHA-256);
-  beside a connection that stays open, the pages an older read still needs are folded by that
-  connection's own checkpoint, and a `-wal` a reader still needs is left as it was. The
+  service makes a write there wait no more than about a tenth of a second and refuses none
+  (closes #127): `Store.close()` first folds the WAL without waiting for anything
+  (`PRAGMA wal_checkpoint(PASSIVE)`, no write lock), then starts it over with `TRUNCATE`
+  waiting no more than 100 ms (`CLOSE_WAIT_MS`) for the write lock and for reads of an older
+  state, where the `TRUNCATE` it ran alone waited the 5 s busy timeout with the lock held, so a
+  write through the service sent meanwhile waited as long and could be refused 503 as if a
+  write held the store. A `TRUNCATE` that does not get them in time changes nothing in the
+  `-wal`, and the next close or the store's own checkpoint starts it over. Measured through
+  `uasw serve` beside a `uasw record` closing while a reader in a third process held an older
+  state (Windows, Python 3.12.10, SQLite 3.49.1, 2026-10-31, each a process of its own): 0.6.6
+  refused 6 of 8 service writes sent as the close began and made 14 of 14 wait over 5 s (the 6
+  sent 0.3 s after all landed, after 5.25 to 5.36 s); this version refused 0 of 14, answered
+  those sent as the close began in 0.16 to 0.23 s and the others in 16 ms or less. Beside a
+  service read by four threads and 80 `uasw record` runs, the `-wal` held 0 B after every run,
+  as on 0.6.6, where folding with `PASSIVE` alone (this change's first version) left it growing
+  by every run's frames, 1,075,352 B after the 80th, until the service stopped; and a store
+  opened for reads only that closed last beside a writer's close leaves a `-wal` of 0 B, as
+  before, not a folded copy of the store's writes that every read-only open after it kept. A
+  closed store is one file as before, with the same bytes (the same seeded store written and
+  closed on each version has the same SHA-256). The
   sentence a writer refused for the write lock gets names the lock and what can hold it,
   another write or another store's own checkpoint waiting for an older read, where it said a
   write held the store: `another connection held the store's write lock for longer than this
   write waits, a write or a checkpoint waiting for a read of an older state to end; nothing
-  was written, so send it again`. `tests/test_close_without_waiting.py`.
+  was written, so send it again`. `tests/test_close_without_waiting.py`,
+  `tests/test_close_bounds_the_wal.py`.
 - `uasw-census px4-excerpt` refuses a ULog holding a parameter of a type the ULog format does
   not allow, any other than `int32_t` or `float`, in one line, exit 1, and makes no file or
   folder at `--dest` (closes #141 and #143): `refused: <file>: it holds a parameter of a type

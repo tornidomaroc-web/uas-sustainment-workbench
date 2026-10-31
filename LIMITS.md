@@ -694,10 +694,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   limits a caller's rate, which is the reverse proxy's or the operator's to do. A
   commit from another connection moves the service's `data_version`, so a `uasw record` run
   beside the service makes the service walk the journal and read the whole store once more on
-  its next call; the fold that command's close runs (`wal_checkpoint(PASSIVE)`, issue #127)
-  moves it no further, where the `TRUNCATE` it ran before moved it once more (measured with
-  raw `sqlite3`: `PASSIVE` left another connection's `data_version` as the commit had set it,
-  `TRUNCATE` moved it by one). A command that only reads runs none and commits nothing
+  its next call. The `TRUNCATE` that command's close runs to start the WAL over (issue #127)
+  moves it once more when it succeeds, as it did up to 0.6.6, and not at all when it gives up
+  (measured through `Store`, a writer in another process, five rounds each, Windows, Python
+  3.12.10, SQLite 3.49.1, 2026-10-31: the commit moved the other connection's `data_version`
+  by 1 every time; the close by 1 more with no other read open, by 0 beside a read of an older
+  state; 0.6.6 the same, the `PASSIVE`-only close of #146's first version 0 in both). A read
+  between the two pays a second walk; one after both pays one. A command that only reads runs none and commits nothing
   (issue #107), so it does not move them. The reading connections are closed by `Store.close`,
   from the closing thread, after the threads that read are done: `uasw` closes its store when
   the command ends, `uasw serve` after the server has stopped; a read after the close is refused
@@ -906,18 +909,35 @@ field-level tables. This file is about what that means for a maintenance tool.
   service stopping, waited the same way up to 0.6.6: it folded the WAL with `TRUNCATE`,
   holding the WAL's write lock for up to the busy timeout while a read of an older state went
   on, so a write through the service sent meanwhile waited as long and, when its own wait
-  ended first, was refused 503 as if a write held the store (issue #127). It now folds without
-  waiting (`PASSIVE`): what no open read still needs goes into the file, the rest is folded by
-  the connections that stay open at their own checkpoint, and when the closing one was the
-  last connection SQLite folds the rest and removes both side files, so a closed store is one
-  file with the bytes `TRUNCATE` left (measured: the same seeded store written and closed on
-  each version, the same SHA-256). Measured through `uasw serve` beside a `uasw record`
+  ended first, was refused 503 as if a write held the store (issue #127). It now folds in two
+  steps: `PASSIVE`, which takes no write lock and waits for nothing, folds what no open read
+  still needs; then `TRUNCATE` takes the write lock, folds the rest and empties the `-wal`,
+  waiting for the lock and for older reads no more than 100 ms (`CLOSE_WAIT_MS`). One that
+  does not get them within that wait changes nothing in the `-wal` (measured: beside a read of
+  an older state, and beside another process holding the write lock, the `-wal` bytes after
+  the close were the bytes before it), and the next close or the store's own checkpoint
+  starts it over. `PASSIVE` alone, as #146 first had it, never started the WAL over: no
+  connection does that unless the whole WAL is folded and no read uses it, which requests
+  under way beside a service rarely leave, so the `-wal` grew with every command that wrote
+  beside a service that only read, and a store opened for reads only that closed last left a
+  folded `-wal` holding the store's writes, which every read-only open after it kept. When the
+  closing store was the last connection SQLite removes both side files, so a closed store is
+  one file with the same bytes as before (measured: the same seeded store written and closed
+  on each version, the same SHA-256). Measured through `uasw serve` beside a `uasw record`
   closing while a reader in a third process held an older state (Windows, Python 3.12.10,
-  SQLite 3.49.1, 2026-10-28, each a process of its own): with the service write sent as the
-  close began, 0.6.6 refused 7 of 8 with 503 after 5.4 to 5.6 s and the eighth waited 5.6 s;
-  sent 0.3 s after, it refused 0 of 6 and every one waited 5.2 to 5.4 s; the close took 5.4 to
-  5.7 s each time. This version: 0 of 8 and 0 of 6 refused, every service write answered 201
-  in 30 ms or less, the close done in 50 ms or less. The refusal that stays is the store's own
+  SQLite 3.49.1, 2026-10-31, each a process of its own): with the service write sent as the
+  close began, 0.6.6 refused 6 of 8 with 503, every one of the 8 waiting 5.47 to 5.53 s; sent
+  0.3 s after, it refused 0 of 6 and every one waited 5.25 to 5.36 s; the close took 5.48 to
+  5.67 s each time. This version: 0 of 8 and 0 of 6 refused, the writes sent as the close
+  began answered 201 in 0.16 to 0.23 s and those sent 0.3 s after in 16 ms or less, the close
+  done in 0.19 to 0.23 s (0.31 to 0.33 s with the 0.3 s pause). Beside `uasw serve` with four
+  threads reading through it, a service write sent as each of 30 `uasw record` runs began its
+  close waited at most 0.11 s, and with a reader in a third process reading without pause in
+  50 ms states as well at most 0.19 s (0.6.6: 0.11 s and 0.22 s); all 201. The `-wal` beside
+  that service, over 40 runs each followed by a service write and 40 more with four threads
+  reading: 0 B after every run, at most 28,872 B between (the service's own writes), as on
+  0.6.6; with `PASSIVE` alone it held 1,075,352 B after the 80th run and kept it until the
+  service stopped. The refusal that stays is the store's own
   checkpoint above, which holds the lock while it waits for an older read: a writer in another
   process refused meanwhile is told that the lock was held, by a write or by a checkpoint
   waiting for a read of an older state, since it cannot tell the two apart.

@@ -49,15 +49,19 @@ nothing checked. An open that has to write (the first of a store 0.5.x left) wai
 refused the same way. While a store is open its file has `-wal` and `-shm` beside
 it; `close` closes every reading connection, folds into the file what the WAL holds that no
 open read still needs, without waiting for any (`PRAGMA wal_checkpoint(PASSIVE)`, which takes
-no write lock), and closes the writing one; when it was the last connection on the file SQLite
-folds the rest and removes both, so a closed store is one file, and beside another connection
-the rest is left to that connection's own checkpoint, so a write there never waits for a close
-(issue #127). A store opened for reads only (`reads_only`, the commands that only read) never
-checkpoints, and beside a `-wal` holding anything as it opens (one a hard stop left, or a
-running service's) none of its connections checkpoints as it closes either, so it leaves that
-`-wal` as it found it (issue #107). A store in memory has no file, keeps the mode SQLite gives
-it, and has one connection: a snapshot there holds the write lock for its length, its label is
-the count of the store's own commits, and a write issued meanwhile waits for it.
+no write lock), then starts the WAL over (`TRUNCATE`) waiting no more than `CLOSE_WAIT_MS`
+for the write lock and for reads of an older state to end, and closes the writing one; when it
+was the last connection on the file SQLite removes both side files, so a closed store is one
+file. A write beside it waits for a close no longer than that short wait, not the busy timeout
+(issue #127), and the `-wal` does not grow with every command run beside a service that only
+reads, as it did with the `PASSIVE` fold alone. A `TRUNCATE` that does not get the lock and
+the reads within its wait changes nothing in the `-wal`. A store opened for reads only
+(`reads_only`, the commands that only read) never checkpoints, and beside a `-wal` holding
+anything as it opens (one a hard stop left, or a running service's) none of its connections
+checkpoints as it closes either, so it leaves that `-wal` as it found it (issue #107). A store
+in memory has no file, keeps the mode SQLite gives it, and has one connection: a snapshot
+there holds the write lock for its length, its label is the count of the store's own commits,
+and a write issued meanwhile waits for it.
 
 Every record is read through one path (`_entry`, `_flight`), and a record that cannot be
 read there (not JSON, nested too deep for the parser, a field missing or of the wrong type,
@@ -130,6 +134,9 @@ AIRCRAFT_COLUMNS = "key, label, source, synthetic, licence, attribution"
 # How long a write waits for another writer's lock before it fails. Writes take milliseconds;
 # a second writer is `uasw record` beside a running service, or two services on one file.
 BUSY_TIMEOUT_MS = 5000
+# How long a store's close waits, for the write lock and for reads of an older state to end,
+# to start the WAL over (`close`): a write beside it waits no longer for a close (issue #127).
+CLOSE_WAIT_MS = 100
 # How many of the store's own commits the WAL takes before the store folds it into the file
 # (`_checkpoint`): about the 1,000 pages SQLite checkpoints at, at a few pages a write.
 CHECKPOINT_COMMITS = 200
@@ -316,20 +323,31 @@ class Store:
 
     def close(self) -> None:
         """Close every connection: each thread's reading connection and the labelling one
-        first, then the writing one, after what the WAL holds is folded into the file as far
-        as no open read still needs it, without waiting for any (`PASSIVE`): when this was the
-        last connection the file alone holds every committed write and SQLite removes `-wal`
-        and `-shm`; another connection still open keeps them, and SQLite does the same when
-        that one closes. A `TRUNCATE` here took the WAL's write lock and held it while it
-        waited, up to the busy timeout, for a read of an older state to end, so a write through
-        the service sent meanwhile waited as long and could be refused 503 as if a write held
-        the store (issue #127); `PASSIVE` takes no write lock and invokes no busy handler, so no
-        writer waits for a close, and the pages an older read still needs are folded by the
-        connections that stay open, at their own checkpoint. A store opened for reads only runs
-        no checkpoint here, and leaves a `-wal` it found holding anything as it was
-        (`reads_only`). Called once the threads that read are done (a server after it has
-        stopped, a command when it ends); a read after it raises `sqlite3.ProgrammingError`, as
-        on a closed connection. Closing a closed store does nothing."""
+        first, then the writing one, after the WAL is folded into the file and started over:
+        when this was the last connection the file alone holds every committed write and
+        SQLite removes `-wal` and `-shm`; another connection still open keeps them, and SQLite
+        does the same when that one closes.
+
+        The fold is in two steps. `PASSIVE` folds what no open read still needs, takes no
+        write lock and waits for nothing. `TRUNCATE` then takes the write lock, folds the rest
+        once the reads of an older state have ended, and empties the `-wal`, waiting for both
+        no longer than `CLOSE_WAIT_MS`. Before issue #127 the `TRUNCATE` waited the 5 s busy
+        timeout with the write lock held, so a write through the service sent meanwhile waited
+        as long and could be refused 503; a write now waits no longer than the short wait.
+        With `PASSIVE` alone nothing ever started the WAL over beside a service that only
+        reads, whose requests always hold a state of their own, so its `-wal` grew with every
+        command that wrote beside it, and a store opened for reads only that closed last left
+        a folded `-wal` of every write there, which every read-only open after it kept.
+        A `TRUNCATE` that does not get the lock, or whose reads do not end, within its wait
+        changes nothing in the `-wal`: SQLite empties it only once every frame is in the file
+        and no read uses it, so no page a read still needs is cut, and the next close or the
+        store's own checkpoint starts it over.
+
+        A store opened for reads only runs no checkpoint here, and leaves a `-wal` it found
+        holding anything as it was (`reads_only`). Called once the threads that read are done
+        (a server after it has stopped, a command when it ends); a read after it raises
+        `sqlite3.ProgrammingError`, as on a closed connection. Closing a closed store does
+        nothing."""
         self._closed = True
         with self._readers_lock:
             readers, self._readers = self._readers, []
@@ -337,7 +355,10 @@ class Store:
             reader.close()
         if not self._reads_only:
             with contextlib.suppress(sqlite3.Error):
-                self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                self._db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+            with contextlib.suppress(sqlite3.Error):
+                self._db.execute(f"PRAGMA busy_timeout = {CLOSE_WAIT_MS}")
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
         self._db.close()
 
     def _wal(self) -> None:

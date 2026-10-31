@@ -313,7 +313,7 @@ are checked one after the other: two corrections of one entry give one entry and
 an append or an ingest that waits more than 5 s for the store's write lock, held by another
 write or by a checkpoint waiting for an older read, is refused with 503 naming the lock,
 nothing written (an ingest's new aircraft and its flight are one write); a `uasw` command
-closing beside the service makes no write wait (#127);
+closing beside the service makes a write wait no more than about a tenth of a second (#127);
 `GET /entries` and `GET /components` read the history with superseded entries
 flagged. Writes need the token in `UASW_WRITE_TOKEN`, or come from this machine when none is
 set, and a write without it is refused before its body is read; what that does not
