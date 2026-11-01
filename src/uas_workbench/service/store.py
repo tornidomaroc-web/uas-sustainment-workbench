@@ -52,10 +52,18 @@ open read still needs, without waiting for any (`PRAGMA wal_checkpoint(PASSIVE)`
 no write lock), then starts the WAL over (`TRUNCATE`) waiting no more than `CLOSE_WAIT_MS`
 for the write lock and for reads of an older state to end, and closes the writing one; when it
 was the last connection on the file SQLite removes both side files, so a closed store is one
-file. A write beside it waits for a close no longer than that short wait, not the busy timeout
-(issue #127), and the `-wal` does not grow with every command run beside a service that only
-reads, as it did with the `PASSIVE` fold alone. A `TRUNCATE` that does not get the lock and
-the reads within its wait changes nothing in the `-wal`. A store opened for reads only
+file. A write beside it waits for a close about that short wait and one sleep of its own busy
+handler, not the busy timeout (issue #127; measured, a write sent as the close began answered
+in 0.16 to 0.28 s). A `TRUNCATE` that does not get the lock and the reads within its wait
+changes nothing in the `-wal`. Beside reads that
+each hold their state longer than the short wait, one after the other, one short `TRUNCATE`
+never finds them ended; so once the `-wal` is past `CLOSE_WAL_CAP` (4 MiB) as the close
+begins, the close tries again after each pause of `CLOSE_GAP_MS` until `CLOSE_TRIES_MS` has
+passed, and the closing command waits up to that long (`close`). Two limits stay: reads that
+leave no moment free of an older state within those tries, or writes landing in every pause,
+leave the `-wal` past the cap until a later close finds one; and the cap is looked at as the
+close begins, so the `-wal` can hold the cap and what one command and the writes beside it
+add. A store opened for reads only
 (`reads_only`, the commands that only read) never checkpoints, and beside a `-wal` holding
 anything as it opens (one a hard stop left, or a running service's) none of its connections
 checkpoints as it closes either, so it leaves that `-wal` as it found it (issue #107). A store
@@ -137,6 +145,21 @@ BUSY_TIMEOUT_MS = 5000
 # How long a store's close waits, for the write lock and for reads of an older state to end,
 # to start the WAL over (`close`): a write beside it waits no longer for a close (issue #127).
 CLOSE_WAIT_MS = 100
+# How large the `-wal` may be as a store closes before the close keeps trying to start it over
+# (`close`): 4 MiB, about the 1,000 pages SQLite itself checkpoints at. Below it the close makes
+# one short try. Tests set it lower on the module before a command runs; the same code runs.
+CLOSE_WAL_CAP = 4 * 1024 * 1024
+# The pause between two of those tries. SQLite's busy handler sleeps at most 100 ms between two
+# tries of its own on Windows, on every build from 3.43.0 unless built with HAVE_NANOSLEEP=0,
+# and on older builds with HAVE_USLEEP (configure sets it), so a write waiting for the lock
+# tries again within the pause. Other builds sleep whole seconds: see `CLOSE_TRIES_MS`.
+CLOSE_GAP_MS = 150
+# How long after it begins a close past the cap starts a new try: 1.5 s under the busy timeout.
+# Each try holds the write lock for `CLOSE_WAIT_MS` as SQLite counts it (0.25 s at most measured
+# on Windows), so a write that began waiting as the close began finds the lock free 4 s or 5 s
+# after it began at the latest, even on
+# a build whose busy handler sleeps whole seconds between tries.
+CLOSE_TRIES_MS = BUSY_TIMEOUT_MS - 1500
 # How many of the store's own commits the WAL takes before the store folds it into the file
 # (`_checkpoint`): about the 1,000 pages SQLite checkpoints at, at a few pages a write.
 CHECKPOINT_COMMITS = 200
@@ -333,15 +356,38 @@ class Store:
         once the reads of an older state have ended, and empties the `-wal`, waiting for both
         no longer than `CLOSE_WAIT_MS`. Before issue #127 the `TRUNCATE` waited the 5 s busy
         timeout with the write lock held, so a write through the service sent meanwhile waited
-        as long and could be refused 503; a write now waits no longer than the short wait.
+        as long and could be refused 503; a write now waits about the short wait and one sleep
+        of its own busy handler.
         With `PASSIVE` alone nothing ever started the WAL over beside a service that only
         reads, whose requests always hold a state of their own, so its `-wal` grew with every
         command that wrote beside it, and a store opened for reads only that closed last left
         a folded `-wal` of every write there, which every read-only open after it kept.
         A `TRUNCATE` that does not get the lock, or whose reads do not end, within its wait
         changes nothing in the `-wal`: SQLite empties it only once every frame is in the file
-        and no read uses it, so no page a read still needs is cut, and the next close or the
-        store's own checkpoint starts it over.
+        and no read uses it, so no page a read still needs is cut.
+
+        One short `TRUNCATE` does not bound the `-wal` on its own: beside reads that each hold
+        their state longer than the short wait, one after the other, it never finds them
+        ended, and the `-wal` grew by every command that wrote. So when the `-wal` is past
+        `CLOSE_WAL_CAP` as the close begins, the close tries again after each pause of
+        `CLOSE_GAP_MS`, until one starts it over or `CLOSE_TRIES_MS` has passed since the
+        close began: each try holds the write lock for the short wait as SQLite counts it (up
+        to 0.25 s measured on Windows, whose short sleeps last longer) and each pause leaves it
+        free, so a write beside it waits about as long as below the cap, while the closing
+        command waits for the reads of an older state to end, up to about 3.7 s. The pause is
+        longer than the longest sleep of SQLite's busy handler on the builds `CLOSE_GAP_MS`
+        names; on a build whose handler sleeps whole seconds, a write that began waiting as the
+        close began tries again 4 and 5 s later, after the last try has ended, so it waits up
+        to about 4 s but is not refused by this close (not measured on such a build). Measured
+        beside a read that never ended: service writes answered in 0.16 to 0.23 s, none
+        refused, and a process asking for the lock every 10 ms waited at most 0.25 s, as beside
+        one try (0.28 s), but at about every try instead of once (LIMITS.md).
+
+        Two limits stay. Reads that leave no moment free of an older state while the close
+        tries (one read that never ends, or reads that overlap one another), or writes landing
+        in every pause, leave the `-wal` past the cap, growing by every command that writes,
+        until a close finds such a moment. And the cap is looked at as the close begins, so the
+        `-wal` can hold the cap and what one command and the writes beside it add.
 
         A store opened for reads only runs no checkpoint here, and leaves a `-wal` it found
         holding anything as it was (`reads_only`). Called once the threads that read are done
@@ -358,8 +404,21 @@ class Store:
                 self._db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
             with contextlib.suppress(sqlite3.Error):
                 self._db.execute(f"PRAGMA busy_timeout = {CLOSE_WAIT_MS}")
-                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+                again = self._wal_bytes() > CLOSE_WAL_CAP
+                end = time.monotonic() + CLOSE_TRIES_MS / 1000
+                while True:
+                    busy = self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+                    if not busy or not again or time.monotonic() >= end:
+                        break
+                    time.sleep(CLOSE_GAP_MS / 1000)
         self._db.close()
+
+    def _wal_bytes(self) -> int:
+        """The size of the store's `-wal` now, 0 when there is none."""
+        try:
+            return os.path.getsize(self._path + "-wal")
+        except OSError:
+            return 0
 
     def _wal(self) -> None:
         """Put the file in WAL mode. On a file in the rollback-journal mode (a store 0.5.x

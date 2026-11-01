@@ -915,8 +915,25 @@ field-level tables. This file is about what that means for a maintenance tool.
   waiting for the lock and for older reads no more than 100 ms (`CLOSE_WAIT_MS`). One that
   does not get them within that wait changes nothing in the `-wal` (measured: beside a read of
   an older state, and beside another process holding the write lock, the `-wal` bytes after
-  the close were the bytes before it), and the next close or the store's own checkpoint
-  starts it over. `PASSIVE` alone, as #146 first had it, never started the WAL over: no
+  the close were the bytes before it). Beside reads that each hold their state longer than
+  that wait, one after the other, one try never finds them ended and nothing starts the WAL
+  over, so the `-wal` grew by every command that wrote (beside a reader taking 2.0 s reads and
+  four threads reading through the service, 1,462,632 B after 40 runs with one try alone). So
+  once the `-wal` is past 4 MiB (`CLOSE_WAL_CAP`) as the close begins, the close tries again
+  after each 150 ms pause (`CLOSE_GAP_MS`) for up to 3.5 s (`CLOSE_TRIES_MS`), each try
+  holding the lock for 100 ms as SQLite counts it (a write asking for it meanwhile waited up
+  to 0.25 s on Windows, whose short sleeps last longer, as beside the one try). The pause is longer than the longest sleep, 100 ms,
+  of SQLite's busy handler on Windows, on every build from 3.43.0 unless built with
+  `HAVE_NANOSLEEP=0`, and on older builds with `HAVE_USLEEP` (as configure sets it), so a write
+  waiting meanwhile tries again within it; on a build whose handler sleeps whole seconds
+  instead, a write that began waiting as the close began tries again 4 and 5 s later, after
+  the last try, so it waits up to about 4 s and is not refused by the close. Not measured on
+  such a build, nor on Linux or macOS. Two limits stay: reads that leave no moment free of an
+  older state while the close tries (one read that never ends), or writes landing in every
+  pause, leave the `-wal` past the cap, growing by every command that writes, until a close
+  finds one; and the cap is looked at as the close begins, so the `-wal` can hold the cap and
+  one command's frames more. The closing command pays for the bound: it waits up to about
+  3.7 s per close past the cap. `PASSIVE` alone, as #146 first had it, never started the WAL over: no
   connection does that unless the whole WAL is folded and no read uses it, which requests
   under way beside a service rarely leave, so the `-wal` grew with every command that wrote
   beside a service that only read, and a store opened for reads only that closed last left a
@@ -926,7 +943,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   on each version, the same SHA-256). Measured through `uasw serve` beside a `uasw record`
   closing while a reader in a third process held an older state (Windows, Python 3.12.10,
   SQLite 3.49.1, 2026-10-31, each a process of its own): with the service write sent as the
-  close began, 0.6.6 refused 6 of 8 with 503, every one of the 8 waiting 5.47 to 5.53 s; sent
+  close began, 0.6.6 refused 6 of 8 with 503, every one of the 8 waiting 5.47 to 5.53 s (the
+  code before this change refused 5 to 7 of 8 over four runs of 8, the last on 2026-11-01); sent
   0.3 s after, it refused 0 of 6 and every one waited 5.25 to 5.36 s; the close took 5.48 to
   5.67 s each time. This version: 0 of 8 and 0 of 6 refused, the writes sent as the close
   began answered 201 in 0.16 to 0.23 s and those sent 0.3 s after in 16 ms or less, the close
@@ -937,7 +955,17 @@ field-level tables. This file is about what that means for a maintenance tool.
   that service, over 40 runs each followed by a service write and 40 more with four threads
   reading: 0 B after every run, at most 28,872 B between (the service's own writes), as on
   0.6.6; with `PASSIVE` alone it held 1,075,352 B after the 80th run and kept it until the
-  service stopped. The refusal that stays is the store's own
+  service stopped. Past the cap (2026-11-01, same machine): beside a read that never ended and
+  the cap set to 0, 8 closes refused 0 service writes, answered in 0.16 to 0.23 s, each close
+  giving up after 3.61 to 3.75 s with the `-wal` as it was; a process asking for the write lock
+  every 10 ms meanwhile waited at most 0.25 s, 96 of its waits over 100 ms, about one at each try (beside the one try of #146's first version,
+  at most 0.28 s, one wait over 100 ms a close), refused 0 times. Beside a reader taking 2.0 s reads one after the other and
+  four threads reading through the service, the cap set to 64 KiB, 40 runs left the `-wal` at
+  most 119,512 B, a close past the cap kept its command 2.28 to 2.38 s when a try found the reads ended (11 of 40 closes) and 3.61 to 3.69 s when none did (5 of 40), and a service write sent
+  as each close began waited at most 0.27 s (0.6.6 under the same load: 28,872 B at most,
+  writes waiting up to 3.69 s; #146's first version 1,462,632 B, 0.27 s). The tests set the cap
+  on the module before a command runs, so the shipped 4 MiB and theirs run the same code.
+  The refusal that stays is the store's own
   checkpoint above, which holds the lock while it waits for an older read: a writer in another
   process refused meanwhile is told that the lock was held, by a write or by a checkpoint
   waiting for a read of an older state, since it cannot tell the two apart.
