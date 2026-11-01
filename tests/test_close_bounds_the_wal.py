@@ -13,8 +13,9 @@ read-only open after it kept that file as found, where the close before #127 lef
 `close` now folds without waiting first (`PASSIVE`), then starts the WAL over
 (`TRUNCATE`) waiting at most `CLOSE_WAIT_MS` for the write lock and for reads of an older state
 to end. A `TRUNCATE` that does not get them within that wait changes nothing, so a `-wal`
-holding pages a read still needs is never cut, and the next close or the store's own
-checkpoint starts it over.
+holding pages a read still needs is never cut. The reads here are short (`HOLD_S`), so one try
+finds them ended; beside reads longer than that wait one try never does, which the cap in
+`tests/test_close_caps_the_wal.py` is for.
 
 The service, the commands, the writer and the readers run in processes of their own.
 Assertions are about statuses, exit codes and the files' bytes, never an operating system's

@@ -6,14 +6,18 @@ that each hold their state longer than that wait, one after the other with no ga
 `GET /journal/verify` on a large store reads for over a second), that `TRUNCATE` never found
 the reads ended, so nothing started the WAL over: the `-wal` grew with every command that wrote
 beside the service, without bound, until the reads stopped. Once the `-wal` is past
-`CLOSE_WAL_CAP`, `close` now tries that short `TRUNCATE` again after each pause of
-`CLOSE_GAP_MS`, for up to the busy timeout: each try holds the write lock no longer than the
-short wait and the pause leaves it free, so a write beside it still waits about a tenth of a
-second and is not refused, while the closing command itself waits for the reads of an older
-state to end, as every close did before #127. Under the cap one short try is all it makes.
+`CLOSE_WAL_CAP` (4 MiB) as the close begins, `close` now tries that short `TRUNCATE` again
+after each pause of `CLOSE_GAP_MS`, for up to `CLOSE_TRIES_MS` (3.5 s): each try holds the
+write lock for the short wait as SQLite counts it (up to 0.25 s measured on Windows) and the
+pause leaves it free, so a write beside it waits about one try and was not refused here, while
+the closing command itself waits up to about 3.7 s for the reads of an older state to end.
+Under the cap one short try is all it makes. Reads that leave no moment free while the close
+tries leave the `-wal` past the cap; the second test pins only that the write is not refused
+then, not that the `-wal` is bounded.
 
 The service, the commands and the reader run in processes of their own. A command here sets
-the cap low before it runs, so a few runs cross it. Assertions are about statuses, exit codes,
+the cap low on the module before the real command runs, so a few runs cross it through the same
+code the shipped 4 MiB cap runs. Assertions are about statuses, exit codes,
 times against the busy timeout and the files' sizes, never an operating system's error text,
 a path or a line ending.
 """
@@ -157,9 +161,9 @@ def test_a_close_past_the_cap_beside_a_read_that_never_ends_refuses_no_write(
 ) -> None:
     """The cap is 0, so the close keeps trying to start the WAL over, and a reader in a third
     process holds a state older than the command's write for the whole close. The service
-    write sent as the close begins still answers 201 within a tenth-of-a-second's tries, where
-    a close that waited the busy timeout with the lock held refused it 503 or made it wait as
-    long; the close gives up within the busy timeout, cuts nothing a read needs, and exits 0."""
+    write sent as the close begins still answers 201 in under `WRITE_S`, where a close that
+    waited the busy timeout with the lock held refused it 503 or made it wait as long; the close
+    gives up after `CLOSE_TRIES_MS`, cuts nothing a read needs, and exits 0."""
     path = tmp_path / "fleet.sqlite"
     seeded(path).close()
     server, host, port = serve(path)
