@@ -245,24 +245,24 @@ def test_a_writer_closing_beside_a_reads_only_store_leaves_no_folded_wal_behind(
 def test_a_close_whose_truncate_cannot_take_the_write_lock_leaves_the_wal_as_it_was(
     tmp_path: Path,
 ) -> None:
-    """Another process holds the write lock, with a write of its own not yet committed, as the
-    store closes: the close's `TRUNCATE` cannot take the lock, gives up within its short wait
-    and changes nothing in the `-wal`; the other write then commits, and every write is in
-    the store."""
+    """Another connection holds the write lock, with a write of its own not yet committed, as
+    the store closes: the close's `TRUNCATE` cannot take the lock and gives up within its
+    short wait, where the close before #127 waited the busy timeout. The other write then
+    commits and reads back, the store's own write is there, and the file is sound. (Nothing
+    can change the `-wal` while another connection holds the write lock, on any version, so
+    its bytes are not compared: that comparison could not fail.)"""
     path = tmp_path / "fleet.sqlite"
     store = seeded(path)
     store.append_entry(entry("SYN-02", "WO-MINE"))
     other = sqlite3.connect(str(path), isolation_level=None)
     try:
         other.execute("BEGIN IMMEDIATE")
-        # A write, so the lock is held as a writer's.
-        other.execute("UPDATE aircraft SET label = label WHERE key = ?", ("SYN-01",))
-        wal = path.with_name(path.name + "-wal")
-        before = wal.read_bytes()
+        # A write that changes a row, so the lock is held as a writer's, with a change the
+        # close must not lose.
+        other.execute("UPDATE aircraft SET label = ? WHERE key = ?", ("held", "SYN-01"))
         began = time.monotonic()
         store.close()
         taken = time.monotonic() - began
-        assert wal.read_bytes() == before
         assert taken < 1.0, f"close took {taken:.2f} s"
         other.execute("COMMIT")
     finally:
@@ -272,6 +272,8 @@ def test_a_close_whose_truncate_cannot_take_the_write_lock_leaves_the_wal_as_it_
     plain = sqlite3.connect(str(path))
     try:
         assert plain.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        label = plain.execute("SELECT label FROM aircraft WHERE key = ?", ("SYN-01",)).fetchone()
+        assert label == ("held",)
     finally:
         plain.close()
     assert os.path.getsize(path) > 0
