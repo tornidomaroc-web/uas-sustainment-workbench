@@ -73,6 +73,14 @@ main(sys.argv[4:])
 """
 
 
+# Round 2 of #160: the seeded fleet's inspections before the first log state tens of
+# hours, so an entry of the hours before the first log below them is now refused (an
+# inspection may state no more than the aircraft can have had by then). The hours
+# these tests write carry 1000 h more than the figure each test names, so every write
+# stays possible.
+OFFSET_S = 1000 * 3600.0
+
+
 def hours(before_s: float, supersedes: int | None = None) -> Entry:
     return Entry(
         id=None,
@@ -82,7 +90,7 @@ def hours(before_s: float, supersedes: int | None = None) -> Entry:
         recorded_utc=NOW,
         entered_by="A. Tester, maintenance",
         statement="hours read off the aircraft",
-        details={"before_s": before_s},
+        details={"before_s": OFFSET_S + before_s},
         supersedes=supersedes,
         reason="typo in the hours" if supersedes is not None else None,
         synthetic=False,
@@ -92,7 +100,7 @@ def hours(before_s: float, supersedes: int | None = None) -> Entry:
 def correction(db: Path, corrected: int, hours_: int) -> list[str]:
     """The `uasw` arguments of one correction of entry `corrected`."""
     return [
-        *("--db", str(db), "record", "time-in-service", "SYN-03", str(hours_)),
+        *("--db", str(db), "record", "time-in-service", "SYN-03", str(OFFSET_S / 3600 + hours_)),
         *("--by", "A. Tester, maintenance", "--statement", "hours read off the aircraft"),
         *("--supersedes", str(corrected), "--reason", "typo in the hours"),
     ]
@@ -326,7 +334,7 @@ def test_the_service_answers_503_and_writes_nothing_when_the_store_stays_held(
                 "occurred_utc": "2026-09-01T09:00:00Z",
                 "entered_by": "A. Tester, maintenance",
                 "statement": "hours read off the aircraft",
-                "details": {"before_s": 200.0},
+                "details": {"before_s": OFFSET_S + 200.0},
                 "supersedes": corrected,
                 "reason": "typo in the hours",
             },

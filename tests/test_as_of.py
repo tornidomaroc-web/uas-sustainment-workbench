@@ -477,13 +477,13 @@ def test_a_write_that_would_make_a_later_entry_impossible_is_refused_naming_it()
     )
     # Hours before the first log set lower, back-dated before an inspection that states more
     # hours than the aircraft would then have had.
-    done = write(
-        s, "SYN-02", "inspection.done", {"name": "100-hour inspection", "at_hours_s": 50 * H}
-    )
+    write(s, "SYN-02", "inspection.done", {"name": "100-hour inspection", "at_hours_s": 50 * H})
+    # Round 2 of #160: 0 h also leaves SYN-02's seeded inspections before its first log
+    # stating more than it can have had, and the first of those is named, not `done`.
     refused(
         s,
         409,
-        f"entry {done.id}",
+        "impossible (inspection.done on SYN-02",
         subject="SYN-02",
         kind="time_in_service.set",
         details={"before_s": 0.0},

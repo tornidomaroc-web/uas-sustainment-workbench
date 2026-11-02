@@ -303,25 +303,34 @@ def test_an_inspection_cannot_be_done_at_more_time_than_the_aircraft_has(store: 
 
 
 def test_corrections_need_a_live_target_of_the_same_subject_and_a_reason(store: Store) -> None:
-    first = add(store, draft("SYN-01", "time_in_service.set", {"before_s": 100.0}))
+    # Round 2 of #160: SYN-01's seeded inspections before its first log state tens of hours,
+    # so its entries of those hours carry 1000 h more (big) to stay possible.
+    big = 1000 * 3600.0
+    first = add(store, draft("SYN-01", "time_in_service.set", {"before_s": big + 100.0}))
     assert first.id is not None
     refused(
         store,
-        draft("SYN-01", "time_in_service.set", {"before_s": 200.0}, supersedes=999, reason="x"),
+        draft(
+            "SYN-01", "time_in_service.set", {"before_s": big + 200.0}, supersedes=999, reason="x"
+        ),
         404,
         "999",
     )
     refused(
         store,
         draft(
-            "SYN-02", "time_in_service.set", {"before_s": 200.0}, supersedes=first.id, reason="x"
+            "SYN-02",
+            "time_in_service.set",
+            {"before_s": big + 200.0},
+            supersedes=first.id,
+            reason="x",
         ),
         409,
         "SYN-01",
     )
     refused(
         store,
-        draft("SYN-01", "time_in_service.set", {"before_s": 200.0}, supersedes=first.id),
+        draft("SYN-01", "time_in_service.set", {"before_s": big + 200.0}, supersedes=first.id),
         422,
         "reason",
     )
@@ -329,16 +338,20 @@ def test_corrections_need_a_live_target_of_the_same_subject_and_a_reason(store: 
     second = add(
         store,
         draft(
-            "SYN-01", "time_in_service.set", {"before_s": 200.0}, supersedes=first.id, reason="typo"
+            "SYN-01",
+            "time_in_service.set",
+            {"before_s": big + 200.0},
+            supersedes=first.id,
+            reason="typo",
         ),
     )
-    assert store.maintenance("SYN-01").time_in_service_before_s == 200.0  # type: ignore[union-attr]
+    assert store.maintenance("SYN-01").time_in_service_before_s == big + 200.0  # type: ignore[union-attr]
     refused(
         store,
         draft(
             "SYN-01",
             "time_in_service.set",
-            {"before_s": 300.0},
+            {"before_s": big + 300.0},
             supersedes=first.id,
             reason="again",
         ),
@@ -347,7 +360,7 @@ def test_corrections_need_a_live_target_of_the_same_subject_and_a_reason(store: 
     )
     assert second.id is not None
     add(store, draft("SYN-01", "retraction", supersedes=second.id, reason="the first was right"))
-    assert store.maintenance("SYN-01").time_in_service_before_s == 100.0  # type: ignore[union-attr]
+    assert store.maintenance("SYN-01").time_in_service_before_s == big + 100.0  # type: ignore[union-attr]
 
 
 def test_an_entry_with_live_dependents_cannot_be_superseded(store: Store) -> None:

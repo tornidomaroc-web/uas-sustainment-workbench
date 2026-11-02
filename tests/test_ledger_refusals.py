@@ -11,6 +11,7 @@ twice.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,9 @@ def store() -> Store:
     s.add_fleet(generate(CONFIG))
     s.add_fleet(showcase(FIXTURES))
     return s
+
+
+BIG = 1000 * 3600.0  # see the comment in the 0.1.0 sentences test
 
 
 def entry(
@@ -126,27 +130,35 @@ def test_the_refusal_sentences_of_0_1_0_are_kept_word_for_word(store: Store) -> 
     )
     assert sentence(store, late) == "work order WO-X on SYN-01 was closed on 2026-09-04 09:00 UTC"
 
-    first = add(store, entry("SYN-02", "time_in_service.set", {"before_s": 100.0}))
+    # Round 2 of #160: SYN-02's seeded inspections before its first log state tens of hours,
+    # so its entries of those hours carry 1000 h more (BIG) to stay possible.
+    first = add(store, entry("SYN-02", "time_in_service.set", {"before_s": BIG + 100.0}))
     other = entry(
         "SYN-03", "time_in_service.set", {"before_s": 1.0}, supersedes=first, reason="typo"
     )
     assert sentence(store, other) == f"entry {first} is about SYN-02, not SYN-03"
     second = add(
         store,
-        entry("SYN-02", "time_in_service.set", {"before_s": 200.0}, supersedes=first, reason="x"),
+        entry(
+            "SYN-02",
+            "time_in_service.set",
+            {"before_s": BIG + 200.0},
+            supersedes=first,
+            reason="x",
+        ),
     )
     twice = entry(
-        "SYN-02", "time_in_service.set", {"before_s": 300.0}, supersedes=first, reason="y"
+        "SYN-02", "time_in_service.set", {"before_s": BIG + 300.0}, supersedes=first, reason="y"
     )
     assert sentence(store, twice) == f"entry {first} is already superseded by entry {second}"
 
 
 def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
-    first = add(store, entry("SYN-02", "time_in_service.set", {"before_s": 100.0}))
+    first = add(store, entry("SYN-02", "time_in_service.set", {"before_s": BIG + 100.0}))
     moved = entry(
         "SYN-02",
         "time_in_service.set",
-        {"before_s": 200.0},
+        {"before_s": BIG + 200.0},
         at=T + 5 * D,
         supersedes=first,
         reason="typo",
@@ -199,12 +211,17 @@ def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
     )
     lower = entry("SYN-03", "time_in_service.set", {"before_s": 0.0}, at=T - D)
     text = sentence(store, lower)
-    assert text.startswith(
-        f"this would make entry {done} impossible (inspection.done on SYN-03, "
-        "2026-09-01 09:00 UTC): at_hours_s 100.0 h is more than the time in service of SYN-03 "
-        "at 2026-09-01 09:00 UTC, "
-    ), text
-    assert text.endswith(f" h; retract or correct entry {done} first"), text
+    # Round 2 of #160: 0 h also leaves SYN-03's seeded inspections before the new one stating
+    # more hours than the aircraft can have had, and the first of them is named, so the
+    # sentence is read whole with its entry and figures as found, not `done`'s.
+    assert done is not None
+    found = re.fullmatch(
+        r"this would make entry (\d+) impossible \(inspection\.done on SYN-03, "
+        r"(\d{4}-\d\d-\d\d \d\d:\d\d UTC)\): at_hours_s \d+\.\d h is more than the time in "
+        r"service of SYN-03 at \2, \d+\.\d h; retract or correct entry \1 first",
+        text,
+    )
+    assert found, text
 
 
 def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:

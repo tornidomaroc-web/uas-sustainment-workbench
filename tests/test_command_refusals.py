@@ -300,7 +300,9 @@ def test_bad_input_or_state_is_one_refusal_line_never_a_traceback(
 @pytest.mark.parametrize(
     "args",
     [
-        ["record", "time-in-service", "SYN-03", "5", *WHO],
+        # Round 2 of #160: 5 h is now refused (409) before the write, below SYN-03's
+        # seeded inspections before its first log; 500 h reaches the read-only file.
+        ["record", "time-in-service", "SYN-03", "500", *WHO],
         ["ingest", "NEW-01", str(LOG)],
     ],
     ids=["record", "ingest"],

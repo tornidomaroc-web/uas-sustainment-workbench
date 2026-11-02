@@ -107,7 +107,9 @@ def entry_body() -> bytes:
             "occurred_utc": "2026-09-01T09:00:00Z",
             "entered_by": "A. Tester, maintenance",
             "statement": "hours read off the aircraft",
-            "details": {"before_s": 3600.0},
+            # Round 2 of #160: 1 h is below SYN-03's seeded inspections before its first
+            # log and now refused (409) before the store is reached; 1000 h is possible.
+            "details": {"before_s": 1000 * 3600.0},
         }
     ).encode()
 

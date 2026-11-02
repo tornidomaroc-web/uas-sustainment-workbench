@@ -12,8 +12,9 @@ the item read "due in 205.0 h" where 95 h had been flown since. Now any entry th
 hours before the first log is refused while an inspection would then state more hours than
 the aircraft had at its date, as the correction of the old entry already was; and an
 inspection stating more than a later entry of those hours allows is refused too. A store
-written before this holds such records: the item reads not known, saying the records
-disagree, and never a number.
+written before this holds such records: the item reads the hours flown since the inspection,
+which the logs give whatever the total, saying the records disagree, never "due in 205.0 h"
+(test_hours_before_the_first_log_bound.py has the cases before the first log).
 
 B. A log with no UTC start counts at any date, so an inspection that derived its hours counted
 it before itself when it was uploaded first and after itself when it came later: the same
@@ -21,7 +22,8 @@ records gave "15.0 h left" or "5.0 h overdue, within tolerance". Now derived hou
 logs only; an undated log's hours fall inside the interval after the inspection, the most they
 can add, and a note names the log the records cannot place. A store written before this can
 hold an inspection whose derived hours counted the undated log: the tool's own figure is then
-more than the dated logs give, and the item reads not known, saying so.
+more than the dated logs give, and the item reads from the dated logs, as a new store does,
+saying the records disagree.
 
 Every row runs real `uasw` processes, each store of its own, with DataFlash logs built here:
 a GPS fix gives the UTC start, STAT gives the flight time.
@@ -83,6 +85,7 @@ DERIVED = (
     "UTC start, which the records cannot place before it; correct the inspection, stating its "
     "hours"
 )
+LEAST = ", counted from 10.0 h, the least time in service the records give at its date; "
 CANNOT_MEASURE = "the 100-hour inspection of aircraft {key} cannot be measured on 2026-07-01: "
 DUE_IN_5 = "the 100-hour inspection of aircraft X-1 is due in 5.0 h"
 OVERDUE_5 = (
@@ -277,9 +280,11 @@ def test_an_inspection_above_a_later_hours_entry_is_refused(
 
 
 # A store written by 0.6.6 holds the later entry. It loads, its journal verifies with the same
-# head, no row is rewritten, and the item reads not known, saying the records disagree, never
-# "due in 205.0 h"; the board is not known with that sentence.
-def test_a_store_holding_the_disagreement_reads_not_known(tmp_path: Path) -> None:
+# head, no row is rewritten, and the item reads what the records still give, never "due in
+# 205.0 h": 95 h flown since the inspection whatever the hours before the first log, counted
+# from the 10.0 h the logs place at its date, 5.0 h left, with the sentence saying the records
+# disagree (round 2 of #160; round 1 read not known, which hid a figure the records give).
+def test_a_store_holding_the_disagreement_reads_the_hours_flown_since(tmp_path: Path) -> None:
     case_a(tmp_path)
     db = tmp_path / "fleet.sqlite"
     as_0_6_6_later_hours(db, "X-1")
@@ -287,10 +292,8 @@ def test_a_store_holding_the_disagreement_reads_not_known(tmp_path: Path) -> Non
     assert head.startswith("journal intact: 6 links"), head  # 2 logs, 3 entries, 0.6.6's row
     before = rows(db)
     prog = programme(tmp_path, "X-1", "2026-07-01T00:00Z")
-    item = hundred(prog["items"])
-    message = CANNOT_MEASURE.format(key="X-1") + DISAGREE
-    assert figures(item) == ({"unknown": DISAGREE}, {"unknown": DISAGREE}, "unknown", message)
-    assert prog["status"] == {"unknown": message}
+    assert figures(hundred(prog["items"])) == (95.0, 5.0, "due_soon", DUE_IN_5 + LEAST + DISAGREE)
+    assert prog["status"] == "serviceable"
     assert ok(tmp_path, "verify") == head
     assert rows(db) == before
 
@@ -315,10 +318,12 @@ def test_an_undated_log_gives_one_answer_whatever_the_upload_order(
 
 
 # A store written by 0.6.6 with the undated log uploaded first holds the inspection derived
-# at 30 h, as 0.6.6 wrote it. Its row is kept, so the figure cannot be put right by reading;
-# "due in 15.0 h" would still be shown. The tool's own figure is more than the dated logs
-# give, which only the undated log explains: the item reads not known, and says so.
-def test_a_store_whose_derived_hours_counted_an_undated_log_reads_not_known(
+# at 30 h, as 0.6.6 wrote it. Its row is kept; "due in 15.0 h" would still be shown if it were
+# read as stored. The tool's own figure is more than the dated logs give, which only the
+# undated log explains: the item reads from the 10.0 h the dated logs give, as a store written
+# now does (5.0 h overdue, within tolerance), and says the records disagree (round 2 of #160;
+# round 1 read not known).
+def test_a_store_whose_derived_hours_counted_an_undated_log_reads_as_a_new_one(
     tmp_path: Path,
 ) -> None:
     ingest(tmp_path, "X-1", "X-1-feb", datetime(2026, 2, 1, tzinfo=UTC), 10.0)
@@ -350,14 +355,9 @@ def test_a_store_whose_derived_hours_counted_an_undated_log_reads_not_known(
     head = ok(tmp_path, "verify")
     before = rows(db)
     prog = programme(tmp_path, "X-1", "2026-05-01T00:00Z")
-    message = "the 100-hour inspection of aircraft X-1 cannot be measured on 2026-05-01: " + DERIVED
-    assert figures(hundred(prog["items"])) == (
-        {"unknown": DERIVED},
-        {"unknown": DERIVED},
-        "unknown",
-        message,
-    )
-    assert prog["status"] == {"unknown": message}
+    message = OVERDUE_5.format(key="X-1") + LEAST + DERIVED
+    assert figures(hundred(prog["items"])) == (105.0, -5.0, "overdue_within_tolerance", message)
+    assert prog["status"] == "serviceable with deferred defects"
     assert UNPLACED.format(key="X-1") in prog["notes"]
     assert ok(tmp_path, "verify") == head
     assert rows(db) == before
@@ -421,32 +421,35 @@ def test_the_command_line_the_service_and_the_assistant_agree(served: tuple[Path
         assert figures(hundred([i for i in fleet if i["aircraft_key"] == key])) == cli, key
         assert figures(hundred(told["items"])) == cli, key
         assert due["status"] == told["status"] == prog["status"], key
-    assert cli[2] == "unknown" and cli[3] == CANNOT_MEASURE.format(key="X-2") + DISAGREE
-    # The short form says not known and why, with no number of its own.
+    due_in = DUE_IN_5.replace("X-1", "X-2")
+    assert cli == (95.0, 5.0, "due_soon", due_in + LEAST + DISAGREE)
+    # The short form gives the figure the item reads.
     query = urllib.parse.urlencode({"as_of": "2026-07-01T00:00:00Z", "cues": "true"})
     status, cued = call(base, "GET", f"/aircraft/X-2/due?{query}")
     assert status == 200, cued
-    assert hundred(cued["items"])["cue"] == "100 h insp: records disagree, not known"
-    assert cued["status_cue"] == "not known: records disagree"
+    assert hundred(cued["items"])["cue"] == "100 h insp due in 5.0 h"
 
 
-# The engine on its own: a completion recorded at more hours than there were reads not known,
-# and the cue grammar's own checker accepts its cue.
+# The engine on its own: a completion before the first log recorded at more hours than there
+# can have been, with too little flown since to say it is overdue, reads not known, and the
+# cue grammar's own checker accepts its cue. (Round 2 of #160 moved it before the first log:
+# after it, the item now reads from the least time in service at its date.)
 def test_the_cue_of_a_disagreement_passes_the_cue_checker() -> None:
     later = T0 + timedelta(days=1)
     rec = record(
         "A",
+        time_in_service_before_s=100.0 * H,
         inspections=(
-            InspectionDone("100-hour inspection", later, 210.0 * H),
+            InspectionDone("100-hour inspection", T0 - timedelta(days=1), 150.0 * H),
             InspectionDone("annual inspection", T0 - timedelta(days=1), 0.0),
         ),
     )
     due = compute("A", rec, flights={"A": [flight("A", 1, T0, 1800.0)]}, as_of=later)
     hours = item(due, HUNDRED, "hours")
     assert hours.state == "unknown" and hours.message.endswith(
-        "the records disagree: the 100-hour inspection of 2026-03-02 is recorded at 210.0 h, more "
-        "than the 0.5 h time in service the records give by then, counting 0.0 h before the "
-        "first log; correct the inspection or the hours before the first log"
+        "the records disagree: the 100-hour inspection of 2026-02-28 is recorded at 150.0 h, "
+        "more than the 100.0 h time in service the records give by then, counting 100.0 h "
+        "before the first log; correct the inspection or the hours before the first log"
     )
     cue = item_cue(hours, due.as_of)
     assert cue == "100 h insp: records disagree, not known"

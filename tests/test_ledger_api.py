@@ -133,15 +133,20 @@ def test_refusals_carry_their_status_and_a_sentence(client: TestClient) -> None:
 
 
 def test_corrections_and_history_through_the_api(client: TestClient) -> None:
+    # Round 2 of #160: 100 s and 200 s are below SYN-03's seeded inspections before its first
+    # log and now refused; 1000 h more keeps both entries possible.
+    big = 1000 * 3600.0
     first = client.post(
-        "/entries", json=body("SYN-03", "time_in_service.set", {"before_s": 100.0}), headers=AUTH
+        "/entries",
+        json=body("SYN-03", "time_in_service.set", {"before_s": big + 100.0}),
+        headers=AUTH,
     ).json()
     second = client.post(
         "/entries",
         json=body(
             "SYN-03",
             "time_in_service.set",
-            {"before_s": 200.0},
+            {"before_s": big + 200.0},
             supersedes=first["id"],
             reason="typo in the hours",
         ),
@@ -156,7 +161,7 @@ def test_corrections_and_history_through_the_api(client: TestClient) -> None:
     ).json()
     old = next(e for e in everything if e["id"] == first["id"])
     assert old["superseded_by"] == second["id"]
-    assert client.get("/aircraft/SYN-03/due").json()["time_in_service_s"] > 200.0
+    assert client.get("/aircraft/SYN-03/due").json()["time_in_service_s"] > big + 200.0
 
 
 def test_components_are_readable_with_their_state_and_history(client: TestClient) -> None:
