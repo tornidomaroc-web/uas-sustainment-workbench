@@ -78,8 +78,11 @@ def programme(cwd: Path, as_of: str) -> dict[str, Any]:
 
 
 def calendar_item(prog: dict[str, Any], subject: str) -> dict[str, Any]:
-    (found,) = [i for i in prog["items"] if i["subject"] == subject and i["basis"] == "calendar"]
-    return found
+    found: list[dict[str, Any]] = [
+        i for i in prog["items"] if i["subject"] == subject and i["basis"] == "calendar"
+    ]
+    (one,) = found
+    return one
 
 
 def annual_store(cwd: Path, at: str) -> None:
