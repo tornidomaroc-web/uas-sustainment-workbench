@@ -356,8 +356,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   be made smaller than the records it holds: an inspection done before the first log states
   the hours it was done at, and the write rules accept it only once the hours before the
   first log are on record at an earlier date (an inspection stating more hours than the
-  aircraft then had is refused), so the hours entry is dated no later than the earliest such
-  inspection. The synthetic fleet enters its hours the day before its earliest inspection,
+  aircraft then had is refused, counting the hours before the first log entered before it
+  and each entered after it, and so is a later entry of those hours that would leave an
+  inspection stating more; issue #151), so the hours entry is dated no later than the
+  earliest such inspection. The synthetic fleet enters its hours the day before its earliest inspection,
   months before its first logs, so its board before August 2026 is mostly not known; only an
   aircraft whose first records are its first log has no window. Records from before the first
   log (an inspection with its hours stated) are kept as stated and not checked against a time
@@ -394,7 +396,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   A log with a UTC start always has an end, its span, even when its flight time is not
   known: it counts one cycle and no hours from that end. A log with no UTC start has no
   instant at all: it counts for the airframe at any date asked and for no component, with a
-  note, as before. Flight that no log covers, found by `reconcile()` from the next boot's
+  note, as before. An inspection's derived hours leave it out (they are the least the records
+  place by that date), so it falls inside the interval after the inspection, the most it can
+  add, whether it was uploaded before or after the inspection was entered, and the due list
+  notes each such log as one the records cannot place before or after it (issue #151; until
+  then a log uploaded first counted before the inspection and one uploaded later after it). Flight that no log covers, found by `reconcile()` from the next boot's
   counter, was flown after the log it followed and ended at a time no record holds: it counts
   with that log, from that log's end, the earliest it can have been flown. That errs early by
   design, up to the gap to the next log, so a limit is never reported later than it was
@@ -1161,15 +1167,32 @@ field-level tables. This file is about what that means for a maintenance tool.
   accepted. Only impossible transitions are refused.
 - **Derived time in service is only as good as the logs.** When a person records an
   inspection without stating the hours, the tool fills in the time in service it computes
-  at that date and marks the value derived; it carries every limit in "Limits of the life
-  engine" above.
+  at that date from the logs it can date by then, and marks the value derived; it carries
+  every limit in "Limits of the life engine" above.
+- **A derived figure is fixed when it is entered; records that arrive later on the early side
+  leave it low.** A log dated before the inspection but uploaded after it, or a later entry
+  that raises the hours before the first log, leaves the derived figure below the time in
+  service at its date, and the interval after it counts those hours too: the item reads due
+  earlier, never later. Measured (issue #151): 5 h flown before a derived 100-hour inspection
+  and uploaded after it read 10.0 h overdue where 5.0 h was right; a later entry raising the
+  hours before the first log from 200 h to 300 h read 95.0 h overdue, unserviceable, where
+  5.0 h were left. Correcting the inspection with its hours stated puts it right. The other
+  direction is refused or read as not known: an entry of the hours before the first log that
+  would leave an inspection stating more hours than the aircraft had at its date is refused
+  (as a correction of the earlier entry already was), naming the inspection, and so is an
+  inspection stating more than a later such entry allows; a store written by 0.6.6 or earlier
+  can hold either, and also an inspection whose derived hours counted a log with no UTC start
+  uploaded before it. Such an item reads not known with a sentence saying the records
+  disagree and which figures; the board is then not known unless something grounds the
+  aircraft. Its rows are never rewritten, so the journal verifies with the same head.
 - **Corrections are ordered by dependency, not by time.** An entry with later live
   entries depending on it (a registration with installations, an open work order with a
   close) cannot be superseded until those are corrected first, and a back-dated entry or a
   retraction that would make an already recorded later entry impossible is refused with
   that entry's id. Some histories therefore have to be entered in a fixed order: the hours
-  before the first log before an inspection that derives its hours from them, a later
-  install retracted before the remove it relied on. The tool says which entry stands in
+  before the first log before an inspection that derives its hours from them, an inspection
+  corrected with fewer hours stated before a later entry lowers the hours before the first
+  log, a later install retracted before the remove it relied on. The tool says which entry stands in
   the way, not the order to take.
 - **A correction keeps the date of the entry it corrects.** A correction with another
   `occurred_utc` is refused, because between the two dates neither entry would count; to

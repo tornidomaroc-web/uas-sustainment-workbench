@@ -119,6 +119,7 @@ def _fold(e: Entry, aircraft: dict[str, _Aircraft], components: dict[str, _Compo
                     e.occurred_utc,
                     _detail(p, "at_hours_s", float),
                     _detail(p, "carried_over_s", float, default=0.0),
+                    p.get("derived") is True,
                 )
             )
         elif e.kind == "work_order.open":

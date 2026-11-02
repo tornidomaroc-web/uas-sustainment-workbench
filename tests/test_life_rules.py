@@ -253,8 +253,12 @@ def test_flights_without_a_utc_start_are_counted_for_the_airframe_only() -> None
     due = compute("A", record("A"), [battery("BAT-1", "A", date(2025, 1, 1))], {"A": logs})
     assert due.time_in_service_s == 2000.0
     assert item(due, "battery pack BAT-1", "cycles").used == 1
+    # The records cannot place it against the 100-hour inspection either, and say so (#151).
     assert due.notes == (
         "flight A-02 of aircraft A has no UTC start and is not counted against any component",
+        "flight A-02 of aircraft A has no UTC start, so the records cannot place it before or "
+        "after the 100-hour inspection of 2026-02-28; its 0.3 h count in the time in service at "
+        "any date",
     )
 
 

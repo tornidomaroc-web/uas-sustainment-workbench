@@ -28,6 +28,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
   100 h insp due in 82.5 h                 annual insp due by 2027-04-30
   annual insp 12 days overdue              100 h insp: time in service not known
   annual insp: none recorded, not known    not known: inspection not recorded
+  not known: records disagree              100 h insp: records disagree, not known
   AOG awaiting parts since 2026-08-14      in maintenance since 2026-08-07
   not known: time in service               not known: no maintenance record
   flown unserviceable 2026-03-11 10:00     flown in maintenance 2026-03-10 10:00
@@ -40,7 +41,7 @@ from datetime import datetime, timedelta
 
 from uas_workbench.flight.record import Maybe, Unknown, is_known
 
-from .engine import NO_DATE, NO_RECORD, _work_sentence
+from .engine import DISAGREE, NO_DATE, NO_RECORD, _work_sentence
 from .model import Board, DueItem, DueList, WorkOrder, in_utc
 
 CUE_LIMIT = 40
@@ -89,6 +90,11 @@ def item_cue(item: DueItem, as_of: datetime) -> str:
         if NO_DATE in item.message:
             return _fit(
                 f"{_name(item.subject)}: none recorded, {NOT_KNOWN}",
+                f"{_name(item.subject)} {NOT_KNOWN}",
+            )
+        if DISAGREE in item.message:
+            return _fit(
+                f"{_name(item.subject)}: records disagree, {NOT_KNOWN}",
                 f"{_name(item.subject)} {NOT_KNOWN}",
             )
         return _fit(
@@ -161,6 +167,8 @@ def status_cue(status: Maybe[str]) -> str:
         return f"{NOT_KNOWN}: no maintenance record"
     if NO_DATE in status.reason:
         return f"{NOT_KNOWN}: inspection not recorded"
+    if DISAGREE in status.reason:
+        return f"{NOT_KNOWN}: records disagree"
     return f"{NOT_KNOWN}: time in service"
 
 
