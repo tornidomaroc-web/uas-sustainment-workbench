@@ -18,6 +18,7 @@ from test_life_rules import AS_OF, T0, compute, flight, item, record
 from uas_workbench.assistant.tools import BY_NAME
 from uas_workbench.life import InspectionDone, LifePolicy, LifeRule, board, due_list
 from uas_workbench.life.cue import item_cue, problems, reason_cues
+from uas_workbench.life.model import DueItem, DueList
 
 D = timedelta(days=1)
 H = 3600.0
@@ -31,7 +32,7 @@ NAMED = LifePolicy(
 )
 
 
-def named(name: str):  # type: ignore[no-untyped-def]
+def named(name: str) -> tuple[DueList, DueItem]:
     due = due_list(
         "A",
         maintenance=record("A", inspections=()),

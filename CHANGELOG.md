@@ -22,9 +22,10 @@
 - The cue checker (`life.cue.problems`, the tests' oracle; no served answer reads it) reads a
   number in a not-known item's name as the name's: a 24-month or 2-year inspection with no
   completion on record, whose own cue "24-month insp: none recorded, not known" it refused
-  for a missing unit, now passes. And a not-known cue carries no number of its own:
-  "annual insp: 12 days not known", which passed, and "annual insp: 12 months, not known",
-  refused only for its unit, are each refused for carrying a number. The assistant's
+  for a missing unit, now passes. And a not-known cue carries no number of its own: an
+  annual's not-known cue holding "12 days", which passed (the 12 of the sentence's
+  12-calendar-month), and one holding "12 months", refused only for its unit, are each
+  refused for carrying a number. The assistant's
   `aircraft_due` tool says "at that date" for a calendar inspection with no completion on
   record too; the tool description sent to the local model changes, no served answer does.
 - An aircraft with no completed annual inspection on record no longer reads serviceable
