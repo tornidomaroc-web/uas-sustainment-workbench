@@ -11,7 +11,10 @@
   with that sentence unless an open work order or a life limit reached or past grounds the
   aircraft; the due list, the evidence pack and the records summary carry it as any not-known
   item; the cues say none is recorded and that the inspection is not recorded, where they
-  said time in service; and the note says the interval cannot be counted. The 100-hour
+  said time in service; and the note says the interval cannot be counted. The cue checker
+  lets a not-known cue go without a unit only when it carries no number, and the assistant's
+  `aircraft_due` tool tells the model that unknown also covers a calendar inspection with no
+  completion on record. The 100-hour
   inspection is still counted from zero time in service with none on record. Not overdue:
   the records show that none was entered, not that none was done, and a not-known state is
   never a grounded-flight finding. A date before the first annual on record reads the same
