@@ -38,6 +38,7 @@ from uas_workbench.life import (
     Component,
     DueItem,
     DueList,
+    InspectionDone,
     Installation,
     MaintenanceRecord,
     board,
@@ -110,11 +111,18 @@ def prop(id_: str, hours_before: float) -> Component:
     )
 
 
+# An annual inspection on record before the parts were fitted: with none on record the board
+# is not known (issue #150), and these tests are about the limits of the parts.
+RECORD = MaintenanceRecord(
+    KEY, 0.0, (InspectionDone("annual inspection", FITTED - D, 0.0),), (), True
+)
+
+
 def compute(
     parts: Sequence[Component],
     logs: Sequence[FlightRecord] = (),
     as_of: datetime = NOW,
-    maintenance: MaintenanceRecord | None = None,
+    maintenance: MaintenanceRecord | None = RECORD,
 ) -> DueList:
     return due_list(
         KEY,
@@ -358,10 +366,12 @@ def test_the_checker_refuses_reached_for_another_state_and_another_word_for_reac
 
 
 def ledger_store(logs: Sequence[FlightRecord] = ()) -> Store:
-    """One synthetic aircraft with its logs and no entries; the test writes the ledger."""
+    """One synthetic aircraft with its logs and one entry, the annual inspection of RECORD;
+    the test writes the rest of the ledger."""
     store = Store(":memory:")
     aircraft = Aircraft(KEY, "Synthetic test aircraft", "px4", True, "CC0", "synthetic")
     store.add_fleet(Fleet((aircraft,), {KEY: tuple(logs)}))
+    write(store, entry(KEY, "inspection.done", {"name": "annual inspection"}, at=FITTED - D))
     return store
 
 

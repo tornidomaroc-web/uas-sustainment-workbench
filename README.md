@@ -195,7 +195,8 @@ finding, and such a log is listed as not judged, with why. From the due list the
 is derived in civil vocabulary, worst first: AOG and in maintenance from open work orders,
 unserviceable from any life limit reached or any limit past its tolerance, not known when an
 item depends on a time in
-service the records cannot give, serviceable with deferred defects from a limit inside its
+service the records cannot give or is a calendar interval with no completed inspection on
+record to count from, serviceable with deferred defects from a limit inside its
 tolerance or a deferred defect, else serviceable. Every limit and interval
 lives in [`fleet.toml`](src/uas_workbench/fleet/fleet.toml) with its public source next to it,
 as an editable default. Part 107 sets no inspection interval for small unmanned aircraft, so

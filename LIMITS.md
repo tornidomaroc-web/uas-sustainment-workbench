@@ -366,6 +366,14 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **An annual inspection counts toward the 100-hour rule** (14 CFR 91.409(b), "an annual or
   100-hour inspection"); the later of the two starts the interval. That is the only
   satisfaction rule; nothing in `fleet.toml` lets a lesser inspection satisfy a greater.
+- **An inspection never recorded.** With no completion on record, the 100-hour interval is
+  counted from zero time in service, and the annual inspection, which has a calendar limit
+  only, has no date to count from: its item and the board read not known, with a sentence
+  saying no completed annual inspection is recorded, unless an open work order or a life
+  limit reached or past grounds the aircraft (issue #150; before, the item was left out and
+  the board could read serviceable). Not known, not overdue: the records show that none was
+  entered, not that none was done; entering the last one, or doing one, settles it. A date
+  before the first annual on record reads the same, since the records at that date hold none.
 - **A cycle is one flight record.** No public log carries a battery cycle count that is
   filled in, and a log is not a flight (above), so one record with flight time counts as
   one cycle: one take-off and one landing. A flight with several landings is still one.
@@ -440,9 +448,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   life that ended at that midnight, an earlier log that ended at that instant. The log's own
   flight does not, because a log counts from its end. This is the answer the board gives at
   `as_of=<the log's start>`, so each finding can be checked there. It also means an
-  aircraft's first log is judged on a known state: the hours before the first log are a
-  total reached by that log's start, so the state is known from that instant, and not known
-  only before it.
+  aircraft's first log is judged on a known time in service: the hours before the first log
+  are a total reached by that log's start, so the time in service is known from that
+  instant, and not known only before it. An aircraft with no annual inspection on record is
+  not known at any instant until one is (above), so none of its logs is judged until then.
 - **Not known is never a finding, and is listed.** A log that starts when no maintenance
   record had been entered is not judged, with that reason; so is every log of an aircraft
   with no record at all. The two public showcase aircraft are never judged, by key, whatever

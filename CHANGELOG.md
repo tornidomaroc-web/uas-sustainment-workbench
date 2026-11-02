@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- An aircraft with no completed annual inspection on record no longer reads serviceable
+  (closes #150). The annual inspection has a calendar limit only, and with nothing on record
+  the engine left its item out, so the board read serviceable and the note said its interval
+  was counted from zero time in service, which for a calendar limit counts nothing. Now the
+  annual has an item in the not-known state with a sentence saying no completed annual
+  inspection is recorded, so its interval has no date to count from; the board is not known
+  with that sentence unless an open work order or a life limit reached or past grounds the
+  aircraft; the due list, the evidence pack and the records summary carry it as any not-known
+  item; the cues say none is recorded and that the inspection is not recorded, where they
+  said time in service; and the note says the interval cannot be counted. The 100-hour
+  inspection is still counted from zero time in service with none on record. Not overdue:
+  the records show that none was entered, not that none was done, and a not-known state is
+  never a grounded-flight finding. A date before the first annual on record reads the same
+  way. The seeded fleet records an annual for every aircraft and the two showcase aircraft
+  hold no record, so the seed, its journal head, the SYN-04 pack and the static export are
+  unchanged.
 - A `uasw` command that writes, or a service stopping, closing its store beside a running
   service makes a write there wait about a tenth or two of a second where it waited up to the
   5 s busy timeout, and refused none in the runs below (closes #127): `Store.close()` first

@@ -27,6 +27,7 @@ limit; the shortest form still names the part, the number, the unit and the dire
   100 h insp 3.6 h overdue, in tolerance   100 h insp 12.0 h overdue
   100 h insp due in 82.5 h                 annual insp due by 2027-04-30
   annual insp 12 days overdue              100 h insp: time in service not known
+  annual insp: none recorded, not known    not known: inspection not recorded
   AOG awaiting parts since 2026-08-14      in maintenance since 2026-08-07
   not known: time in service               not known: no maintenance record
   flown unserviceable 2026-03-11 10:00     flown in maintenance 2026-03-10 10:00
@@ -39,7 +40,7 @@ from datetime import datetime, timedelta
 
 from uas_workbench.flight.record import Maybe, Unknown, is_known
 
-from .engine import NO_RECORD, _work_sentence
+from .engine import NO_DATE, NO_RECORD, _work_sentence
 from .model import Board, DueItem, DueList, WorkOrder
 
 CUE_LIMIT = 40
@@ -85,6 +86,11 @@ def _due_date(item: DueItem, as_of: datetime) -> str:
 def item_cue(item: DueItem, as_of: datetime) -> str:
     """The cue of one due item, from its own fields."""
     if item.state == "unknown" or isinstance(item.remaining, Unknown):
+        if NO_DATE in item.message:
+            return _fit(
+                f"{_name(item.subject)}: none recorded, {NOT_KNOWN}",
+                f"{_name(item.subject)} {NOT_KNOWN}",
+            )
         return _fit(
             f"{_name(item.subject)}: time in service {NOT_KNOWN}",
             f"{_name(item.subject)} {NOT_KNOWN}",
@@ -153,6 +159,8 @@ def status_cue(status: Maybe[str]) -> str:
         return status
     if status.reason == NO_RECORD:
         return f"{NOT_KNOWN}: no maintenance record"
+    if NO_DATE in status.reason:
+        return f"{NOT_KNOWN}: inspection not recorded"
     return f"{NOT_KNOWN}: time in service"
 
 
@@ -229,9 +237,12 @@ def problems(cue: str, item: DueItem, as_of: datetime) -> list[str]:
     for d in DATE.findall(cue):
         if d not in item.message:
             found.append(f"date {d} is not in the sentence")
-    # A calendar item may carry its date instead of a count of days.
-    if not any(w in cue for w in UNIT_WORDS[item.unit]) and not (
-        item.unit == "days" and DATE.search(cue)
+    # A calendar item may carry its date instead of a count of days. A not-known item has
+    # no number, so no unit goes with one.
+    if (
+        item.state != "unknown"
+        and not any(w in cue for w in UNIT_WORDS[item.unit])
+        and not (item.unit == "days" and DATE.search(cue))
     ):
         found.append(f"unit {item.unit} is missing")
     for other, words in UNIT_WORDS.items():

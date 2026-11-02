@@ -171,9 +171,17 @@ def fit(
     write(store, entry(id_, "component.install", {"aircraft_key": key}, at=at))
 
 
+def annual(store: Store, key: str = KEY) -> None:
+    """An annual inspection on record the day before the parts were fitted: with none on
+    record the state is not known (issue #150), and these aircraft are about other states."""
+    write(store, entry(key, "inspection.done", {"name": "annual inspection"}, at=FITTED - D))
+
+
 def with_a_record(logs: Sequence[FlightRecord]) -> Store:
-    """The aircraft has a propeller set well inside its life, so its state is known."""
+    """The aircraft has a propeller set well inside its life and an annual inspection on
+    record, so its state is known."""
     store = store_with(logs)
+    annual(store)
     fit(store, "PROP-OK", "propeller set")
     return store
 
@@ -210,6 +218,7 @@ def flown_grounded() -> Store:
         )
         for n, at in enumerate(times, start=1):
             store.add_flight(key, flight(n, at, key=key))
+        annual(store, key)
         fit(store, f"PROP-{key}", "propeller set", key=key)
     fit(store, "BAT-FX", "battery pack", key="FX-01", cycles_before=299)
     open_work(store, "in_work", T1 - HOUR, "WO-FX2", key="FX-02")

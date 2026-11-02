@@ -47,6 +47,7 @@ wording is still found, and then fails.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import UTC, date, datetime, time, timedelta
 from functools import cache
@@ -60,7 +61,7 @@ import uas_workbench.life.cue as cue_module
 from uas_workbench.flight import Unknown
 from uas_workbench.life import DueItem
 from uas_workbench.life.cue import flight_cue, item_cue, reason_cues, status_cue, work_cue
-from uas_workbench.life.engine import NO_RECORD
+from uas_workbench.life.engine import NO_DATE, NO_RECORD
 from uas_workbench.life.model import WorkOrder
 from uas_workbench.service.app import due_view
 
@@ -296,6 +297,10 @@ def _inspection_cue(text: str) -> str | None:
     if m := re.fullmatch(rf"{NAME}(?:: time in service)? not known", text):
         unknown = Unknown("time in service not known")
         return item_cue(_item(None, m["name"], "hours", unknown, 100.0, "unknown"), AS_OF)
+    if m := re.fullmatch(rf"{NAME}: none recorded, not known", text):
+        unknown = Unknown(f"no completed inspection is recorded, so its interval {NO_DATE}")
+        item = _item(None, m["name"], "calendar", unknown, 12.0, "unknown")
+        return item_cue(dataclasses.replace(item, message=unknown.reason), AS_OF)
     return None
 
 
@@ -310,6 +315,8 @@ def _board_cue(text: str) -> str | None:
         return status_cue(Unknown(NO_RECORD))
     if text == "not known: time in service":
         return status_cue(Unknown("time in service not known"))
+    if text == "not known: inspection not recorded":
+        return status_cue(Unknown(f"no completed inspection is recorded, so it {NO_DATE}"))
     if m := re.fullmatch(
         r"flown (?P<s>unserviceable|in maintenance|AOG) (?P<t>[\d-]+ \d\d:\d\d)", text
     ):
