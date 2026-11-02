@@ -237,10 +237,10 @@ def problems(cue: str, item: DueItem, as_of: datetime) -> list[str]:
     for d in DATE.findall(cue):
         if d not in item.message:
             found.append(f"date {d} is not in the sentence")
-    # A calendar item may carry its date instead of a count of days. A not-known item has
-    # no number, so no unit goes with one.
+    # A calendar item may carry its date instead of a count of days. A not-known cue with no
+    # number has no unit to give; one that carries a number still needs the number's unit.
     if (
-        item.state != "unknown"
+        (item.state != "unknown" or NUMBER.search(DATE.sub(" ", cue)))
         and not any(w in cue for w in UNIT_WORDS[item.unit])
         and not (item.unit == "days" and DATE.search(cue))
     ):

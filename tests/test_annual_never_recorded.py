@@ -174,3 +174,20 @@ def test_before_the_first_log_both_reasons_are_given() -> None:
     assert result.reasons[1] == never_done("A", "2026-02-28")
     assert POLICY.inspections["annual inspection"].limits() == (("calendar", 12),)
     assert due.notes == (NOTE.format("A"),)
+
+
+# 6. The checker lets a not-known cue go without a unit only when it carries no number: the
+#    sentence's "12-calendar-month" must not let "12" stand alone in the cue.
+def test_a_not_known_cue_with_a_number_still_needs_its_unit() -> None:
+    rec = record("A", inspections=(InspectionDone("100-hour inspection", T0 - D, 0.0),))
+    due = compute("A", rec)
+    annual = item(due, "the annual inspection", "calendar")
+    assert annual.state == "unknown"
+    assert problems(item_cue(annual, due.as_of), annual, due.as_of) == []
+    for cue in ("annual insp: 12 not known", "annual insp: 12 months, not known"):
+        assert "unit days is missing" in problems(cue, annual, due.as_of), cue
+    # A not-known hours item's cue carries the 100 of its name with its unit, as before.
+    unknown = compute("A", record("A", time_in_service_before_s=50.0 * H, inspections=()),
+                      flights={"A": [flight("A", 1, T0, 1800.0)]}, as_of=T0 - D)  # fmt: skip
+    hundred = item(unknown, "the 100-hour inspection", "hours")
+    assert problems(item_cue(hundred, unknown.as_of), hundred, unknown.as_of) == []
