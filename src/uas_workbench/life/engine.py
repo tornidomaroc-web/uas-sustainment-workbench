@@ -57,7 +57,13 @@ NO_RECORD = "no maintenance record entered for this aircraft"
 # The end of the sentence of an inspection whose calendar interval has no completion on
 # record to count from; life/cue.py gives such an item and such a board a cue of their own.
 NO_DATE = "has no date to count from"
+# The start of the reason of an inspection whose recorded hours are more than the time in
+# service the records give at its date (issue #151); life/cue.py gives it a cue of its own.
+DISAGREE = "the records disagree"
 H = 3600.0
+# How far a recorded inspection's hours may pass the time in service at its date: the
+# ledger's own allowance when it accepts one (ledger.validate), a second.
+HOURS_SLACK_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -86,14 +92,21 @@ def log_end(record: FlightRecord) -> Maybe[datetime]:
     return record.utc_start + timedelta(seconds=record.log_span_s)
 
 
-def counted(record: FlightRecord, until: datetime | None) -> bool:
-    """A log counts once it has ended by `until`; a log with no UTC start counts whenever."""
+def counted(record: FlightRecord, until: datetime | None, undated: bool = True) -> bool:
+    """A log counts once it has ended by `until`; a log with no UTC start counts whenever,
+    or, with `undated` False, never: then only the logs the records can place count."""
     end = log_end(record)
-    return until is None or not is_known(end) or end <= until
+    if not is_known(end):
+        return undated
+    return until is None or end <= until
 
 
 def _usage(
-    key: str, records: Sequence[FlightRecord], tolerance_s: float, until: datetime | None = None
+    key: str,
+    records: Sequence[FlightRecord],
+    tolerance_s: float,
+    until: datetime | None = None,
+    undated: bool = True,
 ) -> _AircraftUsage:
     result = reconcile(records, aircraft_key=key, tolerance_s=tolerance_s)
     by_ref = {r.log_ref: r for r in records}
@@ -104,7 +117,7 @@ def _usage(
         if why.startswith("duplicate of "):
             notes.append(f"log {r.log_ref} of aircraft {key} is a {why} and is not counted")
             continue
-        if not counted(r, until):
+        if not counted(r, until, undated):
             continue
         seconds = r.flight_time_s if is_known(r.flight_time_s) else 0.0
         cycle = not is_known(r.flight_time_s) or r.flight_time_s > 0
@@ -114,7 +127,9 @@ def _usage(
     unlogged = tuple(
         (by_ref[f.log_ref].utc_start, f.seconds)
         for f in result.findings
-        if f.kind == "unlogged_flight" and f.log_ref in by_ref and counted(by_ref[f.log_ref], until)
+        if f.kind == "unlogged_flight"
+        and f.log_ref in by_ref
+        and counted(by_ref[f.log_ref], until, undated)
     )
     return _AircraftUsage(tuple(flown), unlogged, tuple(notes))
 
@@ -147,14 +162,20 @@ def time_in_service(
     records: Sequence[FlightRecord],
     tolerance_s: float = FLUSH_INTERVAL_S,
     until: datetime | None = None,
+    undated: bool = True,
 ) -> Maybe[float]:
     """Total time in service (14 CFR 91.417(a)(2)(i)): the hours before the first log, plus
     the flight of the logs that had ended by `until`, plus the flight reconcile() found no
-    log covers. Not known before the first log when hours before it were entered."""
+    log covers. Not known before the first log when hours before it were entered.
+
+    A log with no UTC start counts at any date, so the total at `until` is the most the
+    records allow. With `undated` False it is the least: only the logs the records place
+    by `until`. An inspection's derived hours take the least (issue #151), so an undated
+    log falls inside the interval after it, whichever was entered first."""
     unknown = _not_known(key, before_s, _first_log(records), until)
     if unknown is not None:
         return unknown
-    own = _usage(key, records, tolerance_s, until)
+    own = _usage(key, records, tolerance_s, until, undated)
     return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
 
 
@@ -305,12 +326,14 @@ def _inspection_items(
     time_in_service_s: Maybe[float],
     as_of: datetime,
     fraction: float,
+    disagree: Unknown | None = None,
 ) -> list[DueItem]:
     subject = f"the {rule.name}"
     items: list[DueItem] = []
     unit: Unit
     for basis, limit in rule.limits():
-        if basis == "hours" and isinstance(time_in_service_s, Unknown):
+        not_known = time_in_service_s if isinstance(time_in_service_s, Unknown) else disagree
+        if basis == "hours" and not_known is not None:
             items.append(
                 DueItem(
                     key,
@@ -318,14 +341,14 @@ def _inspection_items(
                     None,
                     basis,
                     "h",
-                    time_in_service_s,
+                    not_known,
                     limit,
-                    time_in_service_s,
+                    not_known,
                     rule.tolerance_hours,
                     "unknown",
                     rule.source,
                     f"{subject} of aircraft {key} cannot be measured on {as_of:%Y-%m-%d}: "
-                    f"{time_in_service_s.reason}",
+                    f"{not_known.reason}",
                 )
             )
             continue
@@ -412,6 +435,44 @@ def _inspection_items(
     return items
 
 
+def _disagreement(
+    key: str,
+    done: InspectionDone,
+    before_s: float,
+    records: Sequence[FlightRecord],
+    tolerance_s: float,
+) -> Unknown | None:
+    """Why an interval counted from `done` cannot be measured (issue #151), or None.
+
+    Its recorded hours are more than the most time in service the records give at its date,
+    with the hours before the first log now on record; or, derived, more than the least, the
+    logs the records place by then, which is what the tool derives now: the difference can
+    only be logs with no UTC start, which the records cannot place before it. None when they
+    agree, or when that time in service is not known. The ledger refuses such records; a
+    store written before it can hold them."""
+    until = done.done_utc
+    most = time_in_service(key, before_s, records, tolerance_s, until=until)
+    if not is_known(most):
+        return None
+    on = f"the {done.name} of {in_utc(until):%Y-%m-%d} is recorded at {done.at_hours_s / H:.1f} h"
+    if done.at_hours_s > most + HOURS_SLACK_S:
+        return Unknown(
+            f"{DISAGREE}: {on}, more than the {most / H:.1f} h time in service the records give "
+            f"by then, counting {before_s / H:.1f} h before the first log; correct the "
+            "inspection or the hours before the first log"
+        )
+    if not done.derived:
+        return None
+    least = time_in_service(key, before_s, records, tolerance_s, until=until, undated=False)
+    if not is_known(least) or done.at_hours_s <= least + HOURS_SLACK_S:
+        return None
+    return Unknown(
+        f"{DISAGREE}: {on}, derived, more than the {least / H:.1f} h the dated logs give by "
+        "then: the difference can only be logs with no UTC start, which the records cannot "
+        "place before it; correct the inspection, stating its hours"
+    )
+
+
 def due_list(
     aircraft_key: str,
     *,
@@ -489,9 +550,30 @@ def due_list(
                 f"no completed {' or '.join((name, *rule.satisfied_by))} is recorded for "
                 f"aircraft {aircraft_key}; {how}"
             )
+        disagree = None
+        if done is not None and "hours" in bases and is_known(time_in_service_s):
+            disagree = _disagreement(
+                aircraft_key, done, before, flights_of(aircraft_key), tolerance_s
+            )
+            # The records cannot place a log with no UTC start on either side of the
+            # completion: it counts in the time in service at any date, and is named.
+            notes.extend(
+                f"flight {f.log_ref} of aircraft {aircraft_key} has no UTC start, so the records "
+                f"cannot place it before or after the {done.name} of "
+                f"{in_utc(done.done_utc):%Y-%m-%d}; its {f.seconds / H:.1f} h count in the time "
+                "in service at any date"
+                for f in own.flown
+                if not is_known(f.utc)
+            )
         items.extend(
             _inspection_items(
-                aircraft_key, rule, done, time_in_service_s, as_of, policy.due_soon_fraction
+                aircraft_key,
+                rule,
+                done,
+                time_in_service_s,
+                as_of,
+                policy.due_soon_fraction,
+                disagree,
             )
         )
     return DueList(

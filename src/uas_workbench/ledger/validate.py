@@ -27,7 +27,12 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from uas_workbench.flight.record import Unknown, is_known
-from uas_workbench.life.engine import component_usage, end_of_month_after, time_in_service
+from uas_workbench.life.engine import (
+    HOURS_SLACK_S,
+    component_usage,
+    end_of_month_after,
+    time_in_service,
+)
 from uas_workbench.life.model import Component, in_utc
 from uas_workbench.life.policy import LifePolicy, LifeRule
 
@@ -379,17 +384,23 @@ def _transitions(
     elif entry.kind == "inspection.done":
         record = then.maintenance.get(entry.subject)
         before = record.time_in_service_before_s if record else 0.0
-        tis = time_in_service(
-            entry.subject, before, store.flights(entry.subject), tolerance_s, until=at
-        )
+        flights = store.flights(entry.subject)
+        # The most the records allow by then: a log with no UTC start counts at any date.
+        tis = time_in_service(entry.subject, before, flights, tolerance_s, until=at)
         if details.get("at_hours_s") is None:
-            if isinstance(tis, Unknown):
+            # Derived hours are the least the records allow: the logs they place by then. A log
+            # with no UTC start then falls inside the interval after the inspection, the most
+            # it can add, whether it was uploaded before or after this entry (issue #151).
+            least = time_in_service(
+                entry.subject, before, flights, tolerance_s, until=at, undated=False
+            )
+            if isinstance(least, Unknown):
                 raise LedgerError(
-                    422, f"at_hours_s cannot be derived: {tis.reason}; state at_hours_s"
+                    422, f"at_hours_s cannot be derived: {least.reason}; state at_hours_s"
                 )
-            details["at_hours_s"] = round(tis, 1)
+            details["at_hours_s"] = round(least, 1)
             details["derived"] = True
-        elif is_known(tis) and details["at_hours_s"] > tis + 1.0:
+        elif is_known(tis) and details["at_hours_s"] > tis + HOURS_SLACK_S:
             raise LedgerError(
                 422,
                 f"at_hours_s {details['at_hours_s'] / 3600:.1f} h is more than the time in "
@@ -427,6 +438,58 @@ def _later_entries_still_hold(
             ) from exc
 
 
+HOURS_KINDS = ("time_in_service.set", "inspection.done")
+
+
+def _inspections_within_later_hours(
+    store: Store,
+    timeline: list[Entry],
+    candidate: Entry,
+    corrected: Entry | None,
+    tolerance_s: float,
+) -> None:
+    """The hours before the first log are one total, and the latest entry of it governs every
+    date after it: a dated answer counts an inspection's interval with that total. So every
+    live inspection of the aircraft must state no more than the time in service at its own
+    date with each total entered after it, as with the one before it (issue #151): a new
+    entry of the hours is refused, naming the inspection, as a correction of the old entry
+    is; and an inspection is refused when a later entry of the hours leaves it too many."""
+    if candidate.kind not in HOURS_KINDS and (
+        corrected is None or corrected.kind not in HOURS_KINDS
+    ):
+        return
+    live, _ = liveness(timeline)
+    order = fold_key(timeline)
+    mine = [e for e in live if e.subject == candidate.subject]
+    totals = [e for e in mine if e.kind == "time_in_service.set"]
+    inspections = [e for e in mine if e.kind == "inspection.done"]
+    if candidate.kind == "inspection.done":
+        inspections = [e for e in inspections if e is candidate]
+    flights = store.flights(candidate.subject) if inspections and totals else []
+    for e in inspections:
+        at_hours = float(e.details["at_hours_s"])
+        for s in (s for s in totals if order(s) > order(e)):
+            before = float(s.details["before_s"])
+            tis = time_in_service(e.subject, before, flights, tolerance_s, until=e.occurred_utc)
+            if not is_known(tis) or at_hours <= tis + HOURS_SLACK_S:
+                continue
+            why = (
+                f"at_hours_s {at_hours / H:.1f} h is more than the time in service of "
+                f"{e.subject} at {_stamp(e.occurred_utc)}, {tis / H:.1f} h"
+            )
+            if e is candidate:
+                raise LedgerError(
+                    409,
+                    f"{why}, counting the {before / H:.1f} h before the first log that entry "
+                    f"{s.id} records; state fewer hours or correct entry {s.id} first",
+                )
+            raise LedgerError(
+                409,
+                f"this would make entry {e.id} impossible ({e.kind} on {e.subject}, "
+                f"{_stamp(e.occurred_utc)}): {why}; retract or correct entry {e.id} first",
+            )
+
+
 def validate(
     store: Store,
     entry: Entry,
@@ -442,20 +505,23 @@ def validate(
     entry = dataclasses.replace(entry, occurred_utc=in_utc(entry.occurred_utc))
     current = store.projection()
     _subjects(store, entry, current, details)
-    target = _correction(store, entry, current)
+    corrected = _correction(store, entry, current)
     _policy(entry, details, policy)
     existing = list(store.entries())
     # The candidate takes the id the store will give it, so it sorts after every entry at
     # its instant, and a correction takes the place of the entry it corrects.
     candidate = dataclasses.replace(entry, id=store.next_entry_id(), details=details)
     timeline = [*existing, candidate]
-    others = project([e for e in existing if target is None or e.id != target.id])
+    others = project([e for e in existing if corrected is None or e.id != corrected.id])
     details = _transitions(
         store, candidate, details, project(timeline, before=candidate), others, tolerance_s, policy
     )
     candidate = dataclasses.replace(candidate, details=details)
     timeline[-1] = candidate
-    _later_entries_still_hold(store, timeline, candidate, target or candidate, tolerance_s, policy)
+    _later_entries_still_hold(
+        store, timeline, candidate, corrected or candidate, tolerance_s, policy
+    )
+    _inspections_within_later_hours(store, timeline, candidate, corrected, tolerance_s)
     statement = entry.statement.strip() or (entry.reason or "").strip()
     return dataclasses.replace(entry, details=details, statement=statement)
 

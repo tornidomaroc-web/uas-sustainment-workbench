@@ -56,12 +56,14 @@ class InspectionDone:
 
     carried_over_s: hours the previous interval was overflown by, which 14 CFR 91.409(b) counts
     toward this one, so the next due point is at_hours_s - carried_over_s + interval.
+    derived: at_hours_s is the tool's own figure, filled in when the person stated none.
     """
 
     name: str  # a name in fleet.toml [[life.inspections]]
     done_utc: datetime
     at_hours_s: float
     carried_over_s: float = 0.0
+    derived: bool = False
 
 
 @dataclass(frozen=True)

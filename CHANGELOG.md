@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- An inspection's hours follow the time in service, whatever order the records arrive in
+  (closes #151). A new entry of the hours before the first log was checked only against the
+  entries after it, so with 200 h entered, a 100-hour inspection derived at 210 h and 95 h
+  flown since, a later entry of 0 h was accepted and the item read "due in 205.0 h" where 5.0
+  h were left; now that entry is refused naming the inspection, as a correction of the 200 h
+  already was, and so is an inspection stating more hours than a later such entry allows. And
+  an inspection's derived hours counted a log with no UTC start when it was uploaded first,
+  so the same records read 15.0 h left or 5.0 h overdue within tolerance by upload order; now
+  derived hours count the logs the records can date by then, the undated log falls inside the
+  interval after the inspection in either order (5.0 h overdue within tolerance), and the due
+  list notes each log it cannot place before or after the inspection. A store written by
+  0.6.6 or earlier can hold either record; its rows are never rewritten and its journal
+  verifies with the same head, and the item reads not known with a sentence saying the
+  records disagree, so the board is not known unless something grounds the aircraft. Records
+  that arrive later on the early side still leave a derived figure low, so the item reads due
+  earlier, never later: LIMITS says by how much. The seeded fleet states its inspections'
+  hours, so the seed, its journal head, the SYN-04 pack and the static export are unchanged.
+
 - One instant gives the same due dates, calendar life and board at any UTC offset (closes
   #149). An entry's time and a query's `as_of` kept the offset they were given, and the
   engine and the ledger took dates in it, so an annual inspection entered at

@@ -287,7 +287,8 @@ words (14 CFR 43.9(a): a description of the work, its date, the name of the pers
 orders open, change state and close, and drive the "in maintenance", "AOG" and "deferred
 defects" states; components are registered, installed and removed, and their counters
 travel with them (14 CFR 43.10); inspections are recorded as done, at the aircraft's time in
-service, which the tool derives from the logs if the person does not state it; the hours
+service, which the tool derives from the logs it can date by then if the person does not
+state it (a log with no UTC start then falls in the interval after the inspection); the hours
 before the first log are set. Entries are never edited or deleted. A correction is a new
 entry that supersedes an older one with a reason, a retraction supersedes without
 replacing, and undoing a correction revives what it corrected. The records the life engine
@@ -300,7 +301,9 @@ life-limited part that has reached its life limit is replaced, not fitted again;
 reaches its limit while fitted stays on record, and the board grounds the aircraft at that
 same point; a calendar life is reached when its last day ends), a
 back-dated installation that overlaps a window, a correction that would orphan later
-entries, a date more than five minutes in the future, negative hours or cycles. Every entry is judged at its own
+entries, a date more than five minutes in the future, negative hours or cycles, an entry of
+the hours before the first log that would leave an inspection stating more hours than the
+aircraft then had, or an inspection stating more than a later such entry allows. Every entry is judged at its own
 date, against the records as they stood when it happened, so a state change back-dated
 inside a work order's open window is accepted although the order was closed later; and a
 write that would make an already recorded later entry impossible, such as a close dated
