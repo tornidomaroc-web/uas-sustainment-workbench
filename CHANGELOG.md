@@ -19,6 +19,14 @@
   The `--at` and `--as-of` help says an offset is converted to UTC. The seeded fleet's
   times are all UTC, so the seed, its journal head, the SYN-04 pack and the static export
   are unchanged.
+- The cue checker (`life.cue.problems`, the tests' oracle; no served answer reads it) reads a
+  number in a not-known item's name as the name's: a 24-month or 2-year inspection with no
+  completion on record, whose own cue "24-month insp: none recorded, not known" it refused
+  for a missing unit, now passes. And a not-known cue carries no number of its own:
+  "annual insp: 12 days not known", which passed, and "annual insp: 12 months, not known",
+  refused only for its unit, are each refused for carrying a number. The assistant's
+  `aircraft_due` tool says "at that date" for a calendar inspection with no completion on
+  record too; the tool description sent to the local model changes, no served answer does.
 - An aircraft with no completed annual inspection on record no longer reads serviceable
   (closes #150). The annual inspection has a calendar limit only, and with nothing on record
   the engine left its item out, so the board read serviceable and the note said its interval
