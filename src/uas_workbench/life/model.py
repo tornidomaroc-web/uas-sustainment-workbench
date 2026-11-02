@@ -10,7 +10,7 @@ it has been installed on.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from uas_workbench.flight.record import Maybe
@@ -21,6 +21,13 @@ Basis = Literal["hours", "cycles", "calendar"]
 DueState = Literal["ok", "due_soon", "overdue_within_tolerance", "overdue", "unknown"]
 WorkState = Literal["deferred", "in_work", "awaiting_parts"]
 Unit = Literal["h", "cycles", "days"]
+
+
+def in_utc(t: datetime) -> datetime:
+    """The instant `t` written in UTC, so that its date is the UTC date whatever offset it was
+    given with (issue #149): 2025-09-01T02:00+05:00 is 2025-08-31 in UTC. A time with no offset
+    is UTC already, as everywhere a time comes in, and is returned as it is."""
+    return t if t.tzinfo is None else t.astimezone(UTC)
 
 
 @dataclass(frozen=True)

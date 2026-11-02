@@ -14,7 +14,8 @@ can have ended (log_end), never from its start. A part whose cycles or hours hav
 limit, exactly or past it, grounds the aircraft: nothing of its life is left for another
 flight, and the ledger refuses to fit such a part for the same reason (14 CFR 43.10(c),
 "after it has reached its life limit"). A calendar life is counted in days and its last day
-completes at midnight, so on that day the part is still within its life.
+completes at midnight UTC, so on that day the part is still within its life. Every date is
+the UTC date of its instant, whatever offset the instant was written with (issue #149).
 
 An inspection interval is counted from the completion on record that starts it. With none on
 record, an hours interval is counted from zero time in service; a calendar interval has no
@@ -48,6 +49,7 @@ from .model import (
     Unit,
     Usage,
     WorkOrder,
+    in_utc,
 )
 from .policy import LifePolicy, LifeRule
 
@@ -377,7 +379,7 @@ def _inspection_items(
                     )
                 )
                 continue
-            start = done.done_utc.date()
+            start = in_utc(done.done_utc).date()
             due = end_of_month_after(start, int(limit))
             scale = float((due - start).days)
             remaining = float((due - as_of.date()).days)
@@ -425,8 +427,10 @@ def due_list(
     `components` may be the whole fleet's; the ones installed on this aircraft at `as_of` are
     selected here. `flights_of` is asked for every aircraft a selected component has been on,
     because its life status travelled with it (14 CFR 43.10). A log counts once it has ended
-    by `as_of` (log_end); a flight with no UTC start counts whenever.
+    by `as_of` (log_end); a flight with no UTC start counts whenever. Dates are taken in UTC:
+    `as_of` is converted to UTC first, and so is the due list's `as_of` (issue #149).
     """
+    as_of = in_utc(as_of)
     installed = [c for c in components if _installed_on(c, aircraft_key, as_of)]
     if maintenance is None and not installed:
         return DueList(aircraft_key, as_of, False, Unknown(NO_RECORD), ())
@@ -503,7 +507,7 @@ def due_list(
 
 
 def _work_sentence(key: str, w: WorkOrder) -> str:
-    since = w.opened_utc.date().isoformat()
+    since = in_utc(w.opened_utc).date().isoformat()
     if w.state == "awaiting_parts":
         return f"aircraft {key} is on the ground awaiting parts since {since}: {w.description}"
     if w.state == "in_work":

@@ -198,8 +198,9 @@ def _nothing_at(path: str) -> bool:
 
 
 def _when(text: str | None, flag: str) -> datetime | None:
-    """A date and time given on the command line, in UTC when it names no offset; refused
-    (422), as the service refuses a date it cannot read, when it is not one."""
+    """A date and time given on the command line, in UTC: converted when it names an offset
+    (issue #149), taken as UTC when it names none; refused (422), as the service refuses a
+    date it cannot read, when it is not one."""
     if text is None:
         return None
     try:
@@ -207,7 +208,7 @@ def _when(text: str | None, flag: str) -> datetime | None:
     except ValueError as exc:
         detail = f"{flag} {text!r} is not a date and time in ISO 8601, such as 2026-09-01T09:00Z"
         raise Refused(422, detail) from exc
-    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+    return when.astimezone(UTC) if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
 def _write(path: Path, text: str) -> None:
@@ -626,7 +627,9 @@ def _who(p: argparse.ArgumentParser, statement: bool = True) -> None:
     p.add_argument("--by", required=True, help="your name and role, recorded as typed")
     if statement:
         p.add_argument("--statement", required=True, help="what was done, in your words")
-    p.add_argument("--at", help="when it happened (ISO 8601, UTC); default now")
+    p.add_argument(
+        "--at", help="when it happened (ISO 8601, an offset converted to UTC); default now"
+    )
     p.add_argument("--supersedes", type=int, help="the entry id this one corrects")
     p.add_argument("--reason", help="why that entry was wrong; required with --supersedes")
 
@@ -726,7 +729,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("aircraft")
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the pack as JSON next to it")
-    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.add_argument(
+        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+    )
     p.set_defaults(func=cmd_evidence)
 
     p = sub.add_parser(
@@ -737,7 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("aircraft")
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
-    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.add_argument(
+        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+    )
     p.set_defaults(func=cmd_records)
 
     p = sub.add_parser(
@@ -748,7 +755,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
-    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.add_argument(
+        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+    )
     p.set_defaults(func=cmd_fleet_records)
 
     p = sub.add_parser(
@@ -767,7 +776,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="http://127.0.0.1:8000", help="the running uasw service")
     p.add_argument("--ollama", default="http://127.0.0.1:11434", help="the local Ollama server")
     p.add_argument("--model", default="qwen3:8b")
-    p.add_argument("--as-of", help="fixed computation date (ISO 8601, UTC); default now")
+    p.add_argument(
+        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+    )
     p.add_argument("--record", type=Path, help="save the run as a replayable recording")
     p.add_argument("--json", action="store_true", help="also print the records fetched")
     p.set_defaults(func=cmd_ask)
