@@ -31,6 +31,7 @@ from uas_workbench.life.engine import (
     HOURS_SLACK_S,
     component_usage,
     end_of_month_after,
+    most_time_in_service,
     time_in_service,
 )
 from uas_workbench.life.model import Component, in_utc
@@ -382,17 +383,21 @@ def _transitions(
             where = f"installed on {on[0].aircraft_key}" if on else "not installed on any aircraft"
             raise LedgerError(409, f"{c.id} is {where} at {_stamp(at)}, not installed on {key}")
     elif entry.kind == "inspection.done":
-        record = then.maintenance.get(entry.subject)
-        before = record.time_in_service_before_s if record else 0.0
-        flights = store.flights(entry.subject)
-        # The most the records allow by then: a log with no UTC start counts at any date.
-        tis = time_in_service(entry.subject, before, flights, tolerance_s, until=at)
+        # Stated hours are judged against every entry of the hours before the first log that
+        # counts an interval from this inspection, by _inspection_hours_hold (issue #151).
         if details.get("at_hours_s") is None:
+            record = then.maintenance.get(entry.subject)
+            before = record.time_in_service_before_s if record else 0.0
             # Derived hours are the least the records allow: the logs they place by then. A log
             # with no UTC start then falls inside the interval after the inspection, the most
             # it can add, whether it was uploaded before or after this entry (issue #151).
             least = time_in_service(
-                entry.subject, before, flights, tolerance_s, until=at, undated=False
+                entry.subject,
+                before,
+                store.flights(entry.subject),
+                tolerance_s,
+                until=at,
+                undated=False,
             )
             if isinstance(least, Unknown):
                 raise LedgerError(
@@ -400,12 +405,6 @@ def _transitions(
                 )
             details["at_hours_s"] = round(least, 1)
             details["derived"] = True
-        elif is_known(tis) and details["at_hours_s"] > tis + HOURS_SLACK_S:
-            raise LedgerError(
-                422,
-                f"at_hours_s {details['at_hours_s'] / 3600:.1f} h is more than the time in "
-                f"service of {entry.subject} at {_stamp(at)}, {tis / 3600:.1f} h",
-            )
     return details
 
 
@@ -441,53 +440,99 @@ def _later_entries_still_hold(
 HOURS_KINDS = ("time_in_service.set", "inspection.done")
 
 
-def _inspections_within_later_hours(
+def _counting(live: list[Entry], order: Any, e: Entry) -> list[Entry | None]:
+    """The entries of the hours before the first log that a dated answer counts the interval
+    from inspection `e` with: the one in force at its date (None when none is: 0 h), and
+    every one after it, which governs every date after its own."""
+    totals = [s for s in live if s.subject == e.subject and s.kind == "time_in_service.set"]
+    earlier = [s for s in totals if order(s) < order(e)]
+    return [
+        max(earlier, key=order) if earlier else None,
+        *(s for s in totals if order(s) > order(e)),
+    ]
+
+
+def _inspection_hours_hold(
     store: Store,
+    existing: list[Entry],
     timeline: list[Entry],
     candidate: Entry,
     corrected: Entry | None,
     tolerance_s: float,
 ) -> None:
-    """The hours before the first log are one total, and the latest entry of it governs every
-    date after it: a dated answer counts an inspection's interval with that total. So every
-    live inspection of the aircraft must state no more than the time in service at its own
-    date with each total entered after it, as with the one before it (issue #151): a new
-    entry of the hours is refused, naming the inspection, as a correction of the old entry
-    is; and an inspection is refused when a later entry of the hours leaves it too many."""
+    """An inspection's hours are at most the time in service the aircraft can have had at its
+    date, counting each entry of the hours before the first log that a dated answer counts
+    its interval with (_counting); before the first log, at most those hours plus the logs
+    with no UTC start (most_time_in_service). Judged when an inspection or such an entry is
+    written, corrected or retracted, in either order (issue #151). A store written by 0.6.6
+    or earlier can already hold an inspection past that bound: a write is refused only when
+    it puts an inspection further past it than the records already did, so an entry that
+    removes the disagreement or leaves it as it was is accepted. The refusal names the
+    entries, in one sentence."""
     if candidate.kind not in HOURS_KINDS and (
         corrected is None or corrected.kind not in HOURS_KINDS
     ):
         return
-    live, _ = liveness(timeline)
-    order = fold_key(timeline)
-    mine = [e for e in live if e.subject == candidate.subject]
-    totals = [e for e in mine if e.kind == "time_in_service.set"]
-    inspections = [e for e in mine if e.kind == "inspection.done"]
-    if candidate.kind == "inspection.done":
-        inspections = [e for e in inspections if e is candidate]
-    flights = store.flights(candidate.subject) if inspections and totals else []
-    for e in inspections:
-        at_hours = float(e.details["at_hours_s"])
-        for s in (s for s in totals if order(s) > order(e)):
-            before = float(s.details["before_s"])
-            tis = time_in_service(e.subject, before, flights, tolerance_s, until=e.occurred_utc)
-            if not is_known(tis) or at_hours <= tis + HOURS_SLACK_S:
-                continue
+    flights = store.flights(candidate.subject)
+    new_live, _ = liveness(timeline)
+    old_live, _ = liveness(existing)
+    new_order, old_order = fold_key(timeline), fold_key(existing)
+
+    def over(e: Entry, s: Entry | None) -> tuple[float, float, float, bool]:
+        before = float(s.details["before_s"]) if s is not None else 0.0
+        until = e.occurred_utc
+        most = most_time_in_service(e.subject, before, flights, tolerance_s, until=until)
+        known = is_known(time_in_service(e.subject, before, flights, tolerance_s, until=until))
+        return float(e.details["at_hours_s"]) - most, most, before, known
+
+    def worst(live: list[Entry], order: Any, e: Entry) -> tuple[Entry | None, float]:
+        excess = [(s, over(e, s)[0]) for s in _counting(live, order, e)]
+        return max(excess, key=lambda p: p[1])
+
+    for e in new_live:
+        if e.subject != candidate.subject or e.kind != "inspection.done":
+            continue
+        if candidate.kind == "inspection.done" and e is not candidate:
+            continue
+        s, excess = worst(new_live, new_order, e)
+        if excess <= HOURS_SLACK_S:
+            continue
+        # The same inspection as the records held it before this write: itself, or the one
+        # the candidate corrects; none when it is new or comes back live with this write.
+        was = e.id if e is not candidate else (corrected.id if corrected is not None else None)
+        held = [x for x in old_live if x.id == was and x.kind == "inspection.done"]
+        if held and excess <= max(0.0, worst(old_live, old_order, held[0])[1]) + HOURS_SLACK_S:
+            continue
+        _, most, before, known = over(e, s)
+        at, stamp = float(e.details["at_hours_s"]), _stamp(e.occurred_utc)
+        if known:
             why = (
-                f"at_hours_s {at_hours / H:.1f} h is more than the time in service of "
-                f"{e.subject} at {_stamp(e.occurred_utc)}, {tis / H:.1f} h"
+                f"at_hours_s {at / H:.1f} h is more than the time in service of {e.subject} at "
+                f"{stamp}, {most / H:.1f} h"
             )
-            if e is candidate:
-                raise LedgerError(
-                    409,
-                    f"{why}, counting the {before / H:.1f} h before the first log that entry "
-                    f"{s.id} records; state fewer hours or correct entry {s.id} first",
-                )
+        else:
+            first = min(f.utc_start for f in flights if is_known(f.utc_start))
+            why = (
+                f"at_hours_s {at / H:.1f} h is more than the {most / H:.1f} h time in service "
+                f"{e.subject} can have reached by {stamp}, before its first log on "
+                f"{first:%Y-%m-%d}"
+            )
+        if e is not candidate:
             raise LedgerError(
                 409,
-                f"this would make entry {e.id} impossible ({e.kind} on {e.subject}, "
-                f"{_stamp(e.occurred_utc)}): {why}; retract or correct entry {e.id} first",
+                f"this would make entry {e.id} impossible ({e.kind} on {e.subject}, {stamp}): "
+                f"{why}; retract or correct entry {e.id} first",
             )
+        counted_by = (
+            f", counting the {before / H:.1f} h before the first log that entry {s.id} records"
+            if s is not None
+            else ""
+        )
+        if s is None or new_order(s) < new_order(e):
+            raise LedgerError(422, why if known else f"{why}{counted_by}")
+        raise LedgerError(
+            409, f"{why}{counted_by}; state fewer hours or correct entry {s.id} first"
+        )
 
 
 def validate(
@@ -518,10 +563,10 @@ def validate(
     )
     candidate = dataclasses.replace(candidate, details=details)
     timeline[-1] = candidate
+    _inspection_hours_hold(store, existing, timeline, candidate, corrected, tolerance_s)
     _later_entries_still_hold(
         store, timeline, candidate, corrected or candidate, tolerance_s, policy
     )
-    _inspections_within_later_hours(store, timeline, candidate, corrected, tolerance_s)
     statement = entry.statement.strip() or (entry.reason or "").strip()
     return dataclasses.replace(entry, details=details, statement=statement)
 

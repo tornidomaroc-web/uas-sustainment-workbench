@@ -355,16 +355,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   window runs from the entry of the hours before the first log to that log, and it cannot
   be made smaller than the records it holds: an inspection done before the first log states
   the hours it was done at, and the write rules accept it only once the hours before the
-  first log are on record at an earlier date (an inspection stating more hours than the
-  aircraft then had is refused, counting the hours before the first log entered before it
-  and each entered after it, and so is a later entry of those hours that would leave an
-  inspection stating more; issue #151), so the hours entry is dated no later than the
+  first log are on record at an earlier date, so the hours entry is dated no later than the
   earliest such inspection. The synthetic fleet enters its hours the day before its earliest inspection,
   months before its first logs, so its board before August 2026 is mostly not known; only an
-  aircraft whose first records are its first log has no window. Records from before the first
-  log (an inspection with its hours stated) are kept as stated and not checked against a time
-  the tool cannot compute; the seed states them on one steady rate of flying, its own
-  assumption, marked as such in `fleet/synthetic.py`.
+  aircraft whose first records are its first log has no window. An inspection before the
+  first log is kept as stated and checked against the most the aircraft can have had by
+  then: the hours before the first log, reached only by that log, plus the logs with no UTC
+  start, which may have been flown at any date. One stating more is refused, and so is any
+  later entry, correction or retraction of the hours before the first log that would leave
+  one stating more, naming it (issue #151): with 200 h entered and a 100-hour inspection
+  before the first log at 150 h, a later entry of 100 h is refused, and so is the 150 h
+  inspection once 100 h are on record. Within that bound the tool cannot tell when the hours
+  were flown, and the seed states them on one steady rate of flying, its own assumption,
+  marked as such in `fleet/synthetic.py`.
 - **An annual inspection counts toward the 100-hour rule** (14 CFR 91.409(b), "an annual or
   100-hour inspection"); the later of the two starts the interval. That is the only
   satisfaction rule; nothing in `fleet.toml` lets a lesser inspection satisfy a greater.
@@ -432,7 +435,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   evidence pack hashes the entries as read, so a pack made from such a store now carries a
   ledger hash other than the one a pack made under 0.6.6 carried for the same records; the
   pack says a different hash means the ledger changed, which does not hold across this
-  upgrade. The journal head is the same before and after, so compare such packs by it.
+  upgrade. The journal head is the same before and after; the pack does not carry it, so compare such stores by the head uasw verify prints, which the records summary also carries.
 - **Which part is on which airframe is an operator record.** Logs identify the flight
   controller only, never a battery pack, a motor or a propeller, so every installation
   window is entered by hand and a flight with no UTC start cannot be assigned to any
@@ -1177,14 +1180,23 @@ field-level tables. This file is about what that means for a maintenance tool.
   and uploaded after it read 10.0 h overdue where 5.0 h was right; a later entry raising the
   hours before the first log from 200 h to 300 h read 95.0 h overdue, unserviceable, where
   5.0 h were left. Correcting the inspection with its hours stated puts it right. The other
-  direction is refused or read as not known: an entry of the hours before the first log that
-  would leave an inspection stating more hours than the aircraft had at its date is refused
-  (as a correction of the earlier entry already was), naming the inspection, and so is an
-  inspection stating more than a later such entry allows; a store written by 0.6.6 or earlier
-  can hold either, and also an inspection whose derived hours counted a log with no UTC start
-  uploaded before it. Such an item reads not known with a sentence saying the records
-  disagree and which figures; the board is then not known unless something grounds the
-  aircraft. Its rows are never rewritten, so the journal verifies with the same head.
+  direction is refused: an inspection may state no more hours than the aircraft can have had
+  at its date, counting the entry of the hours before the first log in force then and each
+  entered after it (before the first log, those hours plus the logs with no UTC start), and
+  an inspection, or an entry, correction or retraction of those hours, that would break it is
+  refused, naming the entry. A store written by 0.6.6 or earlier can hold such records, and
+  also an inspection whose derived hours counted a log with no UTC start uploaded before it.
+  There a write is refused only when it leaves an inspection further past the bound than the
+  records already did: a new entry that removes the disagreement, or a correction of the
+  inspection that narrows it, is accepted. Such an item reads what the records still give,
+  with a sentence saying they disagree and which figures. From the first log on, the hours
+  flown since the inspection do not depend on the disputed figure: the item reads from the
+  least time in service at its date, what the logs place by then (case A as 0.6.6 left it,
+  "due in 205.0 h" there, reads 5.0 h left). Before the first log only the dated logs since
+  the inspection are certain: the item reads "at least" so many hours overdue when they alone
+  put it past its tolerance, and not known otherwise, the board with it unless something
+  grounds the aircraft. Its rows are never rewritten, so the journal verifies with the same
+  head.
 - **Corrections are ordered by dependency, not by time.** An entry with later live
   entries depending on it (a registration with installations, an open work order with a
   close) cannot be superseded until those are corrected first, and a back-dated entry or a

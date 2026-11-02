@@ -100,12 +100,13 @@ def test_component_lifecycle_and_inspection(db: str, capsys: pytest.CaptureFixtu
     )
     run(db, "component", "install", "NEW-1", "SYN-01", *BY, *AT, "--statement", "fitted")
     # The hours before the first log go in first: an inspection recorded with derived
-    # hours holds only against the record as it then stands.
+    # hours holds only against the record as it then stands. (Round 2 of #160: 142.5 h, not
+    # 42.5 h, which is below SYN-01's seeded inspection before its first log, now refused.)
     run(
         db,
         "time-in-service",
         "SYN-01",
-        "42.5",
+        "142.5",
         *BY,
         "--at",
         "2026-08-01T00:00:00Z",
@@ -131,7 +132,7 @@ def test_component_lifecycle_and_inspection(db: str, capsys: pytest.CaptureFixtu
         "SYN-01",
     )
     record = store.maintenance("SYN-01")
-    assert record is not None and record.time_in_service_before_s == 42.5 * 3600
+    assert record is not None and record.time_in_service_before_s == 142.5 * 3600
     assert record.inspections[-1].name == "100-hour inspection"
     run(
         db,
@@ -187,13 +188,15 @@ def test_evidence_command_writes_html_and_json(db: str, tmp_path: Path) -> None:
 
 
 def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> None:
-    run(db, "time-in-service", "SYN-02", "10", *BY, *AT, "--statement", "first entry")
+    # Round 2 of #160: 10, 20, 12 and 13 h are below SYN-02's seeded inspections before its
+    # first log and now refused; each carries 100 h more.
+    run(db, "time-in-service", "SYN-02", "110", *BY, *AT, "--statement", "first entry")
     first = int(capsys.readouterr().out.split("entry ")[1].split()[0])
     run(
         db,
         "time-in-service",
         "SYN-02",
-        "20",
+        "120",
         *BY,
         *AT,
         "--statement",
@@ -204,9 +207,9 @@ def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> Non
         "typo",
     )
     second = int(capsys.readouterr().out.split("entry ")[1].split()[0])
-    assert Store(db).maintenance("SYN-02").time_in_service_before_s == 20 * 3600  # type: ignore[union-attr]
+    assert Store(db).maintenance("SYN-02").time_in_service_before_s == 120 * 3600  # type: ignore[union-attr]
     run(db, "retract", str(second), *BY, "--reason", "the first was right")
-    assert Store(db).maintenance("SYN-02").time_in_service_before_s == 10 * 3600  # type: ignore[union-attr]
+    assert Store(db).maintenance("SYN-02").time_in_service_before_s == 110 * 3600  # type: ignore[union-attr]
     run(db, "history", "SYN-02", "--all")
     out = capsys.readouterr().out
     assert "superseded by" in out and "the first was right" in out
@@ -216,7 +219,7 @@ def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> Non
         db,
         "time-in-service",
         "SYN-02",
-        "12",
+        "112",
         *BY,
         "--statement",
         "x",
@@ -233,7 +236,7 @@ def test_correct_and_retract(db: str, capsys: pytest.CaptureFixture[str]) -> Non
             db,
             "time-in-service",
             "SYN-02",
-            "13",
+            "113",
             *BY,
             "--at",
             "2026-09-02T09:00:00Z",

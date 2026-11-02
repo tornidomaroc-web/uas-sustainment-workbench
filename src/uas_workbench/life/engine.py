@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import calendar
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 
 from uas_workbench.flight.reconcile import FLUSH_INTERVAL_S, reconcile
@@ -176,6 +176,22 @@ def time_in_service(
     if unknown is not None:
         return unknown
     own = _usage(key, records, tolerance_s, until, undated)
+    return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
+
+
+def most_time_in_service(
+    key: str,
+    before_s: float,
+    records: Sequence[FlightRecord],
+    tolerance_s: float = FLUSH_INTERVAL_S,
+    until: datetime | None = None,
+) -> float:
+    """The most time in service the records allow at `until`, known at any date.
+
+    From the first log on it is time_in_service(). Before the first log the hours before it
+    are reached only by the first log, so the aircraft had at most those hours plus what the
+    logs with no UTC start add, which may have been flown at any date (issue #151)."""
+    own = _usage(key, records, tolerance_s, until)
     return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
 
 
@@ -442,18 +458,16 @@ def _disagreement(
     records: Sequence[FlightRecord],
     tolerance_s: float,
 ) -> Unknown | None:
-    """Why an interval counted from `done` cannot be measured (issue #151), or None.
+    """Why the hours recorded for `done` disagree with the records (issue #151), or None.
 
     Its recorded hours are more than the most time in service the records give at its date,
-    with the hours before the first log now on record; or, derived, more than the least, the
-    logs the records place by then, which is what the tool derives now: the difference can
-    only be logs with no UTC start, which the records cannot place before it. None when they
-    agree, or when that time in service is not known. The ledger refuses such records; a
-    store written before it can hold them."""
+    with the hours before the first log now on record (before the first log: those hours
+    plus the logs with no UTC start, most_time_in_service); or, derived, more than the least,
+    the logs the records place by then, which is what the tool derives now: the difference
+    can only be logs with no UTC start, which the records cannot place before it. None when
+    they agree. The ledger refuses such records; a store written before it can hold them."""
     until = done.done_utc
-    most = time_in_service(key, before_s, records, tolerance_s, until=until)
-    if not is_known(most):
-        return None
+    most = most_time_in_service(key, before_s, records, tolerance_s, until=until)
     on = f"the {done.name} of {in_utc(until):%Y-%m-%d} is recorded at {done.at_hours_s / H:.1f} h"
     if done.at_hours_s > most + HOURS_SLACK_S:
         return Unknown(
@@ -471,6 +485,70 @@ def _disagreement(
         "then: the difference can only be logs with no UTC start, which the records cannot "
         "place before it; correct the inspection, stating its hours"
     )
+
+
+def _disagreeing_items(
+    key: str,
+    rule: LifeRule,
+    done: InspectionDone,
+    disagree: Unknown,
+    before_s: float,
+    records: Sequence[FlightRecord],
+    time_in_service_s: Maybe[float],
+    as_of: datetime,
+    fraction: float,
+    tolerance_s: float,
+) -> list[DueItem]:
+    """The items of an inspection whose recorded hours the records disagree with (#151).
+
+    Its interval counts the hours flown since it, and the records give those without its
+    recorded figure. From the first log on, the least time in service at its date is what
+    the logs place by then: the item reads as if the inspection were done at that figure,
+    so the interval holds every hour the records can put after it (a log with no UTC start
+    falls inside it, as for a derived figure), and the sentence says the records disagree.
+    Before the first log the records hold no such figure: the dated logs since it are the
+    least the interval holds, so the item reads overdue when they alone put it past its
+    tolerance, and not known otherwise. Never later than the records allow."""
+    until = done.done_utc
+    least = time_in_service(key, before_s, records, tolerance_s, until=until, undated=False)
+    if is_known(least):
+        at, exact = least, True
+    else:
+        at, exact = most_time_in_service(key, before_s, records, tolerance_s, until=until), False
+    read = replace(done, at_hours_s=at)
+    items: list[DueItem] = []
+    for i in _inspection_items(key, rule, read, time_in_service_s, as_of, fraction):
+        if i.basis != "hours":
+            items.append(i)
+        elif exact:
+            items.append(
+                replace(
+                    i,
+                    message=f"{i.message}, counted from {at / H:.1f} h, the least time in "
+                    f"service the records give at its date; {disagree.reason}",
+                )
+            )
+        elif i.state == "overdue":
+            assert is_known(i.remaining)
+            beyond = f", beyond its {i.tolerance:.0f} h tolerance" if i.tolerance else ""
+            items.append(
+                replace(
+                    i,
+                    message=f"{i.subject} of aircraft {key} is at least {-i.remaining:.1f} h "
+                    f"overdue{beyond}, counting only the hours the dated logs give since it; "
+                    f"{disagree.reason}",
+                )
+            )
+        else:
+            (hours,) = (
+                u
+                for u in _inspection_items(
+                    key, rule, done, time_in_service_s, as_of, fraction, disagree
+                )
+                if u.basis == "hours"
+            )
+            items.append(hours)
+    return items
 
 
 def due_list(
@@ -565,17 +643,27 @@ def due_list(
                 for f in own.flown
                 if not is_known(f.utc)
             )
-        items.extend(
-            _inspection_items(
-                aircraft_key,
-                rule,
-                done,
-                time_in_service_s,
-                as_of,
-                policy.due_soon_fraction,
-                disagree,
+        if disagree is None or done is None:
+            items.extend(
+                _inspection_items(
+                    aircraft_key, rule, done, time_in_service_s, as_of, policy.due_soon_fraction
+                )
             )
-        )
+        else:
+            items.extend(
+                _disagreeing_items(
+                    aircraft_key,
+                    rule,
+                    done,
+                    disagree,
+                    before,
+                    flights_of(aircraft_key),
+                    time_in_service_s,
+                    as_of,
+                    policy.due_soon_fraction,
+                    tolerance_s,
+                )
+            )
     return DueList(
         aircraft_key,
         as_of,

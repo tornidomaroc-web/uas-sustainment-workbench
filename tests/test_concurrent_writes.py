@@ -32,6 +32,13 @@ JOIN_S = 30.0
 # The package re-exports the function under its module's name, so the module is found by name.
 VALIDATE = importlib.import_module("uas_workbench.ledger.validate")
 
+# Round 2 of #160: the seeded fleet's inspections before the first log state tens of
+# hours, so an entry of the hours before the first log below them is now refused (an
+# inspection may state no more than the aircraft can have had by then). The hours
+# these tests write carry 1000 h more than the figure each test names, so every write
+# stays possible.
+OFFSET_S = 1000 * 3600.0
+
 
 def hours(before_s: float, supersedes: int | None = None) -> Entry:
     return Entry(
@@ -42,7 +49,7 @@ def hours(before_s: float, supersedes: int | None = None) -> Entry:
         recorded_utc=NOW,
         entered_by="A. Tester, maintenance",
         statement="hours read off the aircraft",
-        details={"before_s": before_s},
+        details={"before_s": OFFSET_S + before_s},
         supersedes=supersedes,
         reason="typo in the hours" if supersedes is not None else None,
         synthetic=False,
