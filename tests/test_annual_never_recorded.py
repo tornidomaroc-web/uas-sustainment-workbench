@@ -132,9 +132,7 @@ def test_a_date_before_the_first_annual_is_not_known(tmp_path: Path) -> None:
 
 # 4. The engine on hand-built records: the item, its cue, the board's cue, and precedence.
 def test_the_engine_item_cue_and_board() -> None:
-    rec = record(
-        "A", inspections=(InspectionDone("100-hour inspection", T0 - D, 0.0),)
-    )
+    rec = record("A", inspections=(InspectionDone("100-hour inspection", T0 - D, 0.0),))
     due = compute("A", rec)
     annual = item(due, "the annual inspection", "calendar")
     sentence = never_done("A", "2026-04-01")
@@ -142,8 +140,8 @@ def test_the_engine_item_cue_and_board() -> None:
     assert annual.used == Unknown(sentence) and annual.remaining == Unknown(sentence)
     result = board(due)
     assert result.status == Unknown(sentence) and result.reasons == (sentence,)
-    # The 100-hour inspection is on record, so no note at all: the item says it.
-    assert due.notes == ()
+    # The 100-hour inspection is on record, so the one note is the annual's.
+    assert due.notes == (NOTE.format("A"),)
     cue = item_cue(annual, due.as_of)
     assert cue == "annual insp: none recorded, not known"
     assert problems(cue, annual, due.as_of) == []

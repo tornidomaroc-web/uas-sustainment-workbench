@@ -16,6 +16,11 @@ flight, and the ledger refuses to fit such a part for the same reason (14 CFR 43
 "after it has reached its life limit"). A calendar life is counted in days and its last day
 completes at midnight, so on that day the part is still within its life.
 
+An inspection interval is counted from the completion on record that starts it. With none on
+record, an hours interval is counted from zero time in service; a calendar interval has no
+date to count from, so its item is not known with that reason, never left out, and the board
+is not known with it unless something grounds the aircraft, which wins.
+
 The hours before the first log are one total, reached by the first log this tool holds.
 Before that log the time in service is not known, the inspection items that depend on it
 are not known, and the board is not known with that reason unless an open work order or a
@@ -47,6 +52,9 @@ from .model import (
 from .policy import LifePolicy, LifeRule
 
 NO_RECORD = "no maintenance record entered for this aircraft"
+# The end of the sentence of an inspection whose calendar interval has no completion on
+# record to count from; life/cue.py gives such an item and such a board a cue of their own.
+NO_DATE = "has no date to count from"
 H = 3600.0
 
 
@@ -344,7 +352,31 @@ def _inspection_items(
                 message = f"{subject} of aircraft {key} is {-remaining:.1f} h overdue"
         elif basis == "calendar":
             if done is None:
-                continue  # no date to count from; the note says so
+                # No date to count from: the interval cannot be counted, and that is said,
+                # never skipped (issue #150). The board is then not known with this reason.
+                names = " or ".join((rule.name, *rule.satisfied_by))
+                not_known = Unknown(
+                    f"{subject} of aircraft {key} cannot be counted on {as_of:%Y-%m-%d}: no "
+                    f"completed {names} is recorded, so its {limit:.0f}-calendar-month "
+                    f"interval {NO_DATE}"
+                )
+                items.append(
+                    DueItem(
+                        key,
+                        subject,
+                        None,
+                        basis,
+                        "days",
+                        not_known,
+                        limit,
+                        not_known,
+                        0.0,
+                        "unknown",
+                        rule.source,
+                        not_known.reason,
+                    )
+                )
+                continue
             start = done.done_utc.date()
             due = end_of_month_after(start, int(limit))
             scale = float((due - start).days)
@@ -435,10 +467,23 @@ def due_list(
         # The later of this inspection and any that satisfies it starts the interval.
         satisfying = [done_by_name[n] for n in (name, *rule.satisfied_by) if n in done_by_name]
         done = max(satisfying, key=lambda d: d.done_utc) if satisfying else None
-        if done is None and is_known(time_in_service_s):
+        bases = {basis for basis, _ in rule.limits()}
+        counted_from_zero = "hours" in bases and is_known(time_in_service_s)
+        if done is None and (counted_from_zero or "calendar" in bases):
+            # Hours are counted from zero time in service; a calendar interval has no date to
+            # count from and cannot be counted.
+            if "calendar" not in bases:
+                how = "its interval is counted from zero time in service"
+            elif not counted_from_zero:
+                how = "its interval cannot be counted"
+            else:
+                how = (
+                    "its hours are counted from zero time in service and its calendar "
+                    "interval cannot be counted"
+                )
             notes.append(
                 f"no completed {' or '.join((name, *rule.satisfied_by))} is recorded for "
-                f"aircraft {aircraft_key}; its interval is counted from zero time in service"
+                f"aircraft {aircraft_key}; {how}"
             )
         items.extend(
             _inspection_items(

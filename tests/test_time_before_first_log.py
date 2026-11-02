@@ -52,6 +52,11 @@ NOT_KNOWN = (
 CANNOT_MEASURE = (
     "the 100-hour inspection of aircraft A cannot be measured on 2026-02-28: " + NOT_KNOWN
 )
+# With no annual inspection on record its interval cannot be counted either (issue #150).
+NO_ANNUAL = (
+    "the annual inspection of aircraft A cannot be counted on 2026-02-28: no completed annual "
+    "inspection is recorded, so its 12-calendar-month interval has no date to count from"
+)
 
 
 def flights_a() -> dict[str, Any]:
@@ -114,7 +119,7 @@ def test_the_board_is_not_known_unless_something_known_grounds_the_aircraft() ->
     rec = record("A", time_in_service_before_s=50.0 * H, inspections=())
     plain = board(compute("A", rec, flights=flights_a(), as_of=before))
     assert plain.status == Unknown(NOT_KNOWN)
-    assert plain.reasons == (CANNOT_MEASURE,)
+    assert plain.reasons == (CANNOT_MEASURE, NO_ANNUAL)
 
     deferred = dataclasses.replace(
         rec, work_orders=(WorkOrder(T0 - 10 * D, "[synthetic] cover damage", "deferred", True),)
@@ -123,6 +128,7 @@ def test_the_board_is_not_known_unless_something_known_grounds_the_aircraft() ->
     assert b.status == Unknown(NOT_KNOWN)  # deferred defects cannot be asserted either
     assert b.reasons == (
         CANNOT_MEASURE,
+        NO_ANNUAL,
         "aircraft A carries a deferred defect since 2026-02-19: [synthetic] cover damage",
     )
 

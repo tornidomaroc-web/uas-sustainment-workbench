@@ -16,7 +16,8 @@ from typing import Literal
 from uas_workbench.flight.record import Maybe
 
 Basis = Literal["hours", "cycles", "calendar"]
-# "unknown": the item depends on a time in service the records cannot give at that date.
+# "unknown": the item depends on a time in service the records cannot give at that date, or
+# is a calendar interval with no completion on record to count from.
 DueState = Literal["ok", "due_soon", "overdue_within_tolerance", "overdue", "unknown"]
 WorkState = Literal["deferred", "in_work", "awaiting_parts"]
 Unit = Literal["h", "cycles", "days"]
