@@ -15,7 +15,11 @@
   0.6.6 or earlier can hold entries with an offset: they are read and counted in UTC, and
   shown in UTC by the API, `record history` and the reports, with the row never rewritten,
   so the journal verifies with the same head; such a store can show an item due earlier, or
-  an aircraft unserviceable, where it read otherwise. A dated answer echoes `as_of` in UTC.
+  an aircraft unserviceable, where it read otherwise. An evidence pack made from such a store
+  hashes those entries as read, in UTC, so its ledger hash differs from the one 0.6.6 gave
+  for the same records, although no record changed: across this upgrade a different ledger
+  hash does not mean the ledger changed, and the journal head, which stays, is what to
+  compare. A dated answer echoes `as_of` in UTC.
   The `--at` and `--as-of` help says an offset is converted to UTC. The seeded fleet's
   times are all UTC, so the seed, its journal head, the SYN-04 pack and the static export
   are unchanged.

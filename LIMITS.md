@@ -422,7 +422,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   offset they were given: they are read in UTC and counted in UTC, and shown in UTC by the
   service, the history and the reports, while the row itself is never rewritten, so its
   journal link verifies as before. Such a store can therefore show an item due earlier than
-  it did, and an aircraft unserviceable that read serviceable: that is the UTC count.
+  it did, and an aircraft unserviceable that read serviceable: that is the UTC count. An
+  evidence pack hashes the entries as read, so a pack made from such a store now carries a
+  ledger hash other than the one a pack made under 0.6.6 carried for the same records; the
+  pack says a different hash means the ledger changed, which does not hold across this
+  upgrade. The journal head is the same before and after, so compare such packs by it.
 - **Which part is on which airframe is an operator record.** Logs identify the flight
   controller only, never a battery pack, a motor or a propeller, so every installation
   window is entered by hand and a flight with no UTC start cannot be assigned to any
