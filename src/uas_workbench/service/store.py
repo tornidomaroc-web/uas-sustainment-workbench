@@ -102,6 +102,7 @@ from uas_workbench.ledger.codec import entry_from_json, entry_to_json
 from uas_workbench.ledger.model import Entry, LedgerError, Projection, UnreadableRecord
 from uas_workbench.ledger.project import project
 from uas_workbench.life import Component, MaintenanceRecord
+from uas_workbench.life.model import in_utc
 
 from . import journal
 from .journal import Verification
@@ -992,7 +993,15 @@ class Store:
     # ---- the ledger ------------------------------------------------------------------
 
     def append_entry(self, entry: Entry) -> Entry:
-        """Insert one entry and return it with its id. Validation is the ledger's job."""
+        """Insert one entry and return it with its id. Validation is the ledger's job. Its times
+        are written in UTC, whatever offset they were given with (issue #149)."""
+        entry = Entry(
+            **{
+                **entry.__dict__,
+                "occurred_utc": in_utc(entry.occurred_utc),
+                "recorded_utc": in_utc(entry.recorded_utc),
+            }
+        )
         with self._lock:
             self._ready_to_write()
             before = self._before_commit()
@@ -1232,7 +1241,16 @@ class Store:
             entry = entry_from_json(_loads(text))
             if entry.occurred_utc.tzinfo is None or entry.recorded_utc.tzinfo is None:
                 raise ValueError("its time carries no UTC offset")
-            return entry
+            # A store written by 0.6.6 or earlier can hold a time with the offset it was given:
+            # it is read in UTC, the row is never rewritten, so its journal link still holds
+            # (the journal hashes the rows as stored, never this entry) (issue #149).
+            return Entry(
+                **{
+                    **entry.__dict__,
+                    "occurred_utc": in_utc(entry.occurred_utc),
+                    "recorded_utc": in_utc(entry.recorded_utc),
+                }
+            )
         except _CANNOT_READ as exc:
             raise UnreadableRecord("entries", int(str(row_id)), str(subject), _why(exc)) from exc
 

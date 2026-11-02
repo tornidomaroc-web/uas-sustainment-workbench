@@ -41,7 +41,7 @@ from datetime import datetime, timedelta
 from uas_workbench.flight.record import Maybe, Unknown, is_known
 
 from .engine import NO_DATE, NO_RECORD, _work_sentence
-from .model import Board, DueItem, DueList, WorkOrder
+from .model import Board, DueItem, DueList, WorkOrder, in_utc
 
 CUE_LIMIT = 40
 NOT_KNOWN = "not known"
@@ -80,7 +80,7 @@ def _plural(n: float, unit: str) -> str:
 def _due_date(item: DueItem, as_of: datetime) -> str:
     """The calendar due date, as the sentence names it: remaining days counted from as_of."""
     assert is_known(item.remaining)
-    return (as_of.date() + timedelta(days=int(item.remaining))).isoformat()
+    return (in_utc(as_of).date() + timedelta(days=int(item.remaining))).isoformat()
 
 
 def item_cue(item: DueItem, as_of: datetime) -> str:
@@ -145,7 +145,7 @@ def item_cue(item: DueItem, as_of: datetime) -> str:
 def work_cue(w: WorkOrder) -> str:
     """The cue of an open work order: its state and date; the description is a person's text
     and is never cut."""
-    since = w.opened_utc.date().isoformat()
+    since = in_utc(w.opened_utc).date().isoformat()
     if w.state == "awaiting_parts":
         return f"AOG awaiting parts since {since}"
     if w.state == "in_work":

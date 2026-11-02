@@ -10,7 +10,8 @@ correction keeps the date of the entry it corrects and takes its place; to move 
 the entry is retracted and a new one written. A component that has reached any of its life
 limits when it is fitted, exactly or past it, goes on no aircraft: a life-limited
 part at its limit is replaced, and the usage it has reached travels with it (14 CFR 43.10).
-A calendar life is reached when its last day ends; on that day the part may still be fitted.
+A calendar life is reached when its last UTC day ends; on that day the part may still be fitted.
+An entry's time is converted to UTC before it is judged and stored (issue #149).
 Shape errors are 422, unknown
 subjects 404, the public showcase aircraft 403, and transitions the records cannot accept
 409.
@@ -27,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from uas_workbench.flight.record import Unknown, is_known
 from uas_workbench.life.engine import component_usage, end_of_month_after, time_in_service
-from uas_workbench.life.model import Component
+from uas_workbench.life.model import Component, in_utc
 from uas_workbench.life.policy import LifePolicy, LifeRule
 
 from .model import AIRCRAFT_KINDS, COMPONENT_KINDS, KINDS, RETRACTION, Entry, LedgerError
@@ -288,7 +289,7 @@ def _limits_past(
                 )
         else:
             due = end_of_month_after(c.in_service_since, int(limit))
-            if at.date() > due:
+            if in_utc(at).date() > due:
                 past.append(f"its {limit:.0f}-calendar-month life limit ended on {due}")
     return past
 
@@ -436,6 +437,9 @@ def validate(
 ) -> Entry:
     """The entry as it will be stored, or LedgerError."""
     details = _shape(entry, now)
+    # One instant, one date: the entry is judged and stored in UTC, whatever offset it was
+    # given with (issue #149).
+    entry = dataclasses.replace(entry, occurred_utc=in_utc(entry.occurred_utc))
     current = store.projection()
     _subjects(store, entry, current, details)
     target = _correction(store, entry, current)

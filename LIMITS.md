@@ -411,6 +411,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   refusal. What this does not cover: an inspection at exactly zero hours remaining still
   reads "due in 0.0 h", because 14 CFR 91.409(b) gives the 100-hour inspection a tolerance
   for the flight that overruns it and a life limit has none.
+- **Every date is the UTC date of its instant.** An entry's time and an `as_of` given with
+  an offset are converted to UTC where they come in (the service, the command line, the
+  ledger's check and the store's write), and one with no offset is UTC, as before; due
+  dates, calendar life, the install check and the board are counted from the UTC date.
+  Until 0.6.6 the offset was kept and the date taken in it, so an annual inspection entered
+  at 2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) fell due a month later than the same
+  instant written in UTC, and a query at 2026-08-31T23:30-05:00 kept a battery within a
+  calendar life that had ended (issue #149). A store written then can hold entries with the
+  offset they were given: they are read in UTC and counted in UTC, and shown in UTC by the
+  service, the history and the reports, while the row itself is never rewritten, so its
+  journal link verifies as before. Such a store can therefore show an item due earlier than
+  it did, and an aircraft unserviceable that read serviceable: that is the UTC count.
 - **Which part is on which airframe is an operator record.** Logs identify the flight
   controller only, never a battery pack, a motor or a propeller, so every installation
   window is entered by hand and a flight with no UTC start cannot be assigned to any

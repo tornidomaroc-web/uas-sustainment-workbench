@@ -48,6 +48,7 @@ from uas_workbench.life.cue import item_cue, reason_cues, status_cue
 from uas_workbench.life.engine import counted
 from uas_workbench.life.grounded import KIND as GROUNDED_KIND
 from uas_workbench.life.grounded import GroundedFlight, GroundedFlights, grounded_flights
+from uas_workbench.life.model import in_utc
 
 from .limits import FORM_ALLOWANCE, max_log_mib, too_large
 from .observability import (
@@ -737,10 +738,11 @@ Cues = Annotated[
 
 
 def _utc(value: datetime | None) -> datetime | None:
-    """A naive query time is taken as UTC, so the engine always compares aware datetimes."""
-    if value is None or value.tzinfo is not None:
+    """A time as it came in, in UTC: one with an offset is converted (issue #149), a naive one
+    is taken as UTC, so the engine always compares aware datetimes and dates are UTC dates."""
+    if value is None:
         return value
-    return value.replace(tzinfo=UTC)
+    return in_utc(value) if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _remove(path: Path) -> None:

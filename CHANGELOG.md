@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- One instant gives the same due dates, calendar life and board at any UTC offset (closes
+  #149). An entry's time and a query's `as_of` kept the offset they were given, and the
+  engine and the ledger took dates in it, so an annual inspection entered at
+  2025-09-01T02:00+05:00 read due by 2026-09-30, in 15 days, serviceable, where the same
+  instant in UTC read 15 days overdue, unserviceable; a pack asked at
+  2026-08-31T23:30-05:00 kept a battery within its calendar life a day after it ended; and
+  the ledger accepted an install after the last UTC day of a calendar life, or refused one
+  on it, by the offset written. Now the service (`_utc`), the command line (`_when`), the
+  ledger's check and the store's write convert every time to UTC, and the engine and the
+  install check take UTC dates. A time with no offset is UTC, as before. A store written by
+  0.6.6 or earlier can hold entries with an offset: they are read and counted in UTC, and
+  shown in UTC by the API, `record history` and the reports, with the row never rewritten,
+  so the journal verifies with the same head; such a store can show an item due earlier, or
+  an aircraft unserviceable, where it read otherwise. A dated answer echoes `as_of` in UTC.
+  The `--at` and `--as-of` help says an offset is converted to UTC. The seeded fleet's
+  times are all UTC, so the seed, its journal head, the SYN-04 pack and the static export
+  are unchanged.
 - An aircraft with no completed annual inspection on record no longer reads serviceable
   (closes #150). The annual inspection has a calendar limit only, and with nothing on record
   the engine left its item out, so the board read serviceable and the note said its interval
