@@ -237,10 +237,17 @@ def problems(cue: str, item: DueItem, as_of: datetime) -> list[str]:
     for d in DATE.findall(cue):
         if d not in item.message:
             found.append(f"date {d} is not in the sentence")
+    # A number in the name ("24-month insp", "100 h insp") is the name's, never a count: the
+    # rest of the cue is what is judged for a not-known item. A not-known item has no count to
+    # give, so its cue carries no number of its own, with a unit or without one.
+    rest = DATE.sub(" ", cue.replace(name, " ", 1))
+    if item.state == "unknown":
+        for n in NUMBER.findall(rest):
+            found.append(f"a not-known item's cue carries no number: {n}")
     # A calendar item may carry its date instead of a count of days. A not-known cue with no
     # number has no unit to give; one that carries a number still needs the number's unit.
     if (
-        (item.state != "unknown" or NUMBER.search(DATE.sub(" ", cue)))
+        (item.state != "unknown" or NUMBER.search(rest))
         and not any(w in cue for w in UNIT_WORDS[item.unit])
         and not (item.unit == "days" and DATE.search(cue))
     ):

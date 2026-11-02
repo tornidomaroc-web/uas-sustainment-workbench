@@ -47,8 +47,8 @@ TOOLS: tuple[Tool, ...] = (
         "The maintenance due list of one aircraft: every life limit and inspection with what "
         "is used, the limit, what remains, its state (ok, due_soon, overdue_within_tolerance, "
         "overdue, or unknown when the time in service at that date is not known or a calendar "
-        "inspection has no completion on record to count from), the public source of the "
-        "limit, and the board state with its reasons.",
+        "inspection has no completion on record to count from at that date), the public "
+        "source of the limit, and the board state with its reasons.",
         "/aircraft/{key}/due",
         key_required=True,
         dated=True,
