@@ -428,6 +428,9 @@ def test_the_command_line_the_service_and_the_assistant_agree(served: tuple[Path
     status, cued = call(base, "GET", f"/aircraft/X-2/due?{query}")
     assert status == 200, cued
     assert hundred(cued["items"])["cue"] == "100 h insp due in 5.0 h"
+    # Round 2 of #160 dropped the board's cue with the not-known reading; it is kept for the
+    # reading the records now give (#161).
+    assert cued["status_cue"] == "serviceable"
 
 
 # The engine on its own: a completion before the first log recorded at more hours than there

@@ -11,7 +11,6 @@ twice.
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -205,23 +204,20 @@ def test_the_refusal_sentences_added_in_0_2_0_read_whole(store: Store) -> None:
         f"retract or correct entry {later} first"
     )
 
-    done = add(
+    add(
         store,
         entry("SYN-03", "inspection.done", {"name": "100-hour inspection", "at_hours_s": 360000.0}),
     )
     lower = entry("SYN-03", "time_in_service.set", {"before_s": 0.0}, at=T - D)
-    text = sentence(store, lower)
-    # Round 2 of #160: 0 h also leaves SYN-03's seeded inspections before the new one stating
-    # more hours than the aircraft can have had, and the first of them is named, so the
-    # sentence is read whole with its entry and figures as found, not `done`'s.
-    assert done is not None
-    found = re.fullmatch(
-        r"this would make entry (\d+) impossible \(inspection\.done on SYN-03, "
-        r"(\d{4}-\d\d-\d\d \d\d:\d\d UTC)\): at_hours_s \d+\.\d h is more than the time in "
-        r"service of SYN-03 at \2, \d+\.\d h; retract or correct entry \1 first",
-        text,
+    # Round 2 of #160: 0 h also leaves SYN-03's seeded 100-hour inspection (entry 27, on
+    # 2026-07-15 at 8.9 h, before the new one) stating more hours than the aircraft can have
+    # had, and the first of them is named. The seeded fleet is the same on every run, so the
+    # sentence is read whole, entry and figures included (#161 restored this precision).
+    assert sentence(store, lower) == (
+        "this would make entry 27 impossible (inspection.done on SYN-03, 2026-07-15 00:00 UTC): "
+        "at_hours_s 8.9 h is more than the time in service of SYN-03 at 2026-07-15 00:00 UTC, "
+        "0.0 h; retract or correct entry 27 first"
     )
-    assert found, text
 
 
 def test_the_refusal_sentence_added_in_0_3_0_reads_whole(store: Store) -> None:

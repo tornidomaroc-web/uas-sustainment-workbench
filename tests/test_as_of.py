@@ -478,16 +478,22 @@ def test_a_write_that_would_make_a_later_entry_impossible_is_refused_naming_it()
     # Hours before the first log set lower, back-dated before an inspection that states more
     # hours than the aircraft would then have had.
     write(s, "SYN-02", "inspection.done", {"name": "100-hour inspection", "at_hours_s": 50 * H})
-    # Round 2 of #160: 0 h also leaves SYN-02's seeded inspections before its first log
-    # stating more than it can have had, and the first of those is named, not `done`.
-    refused(
+    # Round 2 of #160: 0 h also leaves SYN-02's seeded inspections stating more than it can
+    # have had, and the first of those is named, not the new one: the annual inspection of
+    # 2026-06-01 (entry 17, 43.0 h). The seeded fleet is the same on every run, so the
+    # sentence is read whole (#161 restored this precision).
+    detail = refused(
         s,
         409,
-        "impossible (inspection.done on SYN-02",
         subject="SYN-02",
         kind="time_in_service.set",
         details={"before_s": 0.0},
         at=T - D,
+    )
+    assert detail == (
+        "this would make entry 17 impossible (inspection.done on SYN-02, 2026-06-01 00:00 UTC): "
+        "at_hours_s 43.0 h is more than the time in service of SYN-02 at 2026-06-01 00:00 UTC, "
+        "0.0 h; retract or correct entry 17 first"
     )
 
 
