@@ -291,8 +291,12 @@ service, which the tool derives from the logs it can date by then if the person 
 state it (a log with no UTC start then falls in the interval after the inspection); the hours
 before the first log are set. Entries are never edited or deleted. A correction is a new
 entry that supersedes an older one with a reason, a retraction supersedes without
-replacing, and undoing a correction or a retraction revives what it superseded, judged as a
-new entry of its date would be. The records the life engine
+replacing, and undoing a correction or a retraction revives what it superseded, which then
+faces every check a new entry of its kind and date faces. Superseding a correction undoes
+it, whatever the kind of the entry superseding it, so a correction of a correction is
+refused: it would leave the entry first corrected and the new one both live at one place in
+the records. To replace a correction, retract it, then correct the entry it had corrected.
+The records the life engine
 reads are projected from the live entries on every read, so nothing about maintenance is
 stored twice. Impossible input is refused before anything is written, with a status and a
 sentence: an unknown aircraft or component, the two public showcase aircraft, a work order
@@ -312,7 +316,11 @@ date, against the records as they stood when it happened, so a state change back
 inside a work order's open window is accepted although the order was closed later; and a
 write that would make an already recorded later entry impossible, such as a close dated
 before a later state change or a retraction, or the undoing of one, that would leave a part
-on two aircraft at once, is refused and names that entry. A correction keeps the date of
+on two aircraft at once, is refused and names that entry. No write may leave two live
+entries where the records allow one: two registrations of one part, two opens of one work
+order id (the default `WO-<entry id>` of an order opened without one included), two live
+entries superseding one entry, or two at one place in the records; each is refused with 409,
+naming both and the one to retract first. A correction keeps the date of
 the entry it corrects; to move a date, the entry is retracted and a new one written. Every entry
 carries the sentence that it records what the entering person stated and that the
 workbench does not certify airworthiness or return to service. `POST /entries` and `uasw record` reach the same

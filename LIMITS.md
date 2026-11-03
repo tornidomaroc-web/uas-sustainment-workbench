@@ -1188,7 +1188,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   (before the first log, those hours plus the logs with no UTC start), and an inspection, or
   an entry, correction or retraction of those hours, that would break it is refused, naming
   the entry. Undoing a retraction or a correction, at any depth of a chain of them, is
-  judged the same way, by what it brings back or retracts again (issue #161). A store
+  judged the same way, by what it brings back or retracts again, and by every other check a
+  new entry of its kind and date faces (issue #161). A store
   written by 0.6.6 or earlier can hold such records, and also an inspection whose derived
   hours counted a log with no UTC start uploaded before it; one written before #161 can also
   hold an undone retraction that brought such an entry back. There a write is refused only
@@ -1211,6 +1212,34 @@ field-level tables. This file is about what that means for a maintenance tool.
   corrected with fewer hours stated before a later entry lowers the hours before the first
   log, a later install retracted before the remove it relied on. The tool says which entry stands in
   the way, not the order to take.
+- **A correction of a correction is refused, and a store written before this can hold two
+  live entries where the records allow one.** Superseding a correction undoes it, whatever
+  the kind of the entry superseding it, so the entry it had corrected comes back; a
+  correction of a correction would leave that entry and the new one live at one place in the
+  records, and is refused. To replace a correction, retract it, then correct the entry it
+  had corrected: two writes where one was accepted before. A store written by 0.6.6, or by
+  this tool before the second round of #161, can already hold such a pair, or another the
+  checks above now refuse: two corrections of one entry made live by an undo, two
+  registrations of one part, two opens of one work order id (a default id taken from an
+  order typed by hand included). Its rows are never rewritten, its journal verifies with the
+  same head, a write elsewhere is accepted, and it reads as it read before, which is not
+  always the earlier of the two readings. Measured on stores written by 0.6.6 and by bd115ac
+  in real processes: an install with two live corrections puts the part on both aircraft
+  and counts the hours of both (earlier); two opens of one id fold into one order, the
+  later-dated open replacing the earlier one's state and close (an open brought back by an
+  undo read in maintenance where the records give serviceable: earlier; an order typed as
+  WO-3 awaiting parts, then one opened without an id, reads serviceable with deferred
+  defects instead of AOG: later); two live closes from one corrected close close both orders
+  (later: serviceable while one is in work); two live entries of the hours before the first
+  log at one place fold the older last, whichever figure it holds (later or earlier by
+  which); two registrations reset the part at the later-dated one, dropping an install made
+  before it (later: an aircraft lost its 85.0 h past-limit grounding); a correction of a
+  correction folds the first entry last (200 h read where 250 h was stated last: later).
+  The repair, each measured: retract the entry of the pair that is wrong (the revived
+  correction, the second open, the open that took the default id, the first entry under a
+  correction of a correction); a registration with installs is retracted after them, then
+  the part is fitted again. The tool does not flag such a store; `uasw record history --all`
+  shows the pair.
 - **A correction keeps the date of the entry it corrects.** A correction with another
   `occurred_utc` is refused, because between the two dates neither entry would count; to
   move a date, the entry is retracted and a new one recorded, and the two are then not
@@ -1239,8 +1268,16 @@ field-level tables. This file is about what that means for a maintenance tool.
 - **Writes are judged at the entry's own date, and against valid time only.** A new entry
   is checked against the records as they stood when it happened, then every later entry of
   the same subject is checked again with it in place. An entry that a write brings back, by
-  undoing a retraction or a correction, is checked the same way at its own date, and so is
-  every entry after it (issue #161). What this does not do: it does not
+  undoing a retraction or a correction at any depth, faces every check a new entry of its
+  kind and date faces: the records at its own date, every entry after it, and the checks that
+  look at the whole ledger, so it cannot be a second live registration of a part, a second
+  live entry superseding one entry, a second live entry at one place in the records or a
+  second open of a work order id, and its subjects and its kind or inspection in fleet.toml
+  are judged against the store and fleet.toml as they are now (issue #161). One check a new
+  entry faces is left out on purpose: that it supersedes no entry others depend on. An entry
+  brought back is judged by those entries themselves instead, each checked again with it in
+  place (`tests/test_what_comes_back_faces_every_check.py` pins a case that this accepts and
+  a new correction would not). What this does not do: it does not
   ask when anything was recorded, so it cannot tell a back-dated entry from one entered on
   the day; and it checks only what the projection can see, so a well-formed false
   statement is still accepted (above). A history that needs a fixed order of entry is
