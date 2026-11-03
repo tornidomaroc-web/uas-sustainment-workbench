@@ -1179,12 +1179,16 @@ field-level tables. This file is about what that means for a maintenance tool.
   earlier, never later. Measured (issue #151): 5 h flown before a derived 100-hour inspection
   and uploaded after it read 10.0 h overdue where 5.0 h was right; a later entry raising the
   hours before the first log from 200 h to 300 h read 95.0 h overdue, unserviceable, where
-  5.0 h were left. Correcting the inspection with its hours stated puts it right. The other
-  direction is refused: an inspection may state no more hours than the aircraft can have had
-  at its date, counting the entry of the hours before the first log in force then and each
-  entered after it (before the first log, those hours plus the logs with no UTC start), and
-  an inspection, or an entry, correction or retraction of those hours, that would break it is
-  refused, naming the entry. A store written by 0.6.6 or earlier can hold such records, and
+  5.0 h were left. Correcting the inspection with its hours stated puts it right; when a later
+  entry raised the hours, correct the earlier entry to them first, as its figure still holds
+  at the inspection's date and the higher one is refused until then. The other direction is
+  refused: an inspection may state no more hours than the aircraft can have had at its date,
+  counting the entry of the hours before the first log in force then and each dated after it
+  (before the first log, those hours plus the logs with no UTC start), and an inspection, or
+  an entry, correction or retraction of those hours, that would break it is refused, naming
+  the entry. Undoing a retraction (retracting the retraction) revives what it retracted
+  without this check: on such records the item reads that the records disagree, as on a
+  store written by 0.6.6. A store written by 0.6.6 or earlier can hold such records, and
   also an inspection whose derived hours counted a log with no UTC start uploaded before it.
   There a write is refused only when it leaves an inspection further past the bound than the
   records already did: a new entry that removes the disagreement, or a correction of the

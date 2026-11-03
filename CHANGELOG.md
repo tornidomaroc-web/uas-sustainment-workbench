@@ -8,29 +8,30 @@
   flown since, a later entry of 0 h was accepted and the item read "due in 205.0 h" where 5.0
   h were left; now that entry is refused naming the inspection, as a correction of the 200 h
   already was, and so is an inspection stating more hours than a later such entry allows.
-  Before the first log no inspection was checked at all: with 200 h entered on 2025-12-01, a
-  100-hour inspection on 2026-01-01 stated at 150 h and 105 h flown since, the item read 55.0
-  h overdue, unserviceable, and a later entry of 100 h turned it into "due in 45.0 h",
-  serviceable. Now an inspection there may state at most the hours before the first log plus
-  the logs with no UTC start, and an inspection, or an entry, correction or retraction of
-  those hours, that would break it is refused in either order, naming the entry. And an
-  inspection's derived hours counted a log with no UTC start when it was uploaded first,
-  so the same records read 15.0 h left or 5.0 h overdue within tolerance by upload order; now
-  derived hours count the logs the records can date by then, the undated log falls inside the
-  interval after the inspection in either order (5.0 h overdue within tolerance), and the due
-  list notes each log it cannot place before or after the inspection. A store written by
-  0.6.6 or earlier can hold any of these records; its rows are never rewritten and its
-  journal verifies with the same head. There a write is refused only when it leaves an
-  inspection further past the bound than the records already did, so a new entry of 200 h
-  that puts case A back in agreement is accepted. Such an item reads what the records still
-  give, with a sentence saying they disagree: from the first log on, the hours flown since
-  the inspection, counted from the least time in service at its date (case A reads 5.0 h
-  left; with 220 h more flown, 215.0 h overdue, where 0.6.6 read 15.0 h); before it, "at
-  least" so many hours overdue when the dated logs since put it past its tolerance, and not
-  known otherwise, never "due in 45.0 h". Records that arrive later on the early side still
-  leave a derived figure low, so the item reads due earlier, never later: LIMITS says by how
-  much. The seeded fleet states its inspections' hours, so the seed, its journal head, the
-  SYN-04 pack and the static export are unchanged.
+  Before the first log an inspection was not checked once hours before the first log were on
+  record: with 200 h entered on 2025-12-01, a 100-hour inspection on 2026-01-01 stated at 150
+  h and 105 h flown since, the item read 55.0 h overdue, unserviceable, and a later entry of
+  100 h turned it into "due in 45.0 h", serviceable. Now an inspection there may state at most
+  the hours before the first log plus the logs with no UTC start, and an inspection, or an
+  entry, correction or retraction of those hours, that would break it is refused in either
+  order, naming the entry (undoing a retraction is not checked yet; the item then reads that
+  the records disagree). And an inspection's derived hours counted a log with no UTC start
+  when it was uploaded first, so the same records read 15.0 h left or 5.0 h overdue within
+  tolerance by upload order; now derived hours count the logs the records can date by then,
+  the undated log falls inside the interval after the inspection in either order (5.0 h
+  overdue within tolerance), and the due list notes each log it cannot place before or after
+  the inspection. A store written by 0.6.6 or earlier can hold any of these records; its rows
+  are never rewritten and its journal verifies with the same head. There a write is refused
+  only when it leaves an inspection further past the bound than the records already did, so
+  a new entry of 200 h that puts case A back in agreement is accepted. Such an item reads
+  what the records still give, with a sentence saying they disagree: from the first log on,
+  the hours flown since the inspection, counted from the least time in service at its date
+  (case A reads 5.0 h left; with 220 h more flown, 215.0 h overdue, where 0.6.6 read 15.0 h);
+  before it, "at least" so many hours overdue when the dated logs since put it past its
+  tolerance, and not known otherwise, never "due in 45.0 h". Records that arrive later on the
+  early side still leave a derived figure low, so the item reads due earlier, never later:
+  LIMITS says by how much. The seeded fleet states its inspections' hours, so the seed, its
+  journal head, the SYN-04 pack and the static export are unchanged.
 
 - One instant gives the same due dates, calendar life and board at any UTC offset (closes
   #149). An entry's time and a query's `as_of` kept the offset they were given, and the
