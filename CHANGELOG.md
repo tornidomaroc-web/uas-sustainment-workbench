@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Undoing a retraction is judged like a new entry (closes #161). Retracting a retraction, or
+  correcting it, brings back the entry it had retracted, and such a write was judged only by
+  the kind of the entry it superseded, itself a retraction. With 200 h before the first log,
+  a 100-hour inspection before it stated at 150 h and 105 h flown since (55.0 h overdue,
+  unserviceable), undoing the retraction of a later entry of 100 h was accepted and the item
+  read not known; so did undoing the retraction of the 150 h inspection while 100 h stood
+  (105.0 h overdue before). Three levels down a chain of retractions the 200 h entry could be
+  retracted again unjudged, and the item read 5.0 h overdue within its tolerance, the
+  aircraft serviceable with deferred defects. Now whatever a write brings back or retracts
+  again, at any depth, is judged as if it were written today: the entry that comes back
+  against the records at its date, the bound on an inspection's hours, and every entry
+  after the earliest one the write changes. Refused, with 409 and the entry named: undoing a
+  retraction or a correction that brings back an entry the records no longer allow; a
+  correction of a retraction, of any kind, that does the same; a correction of the hours
+  before the first log by an entry of another kind that leaves an inspection past the bound;
+  and undoing the retraction of a component install that would put the part on two aircraft
+  or that the records no longer allow. Undoing a correction was already refused, but told the
+  operator to retract or correct the entry the correction supersedes, which cannot be done;
+  that refusal now names the entry of the hours to correct, or says to record the inspection
+  again with at most the hours the records allow. A store written before this that already
+  holds such an undo keeps its rows and its journal head, its item reads as such a store
+  read before (not known with the sentence saying the records disagree, or "at least" so
+  many hours overdue when the dated logs since put it past its tolerance), and undoing the
+  undo is accepted. The seed, its journal head, the SYN-04 pack and the static export are
+  unchanged.
+
 - An inspection's hours follow the time in service, whatever order the records arrive in
   (closes #151). A new entry of the hours before the first log was checked only against the
   entries after it, so with 200 h entered, a 100-hour inspection derived at 210 h and 95 h
@@ -14,8 +40,7 @@
   100 h turned it into "due in 45.0 h", serviceable. Now an inspection there may state at most
   the hours before the first log plus the logs with no UTC start, and an inspection, or an
   entry, correction or retraction of those hours, that would break it is refused in either
-  order, naming the entry (undoing a retraction is not checked yet; the item then reads that
-  the records disagree). And an inspection's derived hours counted a log with no UTC start
+  order, naming the entry. And an inspection's derived hours counted a log with no UTC start
   when it was uploaded first, so the same records read 15.0 h left or 5.0 h overdue within
   tolerance by upload order; now derived hours count the logs the records can date by then,
   the undated log falls inside the interval after the inspection in either order (5.0 h

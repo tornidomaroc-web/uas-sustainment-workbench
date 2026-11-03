@@ -362,8 +362,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   first log is kept as stated and checked against the most the aircraft can have had by
   then: the hours before the first log, reached only by that log, plus the logs with no UTC
   start, which may have been flown at any date. One stating more is refused, and so is any
-  later entry, correction or retraction of the hours before the first log that would leave
-  one stating more, naming it (issue #151): with 200 h entered and a 100-hour inspection
+  later entry, correction or retraction of the hours before the first log, or undoing of one,
+  that would leave one stating more, naming it (issues #151, #161): with 200 h entered and a
+  100-hour inspection
   before the first log at 150 h, a later entry of 100 h is refused, and so is the 150 h
   inspection once 100 h are on record. Within that bound the tool cannot tell when the hours
   were flown, and the seed states them on one steady rate of flying, its own assumption,
@@ -1186,12 +1187,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   counting the entry of the hours before the first log in force then and each dated after it
   (before the first log, those hours plus the logs with no UTC start), and an inspection, or
   an entry, correction or retraction of those hours, that would break it is refused, naming
-  the entry. Undoing a retraction (retracting the retraction) revives what it retracted
-  without this check: on such records the item reads that the records disagree, as on a
-  store written by 0.6.6. A store written by 0.6.6 or earlier can hold such records, and
-  also an inspection whose derived hours counted a log with no UTC start uploaded before it.
-  There a write is refused only when it leaves an inspection further past the bound than the
-  records already did: a new entry that removes the disagreement, or a correction of the
+  the entry. Undoing a retraction or a correction, at any depth of a chain of them, is
+  judged the same way, by what it brings back or retracts again (issue #161). A store
+  written by 0.6.6 or earlier can hold such records, and also an inspection whose derived
+  hours counted a log with no UTC start uploaded before it; one written before #161 can also
+  hold an undone retraction that brought such an entry back. There a write is refused only
+  when it leaves an inspection further past the bound than the records already did: a new entry that removes the disagreement, or a correction of the
   inspection that narrows it, is accepted. Such an item reads what the records still give,
   with a sentence saying they disagree and which figures. From the first log on, the hours
   flown since the inspection do not depend on the disputed figure: the item reads from the
@@ -1203,10 +1204,10 @@ field-level tables. This file is about what that means for a maintenance tool.
   head.
 - **Corrections are ordered by dependency, not by time.** An entry with later live
   entries depending on it (a registration with installations, an open work order with a
-  close) cannot be superseded until those are corrected first, and a back-dated entry or a
-  retraction that would make an already recorded later entry impossible is refused with
-  that entry's id. Some histories therefore have to be entered in a fixed order: the hours
-  before the first log before an inspection that derives its hours from them, an inspection
+  close) cannot be superseded until those are corrected first, and a back-dated entry, a
+  retraction or the undoing of one that would make an already recorded later entry
+  impossible is refused with that entry's id. Some histories therefore have to be entered
+  in a fixed order: the hours before the first log before an inspection that derives its hours from them, an inspection
   corrected with fewer hours stated before a later entry lowers the hours before the first
   log, a later install retracted before the remove it relied on. The tool says which entry stands in
   the way, not the order to take.
@@ -1237,7 +1238,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   live entry was folded whatever its date; see CHANGELOG.md.
 - **Writes are judged at the entry's own date, and against valid time only.** A new entry
   is checked against the records as they stood when it happened, then every later entry of
-  the same subject is checked again with it in place. What this does not do: it does not
+  the same subject is checked again with it in place. An entry that a write brings back, by
+  undoing a retraction or a correction, is checked the same way at its own date, and so is
+  every entry after it (issue #161). What this does not do: it does not
   ask when anything was recorded, so it cannot tell a back-dated entry from one entered on
   the day; and it checks only what the projection can see, so a well-formed false
   statement is still accepted (above). A history that needs a fixed order of entry is
