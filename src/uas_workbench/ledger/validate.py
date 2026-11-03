@@ -7,8 +7,11 @@ date, whatever order it arrives in. Then every already recorded later entry of t
 subject is judged again with the new one in place, and the write is refused if one of them
 would no longer hold: the ledger never holds an entry its own records cannot accept. A
 correction keeps the date of the entry it corrects and takes its place; to move a date,
-the entry is retracted and a new one written. A component that has reached any of its life
-limits when it is fitted, exactly or past it, goes on no aircraft: a life-limited
+the entry is retracted and a new one written. Undoing a retraction or a correction (at any
+depth of a chain of them) brings back the entry it had ended: that entry is judged as a new
+entry of its date would be, and so is every entry after it (issue #161). A component that
+has reached any of its life limits when it is fitted, exactly or past it, goes on no
+aircraft: a life-limited
 part at its limit is replaced, and the usage it has reached travels with it (14 CFR 43.10).
 A calendar life is reached when its last UTC day ends; on that day the part may still be fitted.
 An entry's time is converted to UTC before it is judged and stored (issue #149).
@@ -408,6 +411,74 @@ def _transitions(
     return details
 
 
+@dataclasses.dataclass(frozen=True)
+class _Change:
+    """What a write changes in the live entries besides adding itself (issue #161).
+
+    Superseding an entry ends it; superseding a retraction or a correction brings back the
+    entry it had ended, and down a chain of retractions every level flips: undoing the undo
+    ends it again. Liveness is decided over the whole ledger, so comparing the live entries
+    before and after the write finds every entry that comes back or ends, at any depth.
+    Retractions fold nothing and are left out."""
+
+    revived: tuple[Entry, ...]  # live after the write, dead before; in fold order
+    ended: tuple[Entry, ...]  # live before the write, dead after
+    old_ids: frozenset[int]  # the live entries before the write
+    superseded_by: dict[int, Entry]  # dead entry id -> the entry that ended it, before the write
+
+
+def _change(existing: list[Entry], timeline: list[Entry], candidate: Entry) -> _Change:
+    old_live, old_by = liveness(existing)
+    new_live, _ = liveness(timeline)
+    old_ids = frozenset(e.id for e in old_live if e.id is not None)
+    new_ids = {e.id for e in new_live}
+    by_id = {e.id: e for e in existing}
+    return _Change(
+        revived=tuple(
+            e
+            for e in new_live
+            if e is not candidate and e.id not in old_ids and e.kind != RETRACTION
+        ),
+        ended=tuple(e for e in old_live if e.id not in new_ids and e.kind != RETRACTION),
+        old_ids=old_ids,
+        superseded_by={dead: by_id[by] for dead, by in old_by.items()},
+    )
+
+
+def _brought_back(e: Entry, change: _Change) -> str:
+    """The start of a refusal of an entry that the write would bring back, naming the entry
+    that had ended it."""
+    by = change.superseded_by[e.id or 0]
+    ended = "retracted" if by.kind == RETRACTION else "corrected"
+    return (
+        f"this would bring back entry {e.id} ({e.kind} on {e.subject}, "
+        f"{_stamp(e.occurred_utc)}), which entry {by.id} {ended}"
+    )
+
+
+def _revived_entries_hold(
+    store: Store,
+    timeline: list[Entry],
+    change: _Change,
+    tolerance_s: float,
+    policy: LifePolicy,
+) -> None:
+    """An entry the write brings back is judged against the records as they stood when it
+    happened, as a new entry of that date would be (issue #161); the first that does not
+    hold refuses the write and is named, with the entry that had ended it."""
+    for e in change.revived:
+        try:
+            _transitions(
+                store, e, dict(e.details), project(timeline, before=e), None, tolerance_s, policy
+            )
+        except LedgerError as exc:
+            raise LedgerError(
+                409,
+                f"{_brought_back(e, change)}: {exc.detail}; correct the records it conflicts "
+                "with first, or record a new entry instead",
+            ) from exc
+
+
 def _later_entries_still_hold(
     store: Store,
     timeline: list[Entry],
@@ -417,7 +488,8 @@ def _later_entries_still_hold(
     policy: LifePolicy,
 ) -> None:
     """Judge again every live entry of the subject that follows `cut` in the fold, with the
-    candidate in place; the first that no longer holds refuses the write and is named."""
+    candidate in place; the first that no longer holds refuses the write and is named. `cut`
+    is the earliest entry the write adds, ends or brings back (issue #161)."""
     live, _ = liveness(timeline)
     key = fold_key(timeline)
     for e in live:
@@ -458,21 +530,27 @@ def _inspection_hours_hold(
     timeline: list[Entry],
     candidate: Entry,
     corrected: Entry | None,
+    change: _Change,
     tolerance_s: float,
 ) -> None:
     """An inspection's hours are at most the time in service the aircraft can have had at its
     date, counting each entry of the hours before the first log that a dated answer counts
     its interval with (_counting); before the first log, at most those hours plus the logs
     with no UTC start (most_time_in_service). Judged when an inspection or such an entry is
-    written, corrected or retracted, in either order (issue #151). A store written by 0.6.6
-    or earlier can already hold an inspection past that bound: a write is refused only when
-    it puts an inspection further past it than the records already did, so an entry that
-    removes the disagreement or leaves it as it was is accepted. The refusal names the
-    entries, in one sentence."""
-    if candidate.kind not in HOURS_KINDS and (
-        corrected is None or corrected.kind not in HOURS_KINDS
-    ):
+    written, corrected or retracted, in either order (issue #151), and when a write brings
+    one back or ends one by undoing a retraction or a correction, at any depth (issue #161).
+    A store written by 0.6.6 or earlier can already hold an inspection past that bound: a
+    write is refused only when it puts an inspection further past it than the records
+    already did, so an entry that removes the disagreement or leaves it as it was is
+    accepted. The refusal names the entries, in one sentence, and an entry that can still be
+    corrected."""
+    hours = [e for e in (candidate, *change.revived, *change.ended) if e.kind in HOURS_KINDS]
+    if not hours:
         return
+    # Only the inspections the write makes live need judging, unless an entry of the hours
+    # before the first log changes, which moves the bound of every inspection.
+    totals = any(e.kind == "time_in_service.set" for e in hours)
+    newly = {candidate.id, *(e.id for e in change.revived)}
     flights = store.flights(candidate.subject)
     new_live, _ = liveness(timeline)
     old_live, _ = liveness(existing)
@@ -492,7 +570,7 @@ def _inspection_hours_hold(
     for e in new_live:
         if e.subject != candidate.subject or e.kind != "inspection.done":
             continue
-        if candidate.kind == "inspection.done" and e is not candidate:
+        if not totals and e.id not in newly:
             continue
         s, excess = worst(new_live, new_order, e)
         if excess <= HOURS_SLACK_S:
@@ -517,17 +595,29 @@ def _inspection_hours_hold(
                 f"{e.subject} can have reached by {stamp}, before its first log on "
                 f"{first:%Y-%m-%d}"
             )
+        counted_by = (
+            f", counting the {before / H:.1f} h before the first log that entry {s.id} records"
+            if s is not None
+            else ""
+        )
+        if e is not candidate and e.id not in change.old_ids:
+            # Brought back by this write: it is dead now, so it cannot be retracted or
+            # corrected; the way through is the entry it is counted with, or a new record.
+            routes: list[str] = []
+            if s is None:
+                routes.append("enter the hours before the first log first")
+            elif s.id in change.old_ids:
+                routes.append(f"correct entry {s.id} first")
+            routes.append(f"record the inspection again stating at most {most / H:.1f} h")
+            raise LedgerError(
+                409, f"{_brought_back(e, change)}: {why}{counted_by}; {', or '.join(routes)}"
+            )
         if e is not candidate:
             raise LedgerError(
                 409,
                 f"this would make entry {e.id} impossible ({e.kind} on {e.subject}, {stamp}): "
                 f"{why}; retract or correct entry {e.id} first",
             )
-        counted_by = (
-            f", counting the {before / H:.1f} h before the first log that entry {s.id} records"
-            if s is not None
-            else ""
-        )
         if s is None or new_order(s) < new_order(e):
             raise LedgerError(422, why if known else f"{why}{counted_by}")
         raise LedgerError(
@@ -563,10 +653,13 @@ def validate(
     )
     candidate = dataclasses.replace(candidate, details=details)
     timeline[-1] = candidate
-    _inspection_hours_hold(store, existing, timeline, candidate, corrected, tolerance_s)
-    _later_entries_still_hold(
-        store, timeline, candidate, corrected or candidate, tolerance_s, policy
-    )
+    # Superseding a retraction or a correction brings back what it had ended, and through a
+    # chain of them may end or bring back entries further down: each is judged (issue #161).
+    change = _change(existing, timeline, candidate)
+    _revived_entries_hold(store, timeline, change, tolerance_s, policy)
+    _inspection_hours_hold(store, existing, timeline, candidate, corrected, change, tolerance_s)
+    cut = min((corrected or candidate, *change.revived, *change.ended), key=fold_key(timeline))
+    _later_entries_still_hold(store, timeline, candidate, cut, tolerance_s, policy)
     statement = entry.statement.strip() or (entry.reason or "").strip()
     return dataclasses.replace(entry, details=details, statement=statement)
 
