@@ -12,8 +12,9 @@
   retracted again unjudged, and the item read 5.0 h overdue within its tolerance, the
   aircraft serviceable with deferred defects. Now whatever a write brings back or retracts
   again, at any depth, is judged as if it were written today: the entry that comes back
-  against the records at its date, the bound on an inspection's hours, and every entry
-  after the earliest one the write changes. Refused, with 409 and the entry named: undoing a
+  against the records at its date and by every other check a new entry of its kind faces
+  (the next item), the bound on an inspection's hours, and every entry after the earliest one
+  the write changes. Refused, with 409 and the entry named: undoing a
   retraction or a correction that brings back an entry the records no longer allow; a
   correction of a retraction, of any kind, that does the same; a correction of the hours
   before the first log by an entry of another kind that leaves an inspection past the bound;
@@ -26,6 +27,41 @@
   read before (not known with the sentence saying the records disagree, or "at least" so
   many hours overdue when the dated logs since put it past its tolerance), and undoing the
   undo is accepted. The seed, its journal head, the SYN-04 pack and the static export are
+  unchanged.
+- What a write brings back faces every check a new entry of its kind and date faces (#161,
+  second round). The first round judged an entry brought back against the records at its
+  date and the bound on an inspection's hours, but not against the checks that look at the
+  whole ledger, so undoing a retraction could leave two live entries where the records allow
+  one, and the fold read both (bd115ac, real processes): two corrections of one install put
+  the part on two aircraft at once, its life counting the hours of both; two corrections of
+  one close closed two work orders, and the aircraft read serviceable while one was still in
+  work; two corrections of one entry of the hours before the first log folded the older last,
+  5.0 h overdue within tolerance where the records gave 205.0 h; a second registration of a
+  part dated after its install reset it and dropped the install, and the aircraft lost its
+  85.0 h past-limit grounding; and a work order id could be opened twice. Now an entry that
+  comes back, at any depth and of any kind, retractions included, is refused with 409 when
+  another live entry already supersedes the entry it supersedes, stands at its place in the
+  records, registers the same part or opens the same work order id; when its subjects are no
+  longer what its kind needs; when fleet.toml no longer names its kind or inspection; and, as
+  before, when the records at its date or any later entry cannot take it. Each refusal names
+  the entry that would come back and the entry that had ended it, and the way through: for a
+  pair, the other entry of the pair and that it is to be retracted first; for fleet.toml,
+  that it is to name the kind or inspection first.
+- A correction of a correction is refused. Superseding a correction undoes it, whatever the
+  kind of the entry superseding it, so the entry it had corrected came back beside the new
+  one, both at one place in the records, ordered by nothing and neither judged against the
+  other (bd115ac and 0.6.6): a part corrected from X-1 to X-2 and then to X-3 stood on X-1
+  and X-3, and an entry of the hours before the first log corrected from 200 h to 300 h and
+  then to 250 h read 200 h, 105.0 h overdue where the records state 155.0 h. The refusal
+  says to retract the correction first, then correct the entry it had corrected.
+- A work order opened without an id is refused when its default id, `WO-<entry id>`, is
+  already a work order on that aircraft (bd115ac and 0.6.6 accepted it, and the new order
+  replaced the one typed by hand: an order left awaiting parts as WO-3 read as entry 3's
+  deferred one, the aircraft serviceable with deferred defects instead of AOG). The refusal
+  says to give it a work id of its own.
+- A store written before this that already holds such a pair keeps its rows and its journal
+  head and reads as it read before; LIMITS.md says what each pair reads and which entry to
+  retract to repair it. The seed, its journal head, the SYN-04 pack and the static export are
   unchanged.
 
 - An inspection's hours follow the time in service, whatever order the records arrive in
