@@ -315,8 +315,9 @@ def _transitions(
     """Judge `entry` against `then`, the records as they stood when it happened.
 
     `whole` is the projection of every other entry, used to name a later boundary in a
-    refusal and to keep work order ids unique over the whole history; None when an already
-    recorded entry is judged again, whose id is unique already.
+    refusal and to keep work order ids unique over the whole history, a default id as much
+    as a typed one; None when a live entry is judged again after a write, whose id is
+    unique already. An entry the write brings back is given one, as a new entry is.
     """
     at = entry.occurred_utc
     if entry.kind == "work_order.open":
@@ -328,7 +329,17 @@ def _transitions(
         ):
             raise LedgerError(409, f"work order {wid} already exists on {entry.subject}")
         if not wid:
-            details["work_id"] = f"WO-{store.next_entry_id()}"
+            wid = details["work_id"] = f"WO-{store.next_entry_id()}"
+            # The default id is checked as a typed one is: an order opened by hand as WO-12
+            # must not be replaced by the one entry 12 opens without an id.
+            if whole is not None and any(
+                w.work_id == wid for w in whole.work_orders.get(entry.subject, ())
+            ):
+                raise LedgerError(
+                    409,
+                    f"work order {wid} already exists on {entry.subject}, so this work order "
+                    "cannot take it as its default id; give it a work id of its own",
+                )
     elif entry.kind in ("work_order.state", "work_order.close"):
         wid = str(details["work_id"])
         orders = [w for w in then.work_orders.get(entry.subject, ()) if w.work_id == wid]
@@ -419,12 +430,14 @@ class _Change:
     entry it had ended, and down a chain of retractions every level flips: undoing the undo
     ends it again. Liveness is decided over the whole ledger, so comparing the live entries
     before and after the write finds every entry that comes back or ends, at any depth.
-    Retractions fold nothing and are left out."""
+    Retractions fold nothing and are left out, except from `returned`: a retraction that
+    comes back still supersedes an entry, which another live entry may supersede too."""
 
     revived: tuple[Entry, ...]  # live after the write, dead before; in fold order
     ended: tuple[Entry, ...]  # live before the write, dead after
     old_ids: frozenset[int]  # the live entries before the write
     superseded_by: dict[int, Entry]  # dead entry id -> the entry that ended it, before the write
+    returned: tuple[Entry, ...] = ()  # `revived` and the retractions brought back; fold order
 
 
 def _change(existing: list[Entry], timeline: list[Entry], candidate: Entry) -> _Change:
@@ -433,15 +446,13 @@ def _change(existing: list[Entry], timeline: list[Entry], candidate: Entry) -> _
     old_ids = frozenset(e.id for e in old_live if e.id is not None)
     new_ids = {e.id for e in new_live}
     by_id = {e.id: e for e in existing}
+    returned = tuple(e for e in new_live if e is not candidate and e.id not in old_ids)
     return _Change(
-        revived=tuple(
-            e
-            for e in new_live
-            if e is not candidate and e.id not in old_ids and e.kind != RETRACTION
-        ),
+        revived=tuple(e for e in returned if e.kind != RETRACTION),
         ended=tuple(e for e in old_live if e.id not in new_ids and e.kind != RETRACTION),
         old_ids=old_ids,
         superseded_by={dead: by_id[by] for dead, by in old_by.items()},
+        returned=returned,
     )
 
 
@@ -456,20 +467,114 @@ def _brought_back(e: Entry, change: _Change) -> str:
     )
 
 
+def _twin(
+    e: Entry, live: list[Entry], timeline: list[Entry], candidate: Entry, change: _Change
+) -> str | None:
+    """Why `e`, brought back live, would be one of two where the records allow one, naming
+    the other and the way through; None when it is the only one. These are the checks a
+    new entry faces in _subjects, _correction and _transitions that look at the whole
+    ledger rather than the records at its date: one live registration of a part, one live
+    entry superseding any entry, one live entry at each place in the fold, and one work
+    order per id on an aircraft."""
+    others = [x for x in live if x.id != e.id and x.subject == e.subject]
+    if e.kind == "component.register":
+        same = [x for x in others if x.kind == "component.register"]
+        if same:
+            return (
+                f"component {e.subject} is already registered, by entry {same[0].id}; retract "
+                f"entry {same[0].id} first"
+            )
+    if e.supersedes is not None:
+        # A live entry is superseded once, so a chain of corrections and retractions is a
+        # line. Two live entries superseding one would fold both: one part on two aircraft,
+        # two closes for one, two figures for one entry of the hours before the first log.
+        same = [x for x in others if x.supersedes == e.supersedes]
+        if same:
+            return (
+                f"entry {e.supersedes} is already superseded by entry {same[0].id}; retract "
+                f"entry {same[0].id} first"
+            )
+    if e.kind != RETRACTION:
+        # A correction keeps the date of the entry it corrects and takes its place in the
+        # fold, through a chain of them. Superseding a correction undoes it, whatever the
+        # kind of the entry superseding it, so the entry it had corrected comes back: a
+        # correction of a correction would leave the first entry and the new one live at one
+        # place, folded in an order nothing decides, and neither judged against the other.
+        key = fold_key(timeline)
+        same = [x for x in others if x.kind != RETRACTION and key(x) == key(e)]
+        if same and same[0] is candidate:
+            by = change.superseded_by[e.id or 0].id
+            return (
+                f"superseding entry {by} undoes it, so it and this entry would both stand in "
+                f"one place in the records; to replace entry {by}, retract it first, then "
+                f"correct entry {e.id}"
+            )
+        if same:
+            return (
+                f"entry {same[0].id} stands in its place already; retract entry {same[0].id} first"
+            )
+    if e.kind == "work_order.open":
+        wid = e.details.get("work_id")
+        same = [
+            x for x in others if x.kind == "work_order.open" and x.details.get("work_id") == wid
+        ]
+        if same:
+            return (
+                f"work order {wid} already exists on {e.subject}, opened by entry {same[0].id}; "
+                f"retract entry {same[0].id} first"
+            )
+    return None
+
+
 def _revived_entries_hold(
     store: Store,
     timeline: list[Entry],
+    candidate: Entry,
     change: _Change,
     tolerance_s: float,
     policy: LifePolicy,
 ) -> None:
-    """An entry the write brings back is judged against the records as they stood when it
-    happened, as a new entry of that date would be (issue #161); the first that does not
-    hold refuses the write and is named, with the entry that had ended it."""
-    for e in change.revived:
+    """An entry the write brings back faces every check a new entry of its kind and date
+    faces (issue #161): that it is the only live registration of its part, the only live
+    entry superseding the entry it supersedes, the only live entry at its place in the fold
+    and the only live work order of its id (_twin); that its subjects are still what its
+    kind needs, an aircraft key or a component id, against the store as it is now
+    (_subjects); that fleet.toml still names its kind or inspection (_policy); and the
+    records as they stood when it happened (_transitions). The first that does not hold
+    refuses the write and is named, with the entry that had ended it and the way through.
+    What it cannot fail is left out: its shape and its date were checked when it was
+    written and do not change, nor does the entry it supersedes (rows are never edited or
+    deleted). A retraction that comes back faces _twin only: the entry it retracts must not
+    be superseded by another live entry already. A new entry also may not supersede an
+    entry that others depend on; what that protects is judged directly here, since every
+    later entry is judged again with the write in place (_later_entries_still_hold)."""
+    live, _ = liveness(timeline)
+    for e in change.returned:
+        why = _twin(e, live, timeline, candidate, change)
+        if why is not None:
+            raise LedgerError(409, f"{_brought_back(e, change)}: {why}")
+        if e.kind == RETRACTION:
+            continue
+        # The rest of the ledger as a new entry in its place would see it: every live entry
+        # but this one and the entry it supersedes, which would be live in its stead.
+        whole = project(x for x in timeline if x.id not in (e.id, e.supersedes))
+        try:
+            _subjects(store, e, whole, dict(e.details))
+        except LedgerError as exc:
+            raise LedgerError(
+                409,
+                f"{_brought_back(e, change)}: {exc.detail}; correct the records it conflicts "
+                "with first, or record a new entry instead",
+            ) from exc
+        try:
+            _policy(e, e.details, policy)
+        except LedgerError as exc:
+            raise LedgerError(
+                409, f"{_brought_back(e, change)}: {exc.detail}; name it in fleet.toml first"
+            ) from exc
         try:
             _transitions(
-                store, e, dict(e.details), project(timeline, before=e), None, tolerance_s, policy
+                store, e, dict(e.details), project(timeline, before=e), whole, tolerance_s, policy
             )
         except LedgerError as exc:
             raise LedgerError(
@@ -656,7 +761,7 @@ def validate(
     # Superseding a retraction or a correction brings back what it had ended, and through a
     # chain of them may end or bring back entries further down: each is judged (issue #161).
     change = _change(existing, timeline, candidate)
-    _revived_entries_hold(store, timeline, change, tolerance_s, policy)
+    _revived_entries_hold(store, timeline, candidate, change, tolerance_s, policy)
     _inspection_hours_hold(store, existing, timeline, candidate, corrected, change, tolerance_s)
     cut = min((corrected or candidate, *change.revived, *change.ended), key=fold_key(timeline))
     _later_entries_still_hold(store, timeline, candidate, cut, tolerance_s, policy)
