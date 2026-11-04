@@ -274,7 +274,9 @@ def test_a_log_whose_flight_time_is_not_known_still_counts_one_cycle_from_its_en
     assert item(compute(parts, logs, as_of=LOG_END - S), "BAT-A", "cycles").used == 299
     landed = compute(parts, logs, as_of=LOG_END)
     assert item(landed, "BAT-A", "cycles").used == 300
-    assert landed.time_in_service_s == 0.0  # the log cannot say how long it flew
+    # The log cannot say how long it flew; it counts its whole span, the most it can have
+    # flown (issue #152; until then 0 h).
+    assert landed.time_in_service_s == SPAN_S
 
 
 def test_a_log_with_no_utc_start_has_no_end_and_counts_whenever_for_the_airframe_only() -> None:
