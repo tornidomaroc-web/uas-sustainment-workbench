@@ -52,8 +52,11 @@
   one, both at one place in the records, ordered by nothing and neither judged against the
   other (bd115ac and 0.6.6): a part corrected from X-1 to X-2 and then to X-3 stood on X-1
   and X-3, and an entry of the hours before the first log corrected from 200 h to 300 h and
-  then to 250 h read 200 h, 105.0 h overdue where the records state 155.0 h. The refusal
-  says to retract the correction first, then correct the entry it had corrected.
+  then to 250 h read 200 h, 105.0 h overdue where the records state 155.0 h (with an annual
+  inspection at 100 h). Replacing a correction now takes two writes: retract it, then
+  correct the entry it had corrected, as the refusal says. A correction of a correction of a
+  work order open that keeps its id was refused before too, by 0.6.6 as well, as an id in use
+  ("work order WO-A already exists"); the same two writes replace it.
 - A work order opened without an id is refused when its default id, `WO-<entry id>`, is
   already a work order on that aircraft (bd115ac and 0.6.6 accepted it, and the new order
   replaced the one typed by hand: an order left awaiting parts as WO-3 read as entry 3's
