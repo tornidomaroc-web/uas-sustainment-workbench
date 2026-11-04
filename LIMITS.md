@@ -1234,12 +1234,18 @@ field-level tables. This file is about what that means for a maintenance tool.
   log at one place fold the older last, whichever figure it holds (later or earlier by
   which); two registrations reset the part at the later-dated one, dropping an install made
   before it (later: an aircraft lost its 85.0 h past-limit grounding); a correction of a
-  correction folds the first entry last (200 h read where 250 h was stated last: later).
+  correction folds the first entry last (200 h read where 250 h was stated last, a work
+  order state deferred read where in work was stated last: later).
   The repair, each measured: retract the entry of the pair that is wrong (the revived
-  correction, the second open, the open that took the default id, the first entry under a
-  correction of a correction); a registration with installs is retracted after them, then
-  the part is fitted again. The tool does not flag such a store; `uasw record history --all`
-  shows the pair.
+  correction, the second open, the open that took the default id); for a correction of a
+  correction, retract it, then the correction it corrected, then correct the first entry to
+  what was stated last (retracting the first entry instead reads the same, but then undoing
+  that retraction and retracting the last correction are each refused, naming the other, so
+  that chain can no longer be superseded); a registration with installs is retracted after
+  them, then the part is fitted again, and an open with a state change or close of its id
+  is retracted after them, then they are recorded again (an open brought back after its
+  order was closed: retract the close, then that open, then close the order again). The
+  tool does not flag such a store; `uasw record history --all` shows the pair.
 - **A correction keeps the date of the entry it corrects.** A correction with another
   `occurred_utc` is refused, because between the two dates neither entry would count; to
   move a date, the entry is retracted and a new one recorded, and the two are then not

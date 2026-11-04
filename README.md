@@ -292,7 +292,9 @@ state it (a log with no UTC start then falls in the interval after the inspectio
 before the first log are set. Entries are never edited or deleted. A correction is a new
 entry that supersedes an older one with a reason, a retraction supersedes without
 replacing, and undoing a correction or a retraction revives what it superseded, which then
-faces every check a new entry of its kind and date faces. Superseding a correction undoes
+faces every check a new entry of its kind and date faces but one, that it supersedes no
+entry others depend on: those entries are judged again with it in place instead. Superseding
+a correction undoes
 it, whatever the kind of the entry superseding it, so a correction of a correction is
 refused: it would leave the entry first corrected and the new one both live at one place in
 the records. To replace a correction, retract it, then correct the entry it had corrected.
@@ -319,8 +321,10 @@ before a later state change or a retraction, or the undoing of one, that would l
 on two aircraft at once, is refused and names that entry. No write may leave two live
 entries where the records allow one: two registrations of one part, two opens of one work
 order id (the default `WO-<entry id>` of an order opened without one included), two live
-entries superseding one entry, or two at one place in the records; each is refused with 409,
-naming both and the one to retract first. A correction keeps the date of
+entries superseding one entry, or two at one place in the records; each is refused with 409.
+When the second would come back, the refusal names both and the one to retract first; a new
+registration or open of an id already in use, and an order whose default id is taken, are
+refused naming the id. A correction keeps the date of
 the entry it corrects; to move a date, the entry is retracted and a new one written. Every entry
 carries the sentence that it records what the entering person stated and that the
 workbench does not certify airworthiness or return to service. `POST /entries` and `uasw record` reach the same
