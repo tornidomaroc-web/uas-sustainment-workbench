@@ -412,12 +412,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   used, at most 297.0 h", and the due list names each such log. The evidence pack's usage
   table then gains a column, "Spans of logs whose flight time is not known" (`unknown_spans_s`,
   present only when there is such a log), so its time in service adds up. The page's line
-  under each aircraft's due list still describes its time in service as "logged flight plus
-  the flight the counter shows and no log covers" and leaves such a span unnamed (the items
-  and notes above it name it); the page file is left as it was, so the static export stays
-  byte for byte. A part that may have reached
-  its limit this way grounds the aircraft and is refused at an install, in a sentence that
-  says so ("it may have flown 301.0 h, past its 300 h life limit, counting ..."); it is
+  under each aircraft's status names the same parts: "hours before the first log, logged
+  flight, the flight the counter shows and no log covers, and the whole span of each log
+  whose flight time is not known". It is one line for every aircraft, so the static
+  export's index.html changes for every store; its data files do not. A part that may have
+  reached its limit this way grounds the aircraft and is refused at an install, in a
+  sentence that says so ("it may have flown 301.0 h, past its 300 h life limit, counting ..."); it is
   replaced, as a part at its limit is. An inspection's stated hours are accepted up to that
   most; its derived hours still count such a log at 0 h, so no stored figure moves.
   The cost is an early reading, by the ground time inside such a log, and only where a log

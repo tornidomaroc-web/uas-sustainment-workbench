@@ -10,7 +10,9 @@
   left of its 300 h life limit". It now reads "is 0.5 h past its 300 h life limit, counting 1
   log whose flight time is not known at the most the records allow (1.0 h): at least 299.5 h
   used, at most 300.5 h", the aircraft is unserviceable, and the due list names the log; the
-  evidence pack's usage table gains a column for such spans, only when there are any. The
+  evidence pack's usage table gains a column for such spans, only when there are any; the
+  page's line under an aircraft's status names every part its time in service counts, such
+  spans and the hours before the first log among them. The
   time in service and each part fitted when the log started count its span; an inspection's
   interval counts it when it can lie inside the interval, and a log flown before the
   inspection only as far as the inspection's stated hours exceed what the dated logs give at
@@ -22,7 +24,8 @@
   none of the seed flights has an unknown flight time. A log with no UTC start still counts
   toward no part, a late reading this does not fix. A store written before this keeps its
   rows and its journal head and reads the same way as a new store. The seed, its journal
-  head, the SYN-04 pack and the static export are unchanged.
+  head, the SYN-04 pack and the static export's data files are unchanged; its index.html
+  changes by that one line.
 - Undoing a retraction is judged like a new entry (closes #161). Retracting a retraction, or
   correcting it, brings back the entry it had retracted, and such a write was judged only by
   the kind of the entry it superseded, itself a retraction. With 200 h before the first log,
