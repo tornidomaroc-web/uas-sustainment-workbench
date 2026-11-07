@@ -406,29 +406,28 @@ def _transitions(
             # The 0.1.0 sentence, word for word; tests/test_ledger_refusals.py holds it.
             where = f"installed on {on[0].aircraft_key}" if on else "not installed on any aircraft"
             raise LedgerError(409, f"{c.id} is {where} at {_stamp(at)}, not installed on {key}")
-    elif entry.kind == "inspection.done":
+    elif entry.kind == "inspection.done" and details.get("at_hours_s") is None:
         # Stated hours are judged against every entry of the hours before the first log that
         # counts an interval from this inspection, by _inspection_hours_hold (issue #151).
-        if details.get("at_hours_s") is None:
-            record = then.maintenance.get(entry.subject)
-            before = record.time_in_service_before_s if record else 0.0
-            # Derived hours are the least the records allow: the logs they place by then. A log
-            # with no UTC start then falls inside the interval after the inspection, the most
-            # it can add, whether it was uploaded before or after this entry (issue #151).
-            least = time_in_service(
-                entry.subject,
-                before,
-                store.flights(entry.subject),
-                tolerance_s,
-                until=at,
-                undated=False,
+        record = then.maintenance.get(entry.subject)
+        before = record.time_in_service_before_s if record else 0.0
+        # Derived hours are the least the records allow: the logs they place by then. A log
+        # with no UTC start then falls inside the interval after the inspection, the most it
+        # can add, whether it was uploaded before or after this entry (issue #151).
+        least = time_in_service(
+            entry.subject,
+            before,
+            store.flights(entry.subject),
+            tolerance_s,
+            until=at,
+            undated=False,
+        )
+        if isinstance(least, Unknown):
+            raise LedgerError(
+                422, f"at_hours_s cannot be derived: {least.reason}; state at_hours_s"
             )
-            if isinstance(least, Unknown):
-                raise LedgerError(
-                    422, f"at_hours_s cannot be derived: {least.reason}; state at_hours_s"
-                )
-            details["at_hours_s"] = round(least, 1)
-            details["derived"] = True
+        details["at_hours_s"] = round(least, 1)
+        details["derived"] = True
     return details
 
 
