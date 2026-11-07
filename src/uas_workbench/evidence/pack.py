@@ -309,6 +309,12 @@ def _build_pack(
             "findings": [f.model_dump(mode="json") for f in recon.findings],
             "unchecked": dict(recon.unchecked),
         }
+        # The time in service counts the whole span of a log whose flight time is not known
+        # (issue #152); the pack names that share, and only when such a log exists, so a pack
+        # with none keeps its fields as they were.
+        spans = [max(r.log_span_s, 0.0) for r in records if not is_known(r.flight_time_s)]
+        if spans:
+            usage_out["unknown_spans_s"] = round(sum(spans), 1)
     else:
         usage_out = dict.fromkeys(
             ("logged_s", "unlogged_s", "flights", "findings", "unchecked"), _unknown(flights)
@@ -412,6 +418,7 @@ def _build_pack(
             "before_s": before_s,
             "logged_s": usage_out["logged_s"],
             "unlogged_s": usage_out["unlogged_s"],
+            **{k: usage_out[k] for k in ("unknown_spans_s",) if k in usage_out},
             "flights": usage_out["flights"],
             "findings": usage_out["findings"],
             # Flights whose log started while the records show the aircraft grounded, and the

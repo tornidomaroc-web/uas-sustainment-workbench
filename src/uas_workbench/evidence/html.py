@@ -178,19 +178,18 @@ def render_html(pack: dict[str, Any]) -> str:
 
     u = p["usage"]
     out.append(f"<h2>5. {_e(s[5])}</h2>")
-    out.append(
-        _table(
-            ["Time in service", "Before the first log", "Logged flight", "Flight no log covers"],
-            [
-                [
-                    _hours(u["time_in_service_s"]),
-                    _hours(u["before_s"]),
-                    _hours(u["logged_s"]),
-                    _hours(u["unlogged_s"]),
-                ]
-            ],
-        )
-    )
+    headers = ["Time in service", "Before the first log", "Logged flight", "Flight no log covers"]
+    row = [
+        _hours(u["time_in_service_s"]),
+        _hours(u["before_s"]),
+        _hours(u["logged_s"]),
+        _hours(u["unlogged_s"]),
+    ]
+    if "unknown_spans_s" in u:
+        # Present only when a log's flight time is not known: its whole span counts (#152).
+        headers.append("Spans of logs whose flight time is not known")
+        row.append(_hours(u["unknown_spans_s"]))
+    out.append(_table(headers, [row]))
     if (why := _not_known(u["flights"])) is not None:
         out.append(f'<p class="muted">Flight records: unknown: {_e(why)}.</p>')
     out.append(
