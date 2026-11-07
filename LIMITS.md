@@ -424,9 +424,14 @@ field-level tables. This file is about what that means for a maintenance tool.
   of unknown flight time is held: 1 of the 59 public logs, none of the 34 seed flights. What
   can now read early: each part's hour item and the board it grounds, the time in service
   (the board row, the evidence pack, the page and the static export), an hour-based
-  inspection's interval, an install refused (and a correction or undo of an install), and the
-  most hours an inspection may state. How early, on the 58 public logs whose flight time is
-  known (the flight time never exceeded the span): the span exceeded the flight time by 15 %
+  inspection's interval, an install refused (and a correction or undo of an install), the
+  most hours an inspection may state, and each part's usage in the evidence pack. Two of
+  these give the most alone, with neither the least nor the words "at most": the evidence
+  pack's line for each part ("usage 301.0 h" where its item reads "at least 299.0 h used,
+  at most 301.0 h"; `components[].usage.hours_s` in its JSON) and an item's cue, which keeps
+  only the part or inspection, the number and the direction ("P-1 1.0 h past 300 h limit").
+  The item's sentence beside each gives both. How early, on the 58 public logs whose flight
+  time is known (the flight time never exceeded the span): the span exceeded the flight time by 15 %
   in total on PX4 (45 logs, a median of 7 s a log, at most 1 373 s, at most 12.7 times the
   flight time) and by 80 % on the ALFA ArduPilot logs, which run on the ground (13 logs, a
   median of 231 s, at most 2 182 s, at most 6.2 times); 4 of them flew 0 s over spans of
