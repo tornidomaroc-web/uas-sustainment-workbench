@@ -10,7 +10,8 @@
   left of its 300 h life limit". It now reads "is 0.5 h past its 300 h life limit, counting 1
   log whose flight time is not known at the most the records allow (1.0 h): at least 299.5 h
   used, at most 300.5 h", the aircraft is unserviceable, and the due list names the log; the
-  evidence pack's usage table gains a column for such spans, only when there are any; the
+  evidence pack's usage table gains a column for such spans, only when there are any, and its
+  line for each part, like an item's cue, gives that most alone, without the least; the
   page's line under an aircraft's status names every part its time in service counts, such
   spans and the hours before the first log among them. The
   time in service and each part fitted when the log started count its span; an inspection's
