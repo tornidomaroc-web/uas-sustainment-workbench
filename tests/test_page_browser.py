@@ -211,6 +211,18 @@ def test_clicking_an_aircraft_shows_its_due_list_with_sources(page: Any) -> None
     assert page.problems == []
 
 
+def test_the_time_in_service_line_says_what_it_counts(page: Any) -> None:
+    """Issue #152: the line names each part of the time in service, the whole span of each
+    log whose flight time is not known among them; main's line left that span out."""
+    from test_unknown_flight_time_counts_its_span import CAPTION
+
+    page.locator("#fleet tbody tr[data-key='SYN-04']").click()
+    page.wait_for_selector("#due-list tbody tr")
+    status = page.inner_text("#detail-status")
+    assert re.search(r"time in service [\d,]+\.\d h: " + re.escape(CAPTION), status), status
+    assert page.problems == []
+
+
 def test_maintenance_history_is_shown_read_only_and_labelled(page: Any) -> None:
     page.locator("#fleet tbody tr[data-key='SYN-04']").click()
     page.wait_for_selector("#history tbody tr")
