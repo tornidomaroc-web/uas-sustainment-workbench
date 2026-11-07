@@ -292,7 +292,7 @@
     const d = a.due || { status: a.status, status_reasons: a.status_reasons || [], items: [], notes: [], time_in_service_s: null };
     let sh = `<p>${statusCell(d.status)}`;
     if (!isUnknown(d.time_in_service_s) && d.time_in_service_s !== null) {
-      sh += ` <span class="sub">time in service ${val(d.time_in_service_s / 3600, 1)} h, logged flight plus the flight the counter shows and no log covers</span>`;
+      sh += ` <span class="sub">time in service ${val(d.time_in_service_s / 3600, 1)} h: hours before the first log, logged flight, the flight the counter shows and no log covers, and the whole span of each log whose flight time is not known</span>`;
     }
     sh += '</p>';
     if (d.status_reasons.length) sh += '<ul>' + d.status_reasons.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>';
