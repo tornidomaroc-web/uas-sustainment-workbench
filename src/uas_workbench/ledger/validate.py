@@ -32,7 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from uas_workbench.flight.record import Unknown, is_known
 from uas_workbench.life.engine import (
     HOURS_SLACK_S,
-    component_usage,
+    component_hours,
+    counting_unknown,
     end_of_month_after,
     most_time_in_service,
     time_in_service,
@@ -274,17 +275,26 @@ def _limits_past(
     something remains, so the part is within its life and may be fitted. This is the board's
     boundary too (life.engine): what grounds an aircraft when fitted is what cannot be fitted,
     and a part with nothing left has no flight in it to give (14 CFR 43.10(c)). The usage is
-    counted as the board counts it, a log from its end."""
-    usage = component_usage(c, store.flights, tolerance_s, until=at)
+    counted as the board counts it, a log from its end, and a log whose flight time is not
+    known at its whole span, the most it can have flown (issue #152): a part that may have
+    reached its limit is not fitted, and the sentence says the figure is that most."""
+    usage, bound = component_hours(c, store.flights, tolerance_s, until=at)
+    flown, tail = "it has flown", ""
+    if bound is not None:
+        flown = "it may have flown"
+        tail = (
+            f", {counting_unknown(len(bound.logs), bound.seconds)}: at least "
+            f"{bound.least_s / H:.1f} h flown"
+        )
     past: list[str] = []
     for basis, limit in rule.limits():
         if basis == "hours":
             used_h = round(usage.hours_s / H, 3)
             if used_h > limit:
-                past.append(f"it has flown {used_h:.1f} h, past its {limit:.0f} h life limit")
+                past.append(f"{flown} {used_h:.1f} h, past its {limit:.0f} h life limit{tail}")
             elif used_h == limit:
                 past.append(
-                    f"it has flown {used_h:.1f} h, the whole of its {limit:.0f} h life limit"
+                    f"{flown} {used_h:.1f} h, the whole of its {limit:.0f} h life limit{tail}"
                 )
         elif basis == "cycles":
             if usage.cycles > limit:

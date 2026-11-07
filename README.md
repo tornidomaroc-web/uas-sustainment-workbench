@@ -177,7 +177,10 @@ not known, and so are the inspection items and the board that depend on it: the 
 so rather than a state that reads as leave to fly. A
 component carries its own usage and the airframes it was fitted to, so its life status moves
 with it between airframes (14 CFR 43.10). Usage is the logged flight time plus the flight
-`reconcile()` found no log covers, minus duplicate uploads. A flight's cycle and hours count
+`reconcile()` found no log covers, minus duplicate uploads. A log whose flight time is not
+known counts its whole span, the most it can have flown, and each hour item it moves says so
+with the least the known flight time gives; that reads early by the ground time inside the
+log, where it once read late by the whole flight. A flight's cycle and hours count
 once the flight is over: a record holds no landing time, so a log counts from its end, the
 last instant its flight can have ended, never from take-off. A limit counted in completed
 units is reached when its last unit completes: a part at 300 of 300 cycles, or at the whole
