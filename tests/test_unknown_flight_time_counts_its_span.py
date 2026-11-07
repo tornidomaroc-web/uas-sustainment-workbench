@@ -423,6 +423,30 @@ def test_a_store_holding_the_refit_main_accepted_reads_past_and_has_a_route(
     assert programme(tmp_path, "X-2", "2026-07-02T00:00Z")["status"] == "serviceable"
 
 
+# The evidence pack's usage table adds up: the time in service is the hours before the first
+# log, the logged flight, the flight no log covers and, only when such logs exist, the spans
+# of the logs whose flight time is not known. Main had no such column: 97.0 h read as 0 + 95
+# + 0. A pack with no such log keeps its fields and table as they were.
+SPANS = "Spans of logs whose flight time is not known"
+
+
+def test_the_pack_says_what_its_time_in_service_counts(fleet: Path, tmp_path: Path) -> None:
+    ok(fleet, "evidence", "X-1", "--out", "pack.html", "--json", "--as-of", JULY)
+    usage = json.loads((fleet / "pack.json").read_text(encoding="utf-8"))["usage"]
+    parts = ("time_in_service_s", "before_s", "logged_s", "unlogged_s", "unknown_spans_s")
+    assert tuple(usage[k] for k in parts) == (97.0 * H, 0.0, 95.0 * H, 0.0, 2.0 * H)
+    html = (fleet / "pack.html").read_text(encoding="utf-8")
+    assert f"<th>Flight no log covers</th><th>{SPANS}</th></tr>" in html
+    assert "<td>2.0 h (7200 s)</td></tr>" in html
+    ingest(tmp_path, "X-8", "X-8-feb", datetime(2026, 2, 1, tzinfo=UTC), 5.0)
+    inspection(tmp_path, "X-8", "annual inspection", "2026-01-01T00:00Z")
+    ok(tmp_path, "evidence", "X-8", "--out", "pack.html", "--json", "--as-of", JULY)
+    plain = json.loads((tmp_path / "pack.json").read_text(encoding="utf-8"))["usage"]
+    assert "unknown_spans_s" not in plain
+    assert plain["time_in_service_s"] == plain["logged_s"] == 5.0 * H
+    assert SPANS not in (tmp_path / "pack.html").read_text(encoding="utf-8")
+
+
 # ---- one answer on every surface ---------------------------------------------------------
 
 
