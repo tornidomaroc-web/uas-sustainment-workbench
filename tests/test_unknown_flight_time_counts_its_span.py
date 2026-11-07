@@ -47,6 +47,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -445,6 +446,24 @@ def test_the_pack_says_what_its_time_in_service_counts(fleet: Path, tmp_path: Pa
     assert "unknown_spans_s" not in plain
     assert plain["time_in_service_s"] == plain["logged_s"] == 5.0 * H
     assert SPANS not in (tmp_path / "pack.html").read_text(encoding="utf-8")
+
+
+# The page's line under an aircraft's status says what its time in service counts. Main's
+# line named the logged flight and the flight no log covers only, so with a log whose flight
+# time is not known it described 97.0 h as 95.0 h of logged flight and 0 h no log covers;
+# it left out the hours before the first log too. The line is the same for every aircraft,
+# so it names each part, as the pack's usage table does.
+CAPTION = (
+    "hours before the first log, logged flight, the flight the counter shows and no log "
+    "covers, and the whole span of each log whose flight time is not known"
+)
+
+
+def test_the_page_says_what_its_time_in_service_counts() -> None:
+    page = resources.files("uas_workbench.service").joinpath("site/index.html")
+    text = page.read_text("utf-8")
+    assert f"time in service ${{val(d.time_in_service_s / 3600, 1)}} h: {CAPTION}</span>" in text
+    assert "logged flight plus the flight the counter shows" not in text
 
 
 # ---- one answer on every surface ---------------------------------------------------------
