@@ -9,7 +9,8 @@
   propeller set at 299.5 h, fitted during a 1 h log of unknown flight time, read "has 0.5 h
   left of its 300 h life limit". It now reads "is 0.5 h past its 300 h life limit, counting 1
   log whose flight time is not known at the most the records allow (1.0 h): at least 299.5 h
-  used, at most 300.5 h", the aircraft is unserviceable, and the due list names the log. The
+  used, at most 300.5 h", the aircraft is unserviceable, and the due list names the log; the
+  evidence pack's usage table gains a column for such spans, only when there are any. The
   time in service and each part fitted when the log started count its span; an inspection's
   interval counts it when it can lie inside the interval, and a log flown before the
   inspection only as far as the inspection's stated hours exceed what the dated logs give at

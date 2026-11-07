@@ -409,7 +409,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   flight already, and a derived figure is that least and adds nothing. Every hour item such a
   log moves says so in its sentence, "has 3.0 h left of its 300 h life limit, counting 1 log
   whose flight time is not known at the most the records allow (2.0 h): at least 295.0 h
-  used, at most 297.0 h", and the due list names each such log. A part that may have reached
+  used, at most 297.0 h", and the due list names each such log. The evidence pack's usage
+  table then gains a column, "Spans of logs whose flight time is not known" (`unknown_spans_s`,
+  present only when there is such a log), so its time in service adds up. The page's line
+  under each aircraft's due list still describes its time in service as "logged flight plus
+  the flight the counter shows and no log covers" and leaves such a span unnamed (the items
+  and notes above it name it); the page file is left as it was, so the static export stays
+  byte for byte. A part that may have reached
   its limit this way grounds the aircraft and is refused at an install, in a sentence that
   says so ("it may have flown 301.0 h, past its 300 h life limit, counting ..."); it is
   replaced, as a part at its limit is. An inspection's stated hours are accepted up to that
