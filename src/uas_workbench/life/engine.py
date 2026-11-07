@@ -26,6 +26,16 @@ The hours before the first log are one total, reached by the first log this tool
 Before that log the time in service is not known, the inspection items that depend on it
 are not known, and the board is not known with that reason unless an open work order or a
 life limit reached or past grounds the aircraft, which wins.
+
+A log whose flight time is not known flew at most its span, so it counts the most the records
+allow (issue #152): its whole span toward the time in service and toward each part fitted
+when it started, and toward an inspection's interval its whole span when it can lie inside
+the interval (after the inspection, or with no UTC start), and when it was flown before the
+inspection only as far as the inspection's hours exceed what the dated logs give at its date
+(stated hours hold its real flight already). The least the records allow counts it at 0 h,
+as every figure did before: an inspection's derived hours take the least, so the interval
+after it holds every hour the records can put there. Each hour item such a log moves says so
+in its sentence, with the least, and the due list names each such log.
 """
 
 from __future__ import annotations
@@ -70,8 +80,52 @@ HOURS_SLACK_S = 1.0
 class _Flown:
     log_ref: str
     utc: Maybe[datetime]
-    seconds: float  # flight time, or 0 when the log cannot say
+    seconds: float  # flight time, the most it can have been: the span when the log cannot say
     cycle: bool  # counts as one flight cycle
+    end: Maybe[datetime]  # log_end(): when it counts
+    unknown: bool  # its flight time is not known, so `seconds` is the log's span
+
+    @property
+    def least_s(self) -> float:
+        """The least it can have flown: its flight time, or 0 when the log cannot say."""
+        return 0.0 if self.unknown else self.seconds
+
+
+@dataclass(frozen=True)
+class HoursBound:
+    """What logs whose flight time is not known add to an hours figure (issue #152): the
+    figure with each at 0 h, what they add at the most the records allow, and each log that
+    adds, as (aircraft key, log ref, seconds added)."""
+
+    least_s: float
+    seconds: float
+    logs: tuple[tuple[str, str, float], ...]
+
+
+def counting_unknown(logs: int, seconds: float) -> str:
+    """The words that say a figure counts logs whose flight time is not known at the most."""
+    which = "1 log" if logs == 1 else f"{logs} logs"
+    return (
+        f"counting {which} whose flight time is not known at the most the records allow "
+        f"({seconds / H:.1f} h)"
+    )
+
+
+def _bound_clause(bound: HoursBound | None, least: float, used: float) -> str:
+    """The end of an hour item's sentence when such logs move it; empty when none does."""
+    if bound is None:
+        return ""
+    return (
+        f", {counting_unknown(len(bound.logs), bound.seconds)}: at least {least:.1f} h used, "
+        f"at most {used:.1f} h"
+    )
+
+
+def _span_note(key: str, ref: str, seconds: float) -> str:
+    return (
+        f"flight {ref} of aircraft {key} has no flight time on record, so the whole "
+        f"{seconds / H:.1f} h span of its log counts as flown, the most the records allow"
+    )
 
 
 @dataclass(frozen=True)
@@ -119,9 +173,11 @@ def _usage(
             continue
         if not counted(r, until, undated):
             continue
-        seconds = r.flight_time_s if is_known(r.flight_time_s) else 0.0
+        # A log that cannot say how long it flew flew at most its span (issue #152).
+        unknown = not is_known(r.flight_time_s)
+        seconds = r.flight_time_s if is_known(r.flight_time_s) else max(r.log_span_s, 0.0)
         cycle = not is_known(r.flight_time_s) or r.flight_time_s > 0
-        flown.append(_Flown(r.log_ref, r.utc_start, seconds, cycle))
+        flown.append(_Flown(r.log_ref, r.utc_start, seconds, cycle, log_end(r), unknown))
     # Flight no log covers has no recorded end. It was flown after the log it followed, so it
     # counts with that log: the earliest it can have been flown, never later than it was.
     unlogged = tuple(
@@ -168,15 +224,28 @@ def time_in_service(
     the flight of the logs that had ended by `until`, plus the flight reconcile() found no
     log covers. Not known before the first log when hours before it were entered.
 
-    A log with no UTC start counts at any date, so the total at `until` is the most the
-    records allow. With `undated` False it is the least: only the logs the records place
-    by `until`. An inspection's derived hours take the least (issue #151), so an undated
-    log falls inside the interval after it, whichever was entered first."""
+    A log with no UTC start counts at any date, and a log whose flight time is not known
+    counts its whole span (issue #152), so the total at `until` is the most the records
+    allow. With `undated` False it is the least: only the logs the records place by `until`,
+    each whose flight time is not known at 0 h. An inspection's derived hours take the least
+    (issue #151), so such a log falls inside the interval after it, whichever was entered
+    first."""
     unknown = _not_known(key, before_s, _first_log(records), until)
     if unknown is not None:
         return unknown
     own = _usage(key, records, tolerance_s, until, undated)
-    return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
+    least = _least_s(before_s, own)
+    return least + _spans_s(own.flown) if undated else least
+
+
+def _least_s(before_s: float, own: _AircraftUsage) -> float:
+    """The time in service with each log whose flight time is not known at 0 h."""
+    return before_s + sum(f.least_s for f in own.flown) + sum(s for _, s in own.unlogged)
+
+
+def _spans_s(flown: Sequence[_Flown]) -> float:
+    """What the logs whose flight time is not known add at the most: their spans."""
+    return sum(f.seconds for f in flown if f.unknown)
 
 
 def most_time_in_service(
@@ -185,14 +254,18 @@ def most_time_in_service(
     records: Sequence[FlightRecord],
     tolerance_s: float = FLUSH_INTERVAL_S,
     until: datetime | None = None,
+    spans: bool = True,
 ) -> float:
     """The most time in service the records allow at `until`, known at any date.
 
     From the first log on it is time_in_service(). Before the first log the hours before it
     are reached only by the first log, so the aircraft had at most those hours plus what the
-    logs with no UTC start add, which may have been flown at any date (issue #151)."""
+    logs with no UTC start add, which may have been flown at any date (issue #151). A log
+    whose flight time is not known counts its whole span; with `spans` False, 0 h, the
+    figure a reading that must be a least is taken against (issue #152)."""
     own = _usage(key, records, tolerance_s, until)
-    return before_s + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged)
+    least = _least_s(before_s, own)
+    return least + _spans_s(own.flown) if spans else least
 
 
 def _installed_on(component: Component, key: str, as_of: datetime) -> bool:
@@ -206,19 +279,42 @@ def _in_window(utc: Maybe[datetime], start: datetime, end: datetime | None) -> b
     return is_known(utc) and start <= utc and (end is None or utc < end)
 
 
-def _component_usage(component: Component, usage: dict[str, _AircraftUsage]) -> Usage:
+def _component_usage(
+    component: Component, usage: dict[str, _AircraftUsage]
+) -> tuple[Usage, HoursBound | None]:
+    """The usage, its hours the most the records allow, and what logs whose flight time is
+    not known add to them (None when none adds): each at its whole span, since the records
+    place it in the fitting it started in but cannot say how much of it was flown."""
     hours_s = component.hours_s_before
     cycles = component.cycles_before
+    spans: list[tuple[str, str, float]] = []
     for inst in component.installations:
         flown = usage[inst.aircraft_key]
         for f in flown.flown:
             if _in_window(f.utc, inst.from_utc, inst.to_utc):
-                hours_s += f.seconds
+                hours_s += f.least_s
                 cycles += int(f.cycle)
+                if f.unknown and f.seconds > 0:
+                    spans.append((inst.aircraft_key, f.log_ref, f.seconds))
         for utc, seconds in flown.unlogged:
             if _in_window(utc, inst.from_utc, inst.to_utc):
                 hours_s += seconds
-    return Usage(hours_s, cycles)
+    if not spans:
+        return Usage(hours_s, cycles), None
+    added = sum(s for _, _, s in spans)
+    return Usage(hours_s + added, cycles), HoursBound(hours_s, added, tuple(spans))
+
+
+def component_hours(
+    component: Component,
+    flights_of: Callable[[str], Sequence[FlightRecord]],
+    tolerance_s: float = FLUSH_INTERVAL_S,
+    until: datetime | None = None,
+) -> tuple[Usage, HoursBound | None]:
+    """component_usage(), and what logs whose flight time is not known add to its hours."""
+    keys = {i.aircraft_key for i in component.installations}
+    usage = {k: _usage(k, flights_of(k), tolerance_s, until) for k in keys}
+    return _component_usage(component, usage)
 
 
 def component_usage(
@@ -230,10 +326,8 @@ def component_usage(
     """The hours and cycles a component has reached by `until`: its usage before this tool's
     first record, plus every flight of every airframe it was fitted to while it was fitted
     (14 CFR 43.10), counted as due_list() counts them: a log from its end, in the
-    installation window it started in."""
-    keys = {i.aircraft_key for i in component.installations}
-    usage = {k: _usage(k, flights_of(k), tolerance_s, until) for k in keys}
-    return _component_usage(component, usage)
+    installation window it started in, a log whose flight time is not known at its span."""
+    return component_hours(component, flights_of, tolerance_s, until)[0]
 
 
 def end_of_month_after(start: date, months: int) -> date:
@@ -256,7 +350,13 @@ def _plural(n: float, unit: str) -> str:
 
 
 def _component_items(
-    key: str, c: Component, rule: LifeRule, usage: Usage, as_of: datetime, fraction: float
+    key: str,
+    c: Component,
+    rule: LifeRule,
+    usage: Usage,
+    as_of: datetime,
+    fraction: float,
+    bound: HoursBound | None = None,
 ) -> list[DueItem]:
     subject = f"{c.kind} {c.id}"
     items: list[DueItem] = []
@@ -283,6 +383,8 @@ def _component_items(
                     f"{subject} on aircraft {key} is {-remaining:.1f} h past its {limit:.0f} h "
                     "life limit"
                 )
+            if bound is not None:
+                message += _bound_clause(bound, round(bound.least_s / H, 3), used)
             scale = limit
         elif basis == "cycles":
             used, remaining = float(usage.cycles), limit - usage.cycles
@@ -343,7 +445,11 @@ def _inspection_items(
     as_of: datetime,
     fraction: float,
     disagree: Unknown | None = None,
+    extra: HoursBound | None = None,
 ) -> list[DueItem]:
+    """The items of one inspection. `time_in_service_s` counts each log whose flight time is
+    not known at 0 h; `extra` is what such logs add to the hours interval at the most the
+    records allow (_interval_bound), and its sentence then says so."""
     subject = f"the {rule.name}"
     items: list[DueItem] = []
     unit: Unit
@@ -371,7 +477,9 @@ def _inspection_items(
         if basis == "hours":
             assert not isinstance(time_in_service_s, Unknown)
             since_s = (done.at_hours_s - done.carried_over_s) if done else 0.0
-            used = round((time_in_service_s - since_s) / H, 3)
+            least = round((time_in_service_s - since_s) / H, 3)
+            added = extra.seconds if extra is not None else 0.0
+            used = round((time_in_service_s + added - since_s) / H, 3)
             remaining = round(limit - used, 3)
             tolerance = rule.tolerance_hours
             unit = "h"
@@ -391,6 +499,7 @@ def _inspection_items(
                 )
             else:
                 message = f"{subject} of aircraft {key} is {-remaining:.1f} h overdue"
+            message += _bound_clause(extra, least, used)
         elif basis == "calendar":
             if done is None:
                 # No date to count from: the interval cannot be counted, and that is said,
@@ -487,6 +596,52 @@ def _disagreement(
     )
 
 
+def _interval_bound(
+    key: str,
+    flown: Sequence[_Flown],
+    done: InspectionDone | None,
+    before_s: float,
+    records: Sequence[FlightRecord],
+    tolerance_s: float,
+) -> HoursBound | None:
+    """What logs whose flight time is not known add to the interval since `done`, at the most
+    the records allow (issue #152); None when they add nothing. least_s is not used.
+
+    A log that ended after the inspection, or has no UTC start (#151), can lie wholly inside
+    the interval: its whole span. A log that ended by the inspection's date was flown before
+    it; its real flight is in the inspection's hours only as far as they exceed what the
+    dated logs give at that date, each such log at 0 h. A derived figure is that least, so it
+    adds nothing; a stated figure adds the difference, up to those logs' spans. Never more:
+    the hours the inspection states hold that flight already, and counting it again would put
+    every hour of ground time before the inspection inside the interval after it."""
+    unknown = [f for f in flown if f.unknown and f.seconds > 0]
+    if not unknown:
+        return None
+    if done is None:
+        return HoursBound(
+            0.0, _spans_s(unknown), tuple((key, f.log_ref, f.seconds) for f in unknown)
+        )
+    when = done.done_utc
+
+    def before_it(f: _Flown) -> bool:
+        return is_known(f.end) and f.end <= when
+
+    after = [(key, f.log_ref, f.seconds) for f in unknown if not before_it(f)]
+    earlier = [f for f in unknown if before_it(f)]
+    added = sum(s for _, _, s in after)
+    if earlier:
+        least = time_in_service(key, before_s, records, tolerance_s, until=when, undated=False)
+        room = done.at_hours_s - least if is_known(least) else 0.0
+        share = min(max(room, 0.0), _spans_s(earlier))
+        if share > 0:
+            added += share
+            # Together they account for the share; each is named.
+            after = [(key, f.log_ref, f.seconds) for f in earlier] + after
+    if added <= 0:
+        return None
+    return HoursBound(0.0, added, tuple(after))
+
+
 def _disagreeing_items(
     key: str,
     rule: LifeRule,
@@ -498,6 +653,7 @@ def _disagreeing_items(
     as_of: datetime,
     fraction: float,
     tolerance_s: float,
+    flown: Sequence[_Flown] = (),
 ) -> list[DueItem]:
     """The items of an inspection whose recorded hours the records disagree with (#151).
 
@@ -508,16 +664,23 @@ def _disagreeing_items(
     falls inside it, as for a derived figure), and the sentence says the records disagree.
     Before the first log the records hold no such figure: the dated logs since it are the
     least the interval holds, so the item reads overdue when they alone put it past its
-    tolerance, and not known otherwise. Never later than the records allow."""
+    tolerance, and not known otherwise. Never later than the records allow.
+
+    `time_in_service_s` counts each log whose flight time is not known at 0 h. Read from the
+    least at its date, the interval adds what such logs can put inside it (_interval_bound);
+    before the first log the "at least" reading stays on the least, those logs at 0 h on both
+    sides, so it says only what is certain."""
     until = done.done_utc
     least = time_in_service(key, before_s, records, tolerance_s, until=until, undated=False)
     if is_known(least):
         at, exact = least, True
     else:
-        at, exact = most_time_in_service(key, before_s, records, tolerance_s, until=until), False
+        at = most_time_in_service(key, before_s, records, tolerance_s, until=until, spans=False)
+        exact = False
     read = replace(done, at_hours_s=at)
+    extra = _interval_bound(key, flown, read, before_s, records, tolerance_s) if exact else None
     items: list[DueItem] = []
-    for i in _inspection_items(key, rule, read, time_in_service_s, as_of, fraction):
+    for i in _inspection_items(key, rule, read, time_in_service_s, as_of, fraction, extra=extra):
         if i.basis != "hours":
             items.append(i)
         elif exact:
@@ -585,23 +748,39 @@ def due_list(
             if not is_known(f.utc)
         )
     before = maintenance.time_in_service_before_s if maintenance else 0.0
-    time_in_service_s: Maybe[float] = _not_known(
-        aircraft_key, before, _first_log(flights_of(aircraft_key)), as_of
-    ) or (before + sum(f.seconds for f in own.flown) + sum(s for _, s in own.unlogged))
+    not_known = _not_known(aircraft_key, before, _first_log(flights_of(aircraft_key)), as_of)
+    # The time in service counts each log whose flight time is not known at its span, the most
+    # the records allow (issue #152). The inspection items are counted from the least, each
+    # such log at 0 h, and add what such logs can put inside their interval (_interval_bound).
+    least_s = _least_s(before, own)
+    least_in_service: Maybe[float] = not_known or least_s
+    time_in_service_s: Maybe[float] = not_known or (least_s + _spans_s(own.flown))
 
     items: list[DueItem] = []
     by_id: dict[str, Usage] = {}
+    kinds: list[str] = []
+    # Each log whose flight time is not known that this due list counts is named: the
+    # aircraft's own, and another airframe's that a fitted part carries.
+    spans = [_span_note(aircraft_key, f.log_ref, f.seconds) for f in own.flown if f.unknown]
     for c in installed:
         rule = policy.component_kinds.get(c.kind)
         if rule is None:
-            notes.append(
+            kinds.append(
                 f"component kind {c.kind!r} of {c.id} is not in fleet.toml; no limits apply"
             )
             continue
-        by_id[c.id] = _component_usage(c, usage)
+        by_id[c.id], bound = _component_usage(c, usage)
         items.extend(
-            _component_items(aircraft_key, c, rule, by_id[c.id], as_of, policy.due_soon_fraction)
+            _component_items(
+                aircraft_key, c, rule, by_id[c.id], as_of, policy.due_soon_fraction, bound
+            )
         )
+        for key, ref, seconds in bound.logs if bound is not None else ():
+            note = _span_note(key, ref, seconds)
+            if key != aircraft_key and note not in spans:
+                spans.append(note)
+    notes.extend(spans)
+    notes.extend(kinds)
     done_by_name: dict[str, InspectionDone] = {}
     for d in maintenance.inspections if maintenance else ():
         if d.name not in done_by_name or d.done_utc > done_by_name[d.name].done_utc:
@@ -644,9 +823,20 @@ def due_list(
                 if not is_known(f.utc)
             )
         if disagree is None or done is None:
+            extra = None
+            if "hours" in bases and is_known(least_in_service):
+                extra = _interval_bound(
+                    aircraft_key, own.flown, done, before, flights_of(aircraft_key), tolerance_s
+                )
             items.extend(
                 _inspection_items(
-                    aircraft_key, rule, done, time_in_service_s, as_of, policy.due_soon_fraction
+                    aircraft_key,
+                    rule,
+                    done,
+                    least_in_service,
+                    as_of,
+                    policy.due_soon_fraction,
+                    extra=extra,
                 )
             )
         else:
@@ -658,10 +848,11 @@ def due_list(
                     disagree,
                     before,
                     flights_of(aircraft_key),
-                    time_in_service_s,
+                    least_in_service,
                     as_of,
                     policy.due_soon_fraction,
                     tolerance_s,
+                    own.flown,
                 )
             )
     return DueList(

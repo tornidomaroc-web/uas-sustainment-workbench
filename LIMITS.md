@@ -396,15 +396,49 @@ field-level tables. This file is about what that means for a maintenance tool.
   which logs a dated answer lists: a log is a file that exists once it is closed. Until
   0.5.0 a log counted from its start, so the board could ground an aircraft as it took off
   on its last permitted cycle.
-- **A flight with no recorded end is counted on the early side, and says so.** Three cases.
-  A log with a UTC start always has an end, its span, even when its flight time is not
-  known: it counts one cycle and no hours from that end. A log with no UTC start has no
-  instant at all: it counts for the airframe at any date asked and for no component, with a
-  note, as before. An inspection's derived hours leave it out (they are the least the records
-  place by that date), so it falls inside the interval after the inspection, the most it can
-  add, whether it was uploaded before or after the inspection was entered, and the due list
-  notes each such log as one the records cannot place before or after it (issue #151; until
-  then a log uploaded first counted before the inspection and one uploaded later after it). Flight that no log covers, found by `reconcile()` from the next boot's
+- **A flight whose flight time or end the records do not hold counts the most it can add,
+  and says so.** Three cases. A log with a UTC start always has an end, its span. When its
+  flight time is not known it flew at most that span, so it counts one cycle and its whole
+  span as hours from that end, toward the time in service and toward every part fitted when
+  it started (issue #152). Until then it counted no hours, and this entry called that the
+  early side; it was a late reading: a part read up to that span younger than it may have
+  been, and an hour item that may have been due read not due, with nothing said. Toward an
+  inspection's interval such a log counts its whole span when
+  it ended after the inspection; when it ended before it, only as far as the inspection's
+  hours exceed what the dated logs give at its date, since stated hours hold that log's real
+  flight already, and a derived figure is that least and adds nothing. Every hour item such a
+  log moves says so in its sentence, "has 3.0 h left of its 300 h life limit, counting 1 log
+  whose flight time is not known at the most the records allow (2.0 h): at least 295.0 h
+  used, at most 297.0 h", and the due list names each such log. A part that may have reached
+  its limit this way grounds the aircraft and is refused at an install, in a sentence that
+  says so ("it may have flown 301.0 h, past its 300 h life limit, counting ..."); it is
+  replaced, as a part at its limit is. An inspection's stated hours are accepted up to that
+  most; its derived hours still count such a log at 0 h, so no stored figure moves.
+  The cost is an early reading, by the ground time inside such a log, and only where a log
+  of unknown flight time is held: 1 of the 59 public logs, none of the 34 seed flights. What
+  can now read early: each part's hour item and the board it grounds, the time in service
+  (the board row, the evidence pack, the page and the static export), an hour-based
+  inspection's interval, an install refused (and a correction or undo of an install), and the
+  most hours an inspection may state. How early, on the 58 public logs whose flight time is
+  known (the flight time never exceeded the span): the span exceeded the flight time by 15 %
+  in total on PX4 (45 logs, a median of 7 s a log, at most 1 373 s, at most 12.7 times the
+  flight time) and by 80 % on the ALFA ArduPilot logs, which run on the ground (13 logs, a
+  median of 231 s, at most 2 182 s, at most 6.2 times); 4 of them flew 0 s over spans of
+  274.5 s to 503.2 s, and such a log of a bench run counts its whole span. The span is
+  measured over the messages the tool reads (above), so a log whose read messages stop before
+  its flight did gives a bound short by that much: on the one public log whose flight time is
+  not known (no vehicle_land_detected topic) the span over the topics read is 347.9 s against
+  348.4 s over every topic. A log with no UTC start has no instant at all: it counts for the
+  airframe at any date asked, its whole span when its flight time is not known, and for no
+  component, with a note, as before. That last is a late reading too, not fixed yet: a part
+  fitted while such a log may have been flown reads up to that log's flight younger than it
+  may be, whether or not the flight time is known (6 of the 59 public logs have no UTC start,
+  4 of them with a known flight time above 0 s). An inspection's derived hours leave it out
+  (they are the least the records place by that date), so it falls inside the interval after
+  the inspection, the most it can add, whether it was uploaded before or after the inspection
+  was entered, and the due list notes each such log as one the records cannot place before
+  or after it (issue #151; until then a log uploaded first counted before the inspection and
+  one uploaded later after it). Flight that no log covers, found by `reconcile()` from the next boot's
   counter, was flown after the log it followed and ended at a time no record holds: it counts
   with that log, from that log's end, the earliest it can have been flown. That errs early by
   design, up to the gap to the next log, so a limit is never reported later than it was
@@ -1185,7 +1219,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   at the inspection's date and the higher one is refused until then. The other direction is
   refused: an inspection may state no more hours than the aircraft can have had at its date,
   counting the entry of the hours before the first log in force then and each dated after it
-  (before the first log, those hours plus the logs with no UTC start), and an inspection, or
+  (before the first log, those hours plus the logs with no UTC start), each log whose flight
+  time is not known at its whole span (issue #152), and an inspection, or
   an entry, correction or retraction of those hours, that would break it is refused, naming
   the entry. Undoing a retraction or a correction, at any depth of a chain of them, is
   judged the same way, by what it brings back or retracts again, and by every other check a
