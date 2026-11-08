@@ -476,8 +476,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   calendar life that had ended (issue #149). A store written then can hold entries with the
   offset they were given: they are read in UTC and counted in UTC, and shown in UTC by the
   service, the history and the reports, while the row itself is never rewritten, so its
-  journal link verifies as before. Such a store can therefore show an item due earlier than
-  it did, and an aircraft unserviceable that read serviceable: that is the UTC count. An
+  journal link verifies as before. Such a store can therefore show an item due earlier or
+  later than it did, and an aircraft unserviceable that read serviceable or the reverse: that
+  is the UTC count. An entry written east of UTC can move a day earlier, one written west of
+  it a day later, and a calendar-month item by up to a month: on stores written by 0.6.6 and
+  read on 2026-09-15, an annual inspection entered at 2025-09-01T02:00+05:00 read serviceable
+  on 0.6.6 and 15 days overdue now, and one entered at 2025-08-31T22:00-05:00 read 15 days
+  overdue on 0.6.6 and serviceable now, due by 2026-09-30. An
   evidence pack hashes the entries as read, so a pack made from such a store now carries a
   ledger hash other than the one a pack made under 0.6.6 carried for the same records; the
   pack says a different hash means the ledger changed, which does not hold across this
@@ -1043,7 +1048,7 @@ field-level tables. This file is about what that means for a maintenance tool.
   four threads reading through the service, the cap set to 64 KiB, 40 runs left the `-wal` at
   most 119,512 B, a close past the cap kept its command 2.28 to 2.38 s when a try found the reads ended (11 of 40 closes) and 3.61 to 3.69 s when none did (5 of 40), and a service write sent
   as each close began waited at most 0.27 s (0.6.6 under the same load: 28,872 B at most,
-  writes waiting up to 3.69 s; #146's first version 1,462,632 B, 0.27 s). The tests set the cap
+  the longest write waiting 3.69 to 3.77 s over two runs; #146's first version 1,462,632 B, 0.27 s). The tests set the cap
   on the module before a command runs, so the shipped 4 MiB and theirs run the same code.
   The refusal that stays is the store's own
   checkpoint above, which holds the lock while it waits for an older read: a writer in another
@@ -1276,16 +1281,24 @@ field-level tables. This file is about what that means for a maintenance tool.
   undo read in maintenance where the records give serviceable: earlier; an order typed as
   WO-3 awaiting parts, then one opened without an id, reads serviceable with deferred
   defects instead of AOG: later); two live closes from one corrected close close both orders
-  (later: serviceable while one is in work); two live entries of the hours before the first
+  (later: serviceable while one is in work), whether an undo brought a correction back beside
+  another or a correction of a correction brought the first close back beside the last; two live entries of the hours before the first
   log at one place fold the older last, whichever figure it holds (later or earlier by
   which); two registrations reset the part at the later-dated one, dropping an install made
   before it (later: an aircraft lost its 85.0 h past-limit grounding); a correction of a
   correction folds the first entry last (200 h read where 250 h was stated last, a work
   order state deferred read where in work was stated last: later).
   The repair, each measured: retract the entry of the pair that is wrong (the revived
-  correction, the second open, the open that took the default id); for a correction of a
-  correction, retract it, then the correction it corrected, then correct the first entry to
-  what was stated last (retracting the first entry instead reads the same, but then undoing
+  correction, the second open). Retract the open that took the default id, then open it
+  again with a work id of its own: retracting it alone brings the order typed by hand back
+  but drops the state the retracted open stated (on a store written by 0.6.6, WO-3 awaiting
+  parts and a later open without an id, deferred: serviceable with deferred defects; retracted,
+  AOG with no deferred defect; opened again as WO-4, deferred, AOG with the deferred defect
+  as well). For a correction of a correction, of a close as of any other entry, retract it,
+  then the correction it corrected, then correct the first entry to what was stated last (on
+  a store written by 0.6.6, a close of WO-A corrected to close WO-C and that corrected again
+  read serviceable; after the two retractions, in maintenance, and after the correction,
+  WO-C closed and WO-A in work, in maintenance; retracting the first entry instead reads the same, but then undoing
   that retraction and retracting the last correction are each refused, naming the other, so
   that chain can no longer be superseded); a registration with installs is retracted after
   them, then the part is fitted again, and an open with a state change or close of its id
@@ -1381,7 +1394,9 @@ field-level tables. This file is about what that means for a maintenance tool.
   write whose commit is refused leaves the kept result where it was. The result a summary
   shows is the one labelled with the state the summary reads, never a newer or an older one:
   a summary that straddles a commit shows the head it began on, with the rows it began on, and
-  walks nothing for it; the first summary after the commit walks once. Measured in the suite:
+  walks nothing for it; the first summary after the commit walks once. The zero walks below
+  hold for a state already walked: a service starting walks the journal once (one walk cold),
+  and the requests after it none (zero warm). Measured in the suite, from a service started:
   twenty requests with no token, zero walks; one write through the store, zero walks and the
   head moved; one edit made in the file, one walk, and the break shown from then on; one
   outside commit landing inside an open snapshot, zero walks for that snapshot and one for the
@@ -1399,8 +1414,8 @@ field-level tables. This file is about what that means for a maintenance tool.
   is still held, and the build shows the state it began on. The summary costs one read of
   the ledger and one fold per date inside its snapshot, where asking for each aircraft's
   summary in turn reads and folds it per aircraft, and no walk of the journal
-  (twenty fleet requests with no token, zero walks; one outside commit, one walk for the next
-  build, not nine). At fleet level a record the store cannot read follows the board's liveness
+  (from a service started, which walked the journal once as it started: twenty fleet requests
+  with no token, zero walks; one outside commit, one walk for the next build, not nine). At fleet level a record the store cannot read follows the board's liveness
   rule through the rows: one entry that cannot be read leaves maintenance activities and the
   span not known on every row, because liveness is decided over the whole ledger, and a flight
   record that cannot be read leaves only its aircraft's operations and span not known; the

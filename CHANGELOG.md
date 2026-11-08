@@ -2,10 +2,37 @@
 
 ## Unreleased
 
+## 0.6.7 (2026-11-08)
+
+What operators see change. A store written by 0.6.6 opens with every row and its journal head
+as they were, and some of its items read differently: an aircraft with no completed annual
+inspection on record reads not known where it read serviceable; a time entered with a UTC
+offset is counted at its UTC date, so a date-counted item can fall due earlier or later than
+0.6.6 showed it, by up to a month for the annual inspection, and the evidence pack of such a
+store carries another ledger hash although no record changed (compare journal heads); a log
+whose flight time is not known counts its whole span as hours, so parts, the time in service
+and the 100-hour interval can read up to that span sooner, never later; and an inspection
+stating more hours than the aircraft could have had reads with a sentence saying the records
+disagree. New refusals, each naming the entry in the way: an entry that would make an
+inspection state more hours than the aircraft could have had (409 or 422); undoing a
+retraction or a correction, or correcting a retraction, that brings back what the records no
+longer allow (409); a correction of a correction (409: retract it, then correct the entry it
+corrected); a work order opened without an id whose default id is taken (409); and an install
+of a part that may have reached its life limit by such a span. A `uasw` command closing its
+store beside a running service no longer makes the service's writes wait up to 5 s or
+refuses them 503. `uasw-census px4-excerpt` refuses a parameter of any type but `int32_t` or
+`float`. The seed, its journal head, the SYN-04 pack and the static export's data files are
+what 0.6.6 gave; the export's `index.html` changes by one line (#152). Read the known issues at
+the end of this section before relying on a part's hours: three open issues can read an item
+further from its limit than the records allow.
+
 - A log whose flight time is not known now counts its whole span as hours, the most it can
-  have flown (closes #152). Such a log (an ArduPilot log with no STAT messages, a ULog with
-  no vehicle_land_detected topic) counted one cycle and no hours, so a part could read younger
-  than it may be and an hour item that may be due read not due, with nothing said: a
+  have flown. Parts, the time in service and the 100-hour interval can read up to that span
+  sooner than before, never later; each hour item's sentence says so with the least the known
+  flight gives, and the due list names the log. Before, such a log counted no hours, so a
+  part could read younger than it may be (closes #152). Such a log is an ArduPilot log with
+  no STAT messages or a ULog with no vehicle_land_detected topic; it counted one cycle and no
+  hours, and an hour item that may be due read not due, with nothing said: a
   propeller set at 299.5 h, fitted during a 1 h log of unknown flight time, read "has 0.5 h
   left of its 300 h life limit". It now reads "is 0.5 h past its 300 h life limit, counting 1
   log whose flight time is not known at the most the records allow (1.0 h): at least 299.5 h
@@ -27,7 +54,8 @@
   rows and its journal head and reads the same way as a new store. The seed, its journal
   head, the SYN-04 pack and the static export's data files are unchanged; its index.html
   changes by that one line.
-- Undoing a retraction is judged like a new entry (closes #161). Retracting a retraction, or
+- Undoing a retraction or a correction, at any depth, or correcting a retraction, is judged
+  like a new entry of its date (closes #161). Retracting a retraction, or
   correcting it, brings back the entry it had retracted, and such a write was judged only by
   the kind of the entry it superseded, itself a retraction. With 200 h before the first log,
   a 100-hour inspection before it stated at 150 h and 105 h flown since (55.0 h overdue,
@@ -91,7 +119,6 @@
   head and reads as it read before; LIMITS.md says what each pair reads and which entry to
   retract to repair it. The seed, its journal head, the SYN-04 pack and the static export are
   unchanged.
-
 - An inspection's hours follow the time in service, whatever order the records arrive in
   (closes #151). A new entry of the hours before the first log was checked only against the
   entries after it, so with 200 h entered, a 100-hour inspection derived at 210 h and 95 h
@@ -119,9 +146,8 @@
   before it, "at least" so many hours overdue when the dated logs since put it past its
   tolerance, and not known otherwise, never "due in 45.0 h". Records that arrive later on the
   early side still leave a derived figure low, so the item reads due earlier, never later:
-  LIMITS says by how much. The seeded fleet states its inspections' hours, so the seed, its
-  journal head, the SYN-04 pack and the static export are unchanged.
-
+  LIMITS says by how much (#162, below). The seeded fleet states its inspections' hours, so the
+  seed, its journal head, the SYN-04 pack and the static export are unchanged.
 - One instant gives the same due dates, calendar life and board at any UTC offset (closes
   #149). An entry's time and a query's `as_of` kept the offset they were given, and the
   engine and the ledger took dates in it, so an annual inspection entered at
@@ -134,8 +160,15 @@
   install check take UTC dates. A time with no offset is UTC, as before. A store written by
   0.6.6 or earlier can hold entries with an offset: they are read and counted in UTC, and
   shown in UTC by the API, `record history` and the reports, with the row never rewritten,
-  so the journal verifies with the same head; such a store can show an item due earlier, or
-  an aircraft unserviceable, where it read otherwise. An evidence pack made from such a store
+  so the journal verifies with the same head. Such a store can show an item due earlier or
+  later than it read, and an aircraft unserviceable that read serviceable or the reverse: an
+  entry written east of UTC can move a day earlier, one written west of it a day later, and a
+  calendar-month item, as the annual inspection is, by up to a month. Measured on stores
+  written by 0.6.6 and read on 2026-09-15 (Windows, Python 3.12.10, each command a process of
+  its own, 2026-11-08): an annual inspection entered at 2025-09-01T02:00+05:00 read
+  serviceable on 0.6.6 and 15 days overdue, unserviceable, now; one entered at
+  2025-08-31T22:00-05:00 (2025-09-01 03:00 UTC) read 15 days overdue, unserviceable, on 0.6.6
+  and serviceable now, due by 2026-09-30, the UTC count. An evidence pack made from such a store
   hashes those entries as read, in UTC, so its ledger hash differs from the one 0.6.6 gave
   for the same records, although no record changed: across this upgrade a different ledger
   hash does not mean the ledger changed, and the journal head, which stays, is what to
@@ -237,6 +270,77 @@
   records and census probes, and none of the ULogs holds a parameter of another type (51,755
   initial, 7,456 default and 102 changed parameters over the 45, read from the message bytes).
   `tests/test_px4_excerpt_parameter_types.py`.
+- The dev extra pins ruff to 0.17.4, the version CI installed for main's last green run, so a
+  ruff release can no longer turn the lint step red with no change to the code (closes #171).
+  A newer ruff comes in its own change, with its own green run. Nothing an operator installs
+  changes.
+- README: the live demo is called a demo fleet of seven synthetic aircraft and two real ones,
+  where it said synthetic data, and a paragraph names the known issues below that can read
+  late. LIMITS.md: the #159 paragraph says an upgraded store can read later as well as
+  earlier; the repair of an open that took a default id says to open it again under a work
+  id of its own, which keeps its deferred defect on record; the correction of a correction of
+  a close is named and tied to its repair; the walk counts say they start after the startup
+  walk; and #146's 0.6.6 figure reads 3.69 to 3.77 s over two runs. Text only.
+
+Code that changed: the life engine (`life/engine.py`, `life/model.py`, `life/cue.py`) and the
+ledger's checks (`ledger/validate.py`, `ledger/project.py`) for #150, #149, #151, #161 and
+#152; the store (`service/store.py`) for #127 and #149; the service and the command line
+(`service/app.py`, `service/cli.py`) for #149; the evidence pack (`evidence/pack.py`,
+`evidence/html.py`) and the page (`service/site/index.html`) for #152; the assistant's tool
+description (`assistant/tools.py`) for #150; and the excerpt cutter (`census/excerpt.py`,
+`flight/ulog_declared.py`) for #141 and #143. Nothing else under `src` but `__version__`.
+
+Known issues, not fixed in this release. A reading later than the records allow, an item
+further from its limit than it may be, comes first; each issue is in 0.6.6 too unless it says
+new.
+
+- #169, late: a log with no UTC start counts toward the aircraft's time in service and toward
+  no part, hours or cycles, so a part on that aircraft can read up to that log's flight
+  younger than it may be, and a part past its life limit can read within it. The due list
+  notes the log. 6 of the 59 public logs and 1 of the 34 seed flights have no UTC start.
+- #165, late: a store written before 0.6.7 can hold two live entries where the records allow
+  one (two corrections of one entry brought back by an undo, a correction of a correction,
+  two registrations of one part, two opens of one work order id). It reads as before, in
+  seven shapes later than the entries stated last: serviceable while an order is in work, an
+  inspection fewer hours overdue, a past-limit grounding dropped, serviceable with deferred
+  defects instead of AOG. The tool does not flag such a store; `uasw record history --all`
+  shows both entries of a pair, and LIMITS.md gives each repair, measured.
+- #153, late: flight the logs miss, found from the flight controller's counter, adds no cycle
+  to any part, and counts its hours only
+  toward the part fitted when the previous log started, so a part fitted between two logs,
+  or a cycle limit, can read younger than it may be.
+- #156: an inspection overdue within its tolerance puts the board at "serviceable with
+  deferred defects", although the tolerance allows flight only to reach the inspection, and
+  the grounded-flight check reports no flight made inside it. The item itself reads overdue.
+- #172, new: a part's line in the evidence pack and an item's cue give the most hours a log
+  whose flight time is not known allows, without the least; the item's sentence gives both.
+  An early reading.
+- #162, early: inspection hours filled in automatically are fixed when entered, so a later
+  entry raising the hours before the first log, or a log dated before the inspection uploaded
+  after it, leaves them low and the 100-hour item reads more used than the records allow, up
+  to unserviceable, 95.0 h overdue, where 5.0 h are left. Correcting the inspection with its
+  hours stated puts it right; LIMITS.md gives the order.
+- #155, early: a replaced flight controller starts its counter again, and the old counter's
+  total is read as flight the logs miss, added to the time in service and to every part
+  fitted.
+- #154: the evidence pack gives the time in service as not known for an aircraft with no
+  maintenance record while its board and 100-hour item are counted from it, and the pack and
+  the records summary count logs named as duplicates in their logged time and flight count.
+- #166: on a store written before 0.6.7 holding a correction of a correction, retracting the
+  first entry under it leaves the chain where undoing that retraction and retracting the last
+  correction are each refused, naming the other. No reading is wrong; LIMITS.md gives the
+  order that keeps the chain open. A part can still be removed and fitted again; for the
+  hours before the first log no way out has been measured.
+- #170: a registration cannot be corrected; `--supersedes` on a register entry is refused,
+  "component P-1 is already registered". Retract its installs, then the registration,
+  register the part again and fit it again.
+- #157: the records summary and the evidence pack of one aircraft with three years of daily
+  logs take about 30 s, on routes that need no token, so repeated requests can keep the
+  service busy.
+- #145: `uasw-census px4-excerpt` prints a refused key as the log spells it, so a key holding
+  a newline or a control character splits the one-line refusal or reaches the terminal raw.
+  Nothing is written; the parameter-type refusal of this release is a second route to it.
+- #128, #117, #118 and #135, as in 0.6.6.
 
 ## 0.6.6 (2026-10-27)
 

@@ -6,7 +6,7 @@ A tool you run on your own machine to keep the maintenance and operations record
 civil unmanned aircraft fleet. It reads the flight logs, counts what each aircraft and each
 part has used, and says what is due and why.
 
-**Live demo, synthetic data, nothing to install:**
+**Live demo, 7 synthetic aircraft plus 2 real ones from public logs, nothing to install:**
 <https://tornidomaroc-web.github.io/uas-sustainment-workbench/>
 
 ## In one minute
@@ -114,9 +114,16 @@ is not seeded. For your own, put your aircraft's name in place of `my-aircraft` 
 the path of its `.ulg` (PX4) or `.bin` (ArduPilot) log in place of the excerpt's; several logs
 may follow one another on the line. A log is read into a flight record and never stored raw.
 
-**Released and unreleased.** The latest release is 0.6.6. Main can also hold changes made
+**Released and unreleased.** The latest release is 0.6.7. Main can also hold changes made
 after it, listed under Unreleased in [CHANGELOG.md](CHANGELOG.md). A clone gives you main;
-`git checkout v0.6.6` gives you the release.
+`git checkout v0.6.7` gives you the release.
+
+**Known issues.** The 0.6.7 section of [CHANGELOG.md](CHANGELOG.md) lists the open issues
+this release knows of. Three can read an item further from its limit than the records allow:
+a log with no UTC start counts toward no part (#169); a store written before 0.6.7 that holds
+two live entries where the records allow one reads as it did, sometimes later than the
+entries stated last (#165, repairs in LIMITS.md); and flight the logs miss adds no cycle
+and counts only toward the part fitted when the log before it started (#153).
 
 **What it does not do, and how it is checked.** It does not certify airworthiness or release
 an aircraft to service. It takes each entry at the word of the person who made it: there are
