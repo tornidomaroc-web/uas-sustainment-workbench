@@ -459,29 +459,49 @@ field-level tables. This file is about what that means for a maintenance tool.
   limit has used the whole of its life: it grounds the aircraft with a sentence that says it
   has reached its limit, and the ledger refuses to fit it, at the same count. Hours are
   compared after rounding to a thousandth of an hour (3.6 s), on the board and in the ledger
-  alike, so "exactly" is that wide. A calendar life is counted in days and its last day
-  completes at midnight UTC: on that day the part is within its life, valid on the board and
-  accepted at an install; from the next day it is past on both. 0.3.0 and 0.4.0 refused an
+  alike, so "exactly" is that wide. A calendar life is counted in days: on its last day the
+  part is within its life, valid on the board and accepted at an install; from the next day
+  it is past on both, the day counted as the next bullet says (at midnight UTC, or earlier
+  at midnight in the offset a computation date or an install time is given in). 0.3.0 and 0.4.0 refused an
   install on that last day while the board called the same day valid; 0.5.0 withdrew that
   refusal. What this does not cover: an inspection at exactly zero hours remaining still
   reads "due in 0.0 h", because 14 CFR 91.409(b) gives the 100-hour inspection a tolerance
   for the flight that overruns it and a life limit has none.
-- **Every date is the UTC date of its instant.** An entry's time and an `as_of` given with
-  an offset are converted to UTC where they come in (the service, the command line, the
-  ledger's check and the store's write), and one with no offset is UTC, as before; due
-  dates, calendar life, the install check and the board are counted from the UTC date.
-  Until 0.6.6 the offset was kept and the date taken in it, so an annual inspection entered
-  at 2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) fell due a month later than the same
-  instant written in UTC, and a query at 2026-08-31T23:30-05:00 kept a battery within a
-  calendar life that had ended (issue #149). A store written then can hold entries with the
-  offset they were given: they are read in UTC and counted in UTC, and shown in UTC by the
-  service, the history and the reports, while the row itself is never rewritten, so its
-  journal link verifies as before. Such a store can therefore show an item due earlier than
-  it did, and an aircraft unserviceable that read serviceable: that is the UTC count. An
-  evidence pack hashes the entries as read, so a pack made from such a store now carries a
-  ledger hash other than the one a pack made under 0.6.6 carried for the same records; the
-  pack says a different hash means the ledger changed, which does not hold across this
-  upgrade. The journal head is the same before and after; the pack does not carry it, so compare such stores by the head uasw verify prints, which the records summary also carries.
+- **A calendar item is counted at the bound that is never late.** A time given with an
+  offset has two dates, its date as given and its UTC date, and which one an authority counts
+  a calendar month in cannot be known here. A calendar interval is counted from the earlier
+  of its start's two dates (an inspection's completion) and to the later of its end's (the
+  computation date, `as_of`, and the time of an install checked against a calendar life); a
+  time with no offset is UTC, so its two dates are one. A battery's calendar life counts from
+  its `--since` date, which carries no offset. Each calendar alone reads late one way: 0.6.6
+  and earlier took the date as given, so an annual inspection entered at
+  2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) fell due a month late and a query at
+  2026-08-31T23:30-05:00 kept a battery within a calendar life that had ended (issue #149);
+  counting every date in UTC instead read an annual entered at 2025-08-31T22:00-05:00 due by
+  2026-09-30, in 15 days, on 2026-09-15, where its date as entered gives 15 days overdue,
+  and a battery asked at 2026-09-01T02:00+05:00 within a life that ended on 2026-08-31
+  (issue #174). The cost of the bound: an item whose two dates differ reads up to one day
+  earlier than the UTC count, and an inspection completed west of UTC late on a month's last
+  day falls due a month earlier than its UTC date gives. The item's sentence then says which
+  date it was counted from or to ("counted from its date as entered, 2025-08-31, the earlier
+  of that and its UTC date, 2025-09-01"; "counted to the computation date as given,
+  2026-09-01, the later of that and its UTC date, 2026-08-31"), and an install refused by its
+  date as entered says so. A start in the same month by both dates reads its due date as
+  before, its days used counted from the earlier date. A work order's date ("since ...") and
+  the date an hours check names are shown in UTC; they count no calendar interval. The time
+  of every entry is stored as given, offset included, and shown in UTC by the service, the
+  history, the reports and the export; the row is never rewritten, so its journal link
+  verifies as before. A store written by 0.6.6 holds the time as given and reads at the
+  bound: as 0.6.6 read it, or earlier. Rows written by an unreleased build between #159 and
+  this change hold the UTC time alone, and nothing in a store tells such a row from an entry
+  given in UTC, so the date as entered of such an entry cannot be recovered from the store:
+  it is counted in UTC, up to a month late for an entry given west of UTC on a month's last
+  evening. A correction (`--supersedes`, or `supersedes` in `POST /entries`) giving the same
+  time with its offset as entered is accepted as the same instant, and the item then counts
+  from its date as entered. An evidence pack hashes the entries as shown, in UTC, so a pack
+  made from a 0.6.6 store holding an offset carries a ledger hash other than the one a pack
+  made under 0.6.6 carried for the same records; the pack says a different hash means the
+  ledger changed, which does not hold across this upgrade. The journal head is the same before and after; the pack does not carry it, so compare such stores by the head uasw verify prints, which the records summary also carries.
 - **Which part is on which airframe is an operator record.** Logs identify the flight
   controller only, never a battery pack, a motor or a propeller, so every installation
   window is entered by hand and a flight with no UTC start cannot be assigned to any

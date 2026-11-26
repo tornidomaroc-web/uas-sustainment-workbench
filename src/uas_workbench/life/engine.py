@@ -13,9 +13,12 @@ and hours count once the flight is over: from the end of its log, the last insta
 can have ended (log_end), never from its start. A part whose cycles or hours have reached its
 limit, exactly or past it, grounds the aircraft: nothing of its life is left for another
 flight, and the ledger refuses to fit such a part for the same reason (14 CFR 43.10(c),
-"after it has reached its life limit"). A calendar life is counted in days and its last day
-completes at midnight UTC, so on that day the part is still within its life. Every date is
-the UTC date of its instant, whatever offset the instant was written with (issue #149).
+"after it has reached its life limit"). A calendar life is counted in days, and on its last
+day the part is still within its life. A time given with an offset has two dates, as given
+and in UTC: a calendar interval is counted from the earlier of its start's two dates and to
+the later of the computation date's (life.model.counted_from, counted_to; issues #149, #174),
+the bound that is never late, and an item's sentence says so where that reads earlier than
+the UTC count.
 
 An inspection interval is counted from the completion on record that starts it. With none on
 record, an hours interval is counted from zero time in service; a calendar interval has no
@@ -59,6 +62,8 @@ from .model import (
     Unit,
     Usage,
     WorkOrder,
+    counted_from,
+    counted_to,
     in_utc,
 )
 from .policy import LifePolicy, LifeRule
@@ -337,6 +342,30 @@ def end_of_month_after(start: date, months: int) -> date:
     return date(year, month, calendar.monthrange(year, month)[1])
 
 
+def counted_from_clause(start: datetime) -> str:
+    """What an interval counted from `start`'s date as entered says, when that date moves the
+    reading earlier than its UTC date would: a due date one month earlier (issue #174)."""
+    utc = in_utc(start).date()
+    if start.date() >= utc or end_of_month_after(start.date(), 0) == end_of_month_after(utc, 0):
+        return ""
+    return (
+        f", counted from its date as entered, {start.date()}, the earlier of that and its UTC "
+        f"date, {utc}"
+    )
+
+
+def counted_to_clause(as_of: datetime) -> str:
+    """What an item counted to the computation date as given says, when that date is later
+    than its UTC date, so the item reads one day earlier than in UTC (issue #174)."""
+    utc = in_utc(as_of).date()
+    if as_of.date() <= utc:
+        return ""
+    return (
+        f", counted to the computation date as given, {as_of.date()}, the later of that and "
+        f"its UTC date, {utc}"
+    )
+
+
 def _state(remaining: float, limit: float, tolerance: float, fraction: float) -> DueState:
     if remaining < 0:
         return "overdue_within_tolerance" if 0 < -remaining <= tolerance else "overdue"
@@ -408,7 +437,7 @@ def _component_items(
         else:
             due = end_of_month_after(c.in_service_since, int(limit))
             scale = float((due - c.in_service_since).days)
-            remaining = float((due - as_of.date()).days)
+            remaining = float((due - counted_to(as_of)).days)
             used = scale - remaining
             unit, tolerance = "days", 0.0
             message = (
@@ -417,7 +446,7 @@ def _component_items(
                 if remaining >= 0
                 else f"{subject} on aircraft {key} passed its {limit:.0f}-calendar-month life "
                 f"limit on {due}"
-            )
+            ) + counted_to_clause(as_of)
         items.append(
             DueItem(
                 key,
@@ -469,7 +498,7 @@ def _inspection_items(
                     rule.tolerance_hours,
                     "unknown",
                     rule.source,
-                    f"{subject} of aircraft {key} cannot be measured on {as_of:%Y-%m-%d}: "
+                    f"{subject} of aircraft {key} cannot be measured on {in_utc(as_of):%Y-%m-%d}: "
                     f"{not_known.reason}",
                 )
             )
@@ -506,9 +535,9 @@ def _inspection_items(
                 # never skipped (issue #150). The board is then not known with this reason.
                 names = " or ".join((rule.name, *rule.satisfied_by))
                 not_known = Unknown(
-                    f"{subject} of aircraft {key} cannot be counted on {as_of:%Y-%m-%d}: no "
-                    f"completed {names} is recorded, so its {limit:.0f}-calendar-month "
-                    f"interval {NO_DATE}"
+                    f"{subject} of aircraft {key} cannot be counted on "
+                    f"{in_utc(as_of):%Y-%m-%d}: no completed {names} is recorded, so its "
+                    f"{limit:.0f}-calendar-month interval {NO_DATE}"
                 )
                 items.append(
                     DueItem(
@@ -527,17 +556,21 @@ def _inspection_items(
                     )
                 )
                 continue
-            start = in_utc(done.done_utc).date()
+            start = counted_from(done.done_utc)
             due = end_of_month_after(start, int(limit))
             scale = float((due - start).days)
-            remaining = float((due - as_of.date()).days)
+            remaining = float((due - counted_to(as_of)).days)
             used = scale - remaining
             tolerance, unit = 0.0, "days"
             message = (
-                f"{subject} of aircraft {key} is due by {due}, in {_plural(remaining, 'day')}"
-                if remaining >= 0
-                else f"{subject} of aircraft {key} was due by {due} and is "
-                f"{_plural(-remaining, 'day')} overdue"
+                (
+                    f"{subject} of aircraft {key} is due by {due}, in {_plural(remaining, 'day')}"
+                    if remaining >= 0
+                    else f"{subject} of aircraft {key} was due by {due} and is "
+                    f"{_plural(-remaining, 'day')} overdue"
+                )
+                + counted_from_clause(done.done_utc)
+                + counted_to_clause(as_of)
             )
         else:
             continue  # an inspection interval in cycles is not modelled
@@ -729,10 +762,11 @@ def due_list(
     `components` may be the whole fleet's; the ones installed on this aircraft at `as_of` are
     selected here. `flights_of` is asked for every aircraft a selected component has been on,
     because its life status travelled with it (14 CFR 43.10). A log counts once it has ended
-    by `as_of` (log_end); a flight with no UTC start counts whenever. Dates are taken in UTC:
-    `as_of` is converted to UTC first, and so is the due list's `as_of` (issue #149).
+    by `as_of` (log_end); a flight with no UTC start counts whenever. The due list's `as_of` is
+    the instant in UTC (issue #149); a calendar item is counted to the later of the date of
+    `as_of` as given and its UTC date, and from the earlier of its start's two dates (#174).
     """
-    as_of = in_utc(as_of)
+    given, as_of = as_of, in_utc(as_of)
     installed = [c for c in components if _installed_on(c, aircraft_key, as_of)]
     if maintenance is None and not installed:
         return DueList(aircraft_key, as_of, False, Unknown(NO_RECORD), ())
@@ -772,7 +806,7 @@ def due_list(
         by_id[c.id], bound = _component_usage(c, usage)
         items.extend(
             _component_items(
-                aircraft_key, c, rule, by_id[c.id], as_of, policy.due_soon_fraction, bound
+                aircraft_key, c, rule, by_id[c.id], given, policy.due_soon_fraction, bound
             )
         )
         for key, ref, seconds in bound.logs if bound is not None else ():
@@ -834,7 +868,7 @@ def due_list(
                     rule,
                     done,
                     least_in_service,
-                    as_of,
+                    given,
                     policy.due_soon_fraction,
                     extra=extra,
                 )
@@ -849,7 +883,7 @@ def due_list(
                     before,
                     flights_of(aircraft_key),
                     least_in_service,
-                    as_of,
+                    given,
                     policy.due_soon_fraction,
                     tolerance_s,
                     own.flown,
@@ -864,6 +898,7 @@ def due_list(
         by_id,
         maintenance.work_orders if maintenance else (),
         tuple(notes),
+        counted_to(given),
     )
 
 

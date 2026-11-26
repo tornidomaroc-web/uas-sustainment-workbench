@@ -423,7 +423,7 @@ def due_view(
     out = DueOut(
         aircraft_key=aircraft.key,
         synthetic=aircraft.synthetic,
-        as_of=at,
+        as_of=due.as_of,  # the instant, in UTC
         status=_maybe(state.status),
         status_reasons=list(state.reasons),
         time_in_service_s=_maybe(due.time_in_service_s),
@@ -451,7 +451,9 @@ def due_cued(due: DueList, state: Board, out: DueOut) -> DueCueOut:
         status_cue=status_cue(state.status),
         status_cues=list(reason_cues(due, state)),
         items=[
-            DueItemCueOut(**i.model_dump(), cue=item_cue(by_message[i.message], due.as_of))
+            DueItemCueOut(
+                **i.model_dump(), cue=item_cue(by_message[i.message], due.day or due.as_of)
+            )
             for i in out.items
         ],
     )
@@ -512,8 +514,11 @@ def _aircraft_row(
 
 
 def entry_view(store: Store, entry: Entry) -> EntryOut:
+    """An entry as the API, the reports and the export show it: its times in UTC. The store
+    keeps the time it occurred as given, offset included (issue #174)."""
     superseded_by = store.projection().superseded_by
-    data = {k: v for k, v in entry_to_json(entry).items() if k != "id"}
+    shown = dataclasses.replace(entry, occurred_utc=in_utc(entry.occurred_utc))
+    data = {k: v for k, v in entry_to_json(shown).items() if k != "id"}
     return EntryOut(
         id=entry.id or 0,
         superseded_by=superseded_by.get(entry.id or -1),
@@ -544,7 +549,11 @@ def component_view(store: Store, c: Component, with_entries: bool = False) -> Co
         hours_s_before=c.hours_s_before,
         cycles_before=c.cycles_before,
         installations=[
-            InstallationOut(aircraft_key=i.aircraft_key, from_utc=i.from_utc, to_utc=i.to_utc)
+            InstallationOut(
+                aircraft_key=i.aircraft_key,
+                from_utc=in_utc(i.from_utc),
+                to_utc=in_utc(i.to_utc) if i.to_utc is not None else None,
+            )
             for i in c.installations
         ],
         installed_on=on[-1].aircraft_key if on else None,
@@ -611,7 +620,7 @@ def grounded_view(
     out = GroundedFlightsOut(
         aircraft_key=aircraft.key,
         synthetic=aircraft.synthetic,
-        as_of=at,
+        as_of=in_utc(at),
         logs=result.logs,
         judged=result.judged,
         findings=[_grounded_out(f, aircraft.synthetic, cues) for f in result.findings],
@@ -651,7 +660,7 @@ def fleet_grounded(
         (f for v in views for f in v.findings), key=lambda f: (f.utc_start, f.aircraft_key)
     )
     return FleetGroundedOut(
-        as_of=at,
+        as_of=in_utc(at),
         logs=sum(v.logs for v in views),
         judged=sum(v.judged for v in views),
         not_judged=sum(len(v.not_judged) for v in views),
@@ -738,11 +747,12 @@ Cues = Annotated[
 
 
 def _utc(value: datetime | None) -> datetime | None:
-    """A time as it came in, in UTC: one with an offset is converted (issue #149), a naive one
-    is taken as UTC, so the engine always compares aware datetimes and dates are UTC dates."""
+    """A time as it came in: one with an offset keeps it, so that its date as given is known
+    (issue #174); a naive one is taken as UTC, so the engine always compares aware datetimes.
+    Every answer shows it in UTC."""
     if value is None:
         return value
-    return in_utc(value) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _remove(path: Path) -> None:

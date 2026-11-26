@@ -37,12 +37,12 @@ limit; the shortest form still names the part, the number, the unit and the dire
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from uas_workbench.flight.record import Maybe, Unknown, is_known
 
 from .engine import DISAGREE, NO_DATE, NO_RECORD, _work_sentence
-from .model import Board, DueItem, DueList, WorkOrder, in_utc
+from .model import Board, DueItem, DueList, WorkOrder, counted_to, in_utc
 
 CUE_LIMIT = 40
 NOT_KNOWN = "not known"
@@ -78,14 +78,17 @@ def _plural(n: float, unit: str) -> str:
     return f"{n:.0f} {unit}{'' if n == 1 else 's'}"
 
 
-def _due_date(item: DueItem, as_of: datetime) -> str:
-    """The calendar due date, as the sentence names it: remaining days counted from as_of."""
+def _due_date(item: DueItem, as_of: datetime | date) -> str:
+    """The calendar due date, as the sentence names it: remaining days counted from the day
+    the item is counted to, the due list's `day`, or as_of's later date (issue #174)."""
     assert is_known(item.remaining)
-    return (in_utc(as_of).date() + timedelta(days=int(item.remaining))).isoformat()
+    day = counted_to(as_of) if isinstance(as_of, datetime) else as_of
+    return (day + timedelta(days=int(item.remaining))).isoformat()
 
 
-def item_cue(item: DueItem, as_of: datetime) -> str:
-    """The cue of one due item, from its own fields."""
+def item_cue(item: DueItem, as_of: datetime | date) -> str:
+    """The cue of one due item, from its own fields. `as_of` is the due list's `day` (the
+    date its calendar items are counted to), or the computation time it was given."""
     if item.state == "unknown" or isinstance(item.remaining, Unknown):
         if NO_DATE in item.message:
             return _fit(
@@ -211,7 +214,7 @@ def reason_cues(due: DueList, state: Board) -> tuple[str, ...]:
     cues = []
     for reason in state.reasons:
         if reason in by_message:
-            cues.append(item_cue(by_message[reason], due.as_of))
+            cues.append(item_cue(by_message[reason], due.day or due.as_of))
         elif reason in by_sentence:
             cues.append(work_cue(by_sentence[reason]))
         else:
