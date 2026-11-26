@@ -265,6 +265,55 @@ def test_the_service_keeps_a_west_entry_as_given_and_counts_it_from_its_date_as_
     ]
 
 
+# The evidence pack's page carries the same sentence as its JSON.
+def test_the_evidence_page_says_which_date_a_west_entry_was_counted_from(tmp_path: Path) -> None:
+    annual_store(tmp_path, "2025-08-31T22:00:00-05:00")
+    programme(tmp_path, "2026-09-15T00:00Z")
+    page = (tmp_path / "pack.html").read_text(encoding="utf-8")
+    assert annual_overdue("2026-08-31", "2025-08-31", "2025-09-01") in page
+
+
+# The records summary judges each logged flight on the board at the log's start
+# (2026-06-12 03:28:15 UTC). An annual entered at 2025-05-31T22:00-05:00 was due by 2026-05-31
+# by its date as entered, so the flight started while the aircraft was unserviceable; main
+# read it due by 2026-06-30 and found nothing. The same through `GET .../grounded-flights`.
+def test_the_records_summary_judges_a_flight_by_a_west_entrys_date_as_entered(
+    tmp_path: Path,
+) -> None:
+    annual_store(tmp_path, "2025-05-31T22:00:00-05:00")
+    finding = (
+        "a flight of aircraft X-1 was logged from 2026-06-12 03:28:15 UTC while the records "
+        "show the aircraft unserviceable at that time: the annual inspection of aircraft X-1 "
+        "was due by 2026-05-31 and is 12 days overdue, counted from its date as entered, "
+        "2025-05-31, the earlier of that and its UTC date, 2025-06-01"
+    )
+    ok(tmp_path, "records", "X-1", "--out", "r.html", "--json", "--as-of", "2026-09-15T00:00Z")
+    summary = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    grounded = summary["operations"]["grounded"]
+    assert (grounded["judged"], grounded["findings"]) == (1, [finding])
+    with serving(tmp_path) as base:
+        query = urllib.parse.urlencode({"as_of": "2026-09-15T00:00:00Z"})
+        status, view = call(base, "GET", f"/aircraft/X-1/grounded-flights?{query}")
+    assert status == 200, view
+    assert [f["message"] for f in view["findings"]] == [finding]
+
+
+# Guard, green on main and after: a work order's date names no calendar interval and is
+# shown in UTC, as before, whatever offset it was opened with.
+def test_a_work_order_opened_with_an_offset_is_dated_in_utc(tmp_path: Path) -> None:
+    annual_store(tmp_path, "2026-06-01T00:00Z")
+    ok(tmp_path, "record", "work-order", "open", "X-1", "--state", "in_work", "--by",
+       "A. Tester, maintenance", "--statement", "replace the left landing gear strut",
+       "--at", "2026-09-01T02:00:00+05:00")  # fmt: skip
+    prog = programme(tmp_path, "2026-09-15T00:00Z")
+    assert prog["status"] == "in maintenance"
+    assert prog["status_reasons"] == [
+        "aircraft X-1 is in maintenance since 2026-08-31: replace the left landing gear strut"
+    ]
+    history = ok(tmp_path, "record", "history", "X-1").splitlines()
+    assert history[-1].startswith("#2 2026-08-31 21:00 work_order.open by A. Tester")
+
+
 # ---- guards: green on main and after ---------------------------------------------------------
 
 
