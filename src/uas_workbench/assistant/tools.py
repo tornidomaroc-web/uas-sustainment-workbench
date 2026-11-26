@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -128,7 +128,11 @@ def as_ollama_tools() -> list[dict[str, Any]]:
 
 
 def stamp(as_of: datetime) -> str:
-    return as_of.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """as_of as the service is asked it: in UTC as before, or with the offset it was given, so
+    that the service counts a calendar item to the later of its two dates (issue #174)."""
+    if as_of.utcoffset() in (None, timedelta(0)):
+        return as_of.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return as_of.isoformat(timespec="seconds")
 
 
 def resolve(name: str, arguments: dict[str, Any], as_of: datetime) -> tuple[str, dict[str, str]]:

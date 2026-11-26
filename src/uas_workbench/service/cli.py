@@ -198,9 +198,10 @@ def _nothing_at(path: str) -> bool:
 
 
 def _when(text: str | None, flag: str) -> datetime | None:
-    """A date and time given on the command line, in UTC: converted when it names an offset
-    (issue #149), taken as UTC when it names none; refused (422), as the service refuses a
-    date it cannot read, when it is not one."""
+    """A date and time given on the command line: kept with its offset when it names one, so
+    that its date as given is known (issue #174), taken as UTC when it names none; refused
+    (422), as the service refuses a date it cannot read, when it is not one. It is shown in
+    UTC."""
     if text is None:
         return None
     try:
@@ -208,7 +209,7 @@ def _when(text: str | None, flag: str) -> datetime | None:
     except ValueError as exc:
         detail = f"{flag} {text!r} is not a date and time in ISO 8601, such as 2026-09-01T09:00Z"
         raise Refused(422, detail) from exc
-    return when.astimezone(UTC) if when.tzinfo is not None else when.replace(tzinfo=UTC)
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
 def _write(path: Path, text: str) -> None:
@@ -381,7 +382,10 @@ def cmd_ask(args: argparse.Namespace) -> None:
         if answer.grounding.verified
         else "Grounded: NO, unsupported: " + ", ".join(answer.grounding.unsupported)
     )
-    print(f"Model {answer.model_tag} ({answer.model_digest[:12]}), as of {as_of.isoformat()}")
+    print(
+        f"Model {answer.model_tag} ({answer.model_digest[:12]}), "
+        f"as of {as_of.astimezone(UTC).isoformat()}"
+    )
     if args.record:
         recording = from_answer(answer, datetime.now(UTC).replace(microsecond=0))
         try:
@@ -611,7 +615,8 @@ def cmd_record(args: argparse.Namespace) -> None:
             if e.id in dead and not args.all:
                 continue
             line = (
-                f"#{e.id} {e.occurred_utc:%Y-%m-%d %H:%M} {e.kind} by {e.entered_by}: {e.statement}"
+                f"#{e.id} {e.occurred_utc.astimezone(UTC):%Y-%m-%d %H:%M} {e.kind} by "
+                f"{e.entered_by}: {e.statement}"
             )
             if e.details.get("work_id"):
                 line += f" [{e.details['work_id']}]"
@@ -628,7 +633,9 @@ def _who(p: argparse.ArgumentParser, statement: bool = True) -> None:
     if statement:
         p.add_argument("--statement", required=True, help="what was done, in your words")
     p.add_argument(
-        "--at", help="when it happened (ISO 8601, an offset converted to UTC); default now"
+        "--at",
+        help="when it happened (ISO 8601; an offset is kept, a time with none is UTC; a calendar "
+        "interval counts from the earlier of its date as given and its UTC date); default now",
     )
     p.add_argument("--supersedes", type=int, help="the entry id this one corrects")
     p.add_argument("--reason", help="why that entry was wrong; required with --supersedes")
@@ -730,7 +737,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the pack as JSON next to it")
     p.add_argument(
-        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+        "--as-of",
+        help="fixed computation date (ISO 8601; a time with no offset is UTC; a calendar item "
+        "counts to the later of its date as given and its UTC date); default now",
     )
     p.set_defaults(func=cmd_evidence)
 
@@ -743,7 +752,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
     p.add_argument(
-        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+        "--as-of",
+        help="fixed computation date (ISO 8601; a time with no offset is UTC; a calendar item "
+        "counts to the later of its date as given and its UTC date); default now",
     )
     p.set_defaults(func=cmd_records)
 
@@ -756,7 +767,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, required=True, help="the HTML file to write")
     p.add_argument("--json", action="store_true", help="also write the summary as JSON next to it")
     p.add_argument(
-        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+        "--as-of",
+        help="fixed computation date (ISO 8601; a time with no offset is UTC; a calendar item "
+        "counts to the later of its date as given and its UTC date); default now",
     )
     p.set_defaults(func=cmd_fleet_records)
 
@@ -777,7 +790,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ollama", default="http://127.0.0.1:11434", help="the local Ollama server")
     p.add_argument("--model", default="qwen3:8b")
     p.add_argument(
-        "--as-of", help="fixed computation date (ISO 8601, an offset converted to UTC); default now"
+        "--as-of",
+        help="fixed computation date (ISO 8601; a time with no offset is UTC; a calendar item "
+        "counts to the later of its date as given and its UTC date); default now",
     )
     p.add_argument("--record", type=Path, help="save the run as a replayable recording")
     p.add_argument("--json", action="store_true", help="also print the records fetched")

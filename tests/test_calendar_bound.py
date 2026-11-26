@@ -561,8 +561,8 @@ def test_the_assistant_sends_as_of_with_the_offset_it_was_given() -> None:
 
 class _Frozen(datetime):
     @classmethod
-    def now(cls, tz: tzinfo | None = None) -> datetime:
-        return datetime(2026, 9, 15, tzinfo=tz or UTC)
+    def now(cls, tz: tzinfo | None = None) -> _Frozen:
+        return cls(2026, 9, 15, tzinfo=tz or UTC)
 
 
 # The static export reads the store at its own now (frozen here): the west entry is listed in

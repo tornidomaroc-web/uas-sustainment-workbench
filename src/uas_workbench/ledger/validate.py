@@ -13,8 +13,9 @@ entry of its date would be, and so is every entry after it (issue #161). A compo
 has reached any of its life limits when it is fitted, exactly or past it, goes on no
 aircraft: a life-limited
 part at its limit is replaced, and the usage it has reached travels with it (14 CFR 43.10).
-A calendar life is reached when its last UTC day ends; on that day the part may still be fitted.
-An entry's time is converted to UTC before it is judged and stored (issue #149).
+A calendar life is reached when its last day ends, counted to the later of the install's date
+as entered and its UTC date (issue #174); on that day the part may still be fitted. An entry's
+time is judged and stored as given, offset included, and every check compares instants.
 Shape errors are 422, unknown
 subjects 404, the public showcase aircraft 403, and transitions the records cannot accept
 409.
@@ -38,7 +39,7 @@ from uas_workbench.life.engine import (
     most_time_in_service,
     time_in_service,
 )
-from uas_workbench.life.model import Component, in_utc
+from uas_workbench.life.model import Component, counted_to, in_utc
 from uas_workbench.life.policy import LifePolicy, LifeRule
 
 from .model import AIRCRAFT_KINDS, COMPONENT_KINDS, KINDS, RETRACTION, Entry, LedgerError
@@ -307,9 +308,18 @@ def _limits_past(
                     "life limit"
                 )
         else:
+            # Counted to the later of the install's date as entered and its UTC date, as the
+            # board counts its computation date (issue #174).
             due = end_of_month_after(c.in_service_since, int(limit))
-            if in_utc(at).date() > due:
-                past.append(f"its {limit:.0f}-calendar-month life limit ended on {due}")
+            if counted_to(at) > due:
+                ended = f"its {limit:.0f}-calendar-month life limit ended on {due}"
+                utc = in_utc(at).date()
+                if at.date() > utc and utc <= due:
+                    ended += (
+                        f", and this install's date as entered is {at.date()}, the later of "
+                        f"that and its UTC date, {utc}"
+                    )
+                past.append(ended)
     return past
 
 
@@ -749,9 +759,9 @@ def validate(
 ) -> Entry:
     """The entry as it will be stored, or LedgerError."""
     details = _shape(entry, now)
-    # One instant, one date: the entry is judged and stored in UTC, whatever offset it was
-    # given with (issue #149).
-    entry = dataclasses.replace(entry, occurred_utc=in_utc(entry.occurred_utc))
+    # The entry is judged and stored with its time as given, offset included, so that the
+    # date as entered is kept (issue #174); every check compares instants, and a calendar
+    # check takes the bound (life.model.counted_to). It is shown in UTC.
     current = store.projection()
     _subjects(store, entry, current, details)
     corrected = _correction(store, entry, current)

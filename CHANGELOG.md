@@ -125,27 +125,46 @@
   LIMITS says by how much. The seeded fleet states its inspections' hours, so the seed, its
   journal head, the SYN-04 pack and the static export are unchanged.
 
-- One instant gives the same due dates, calendar life and board at any UTC offset (closes
-  #149). An entry's time and a query's `as_of` kept the offset they were given, and the
-  engine and the ledger took dates in it, so an annual inspection entered at
-  2025-09-01T02:00+05:00 read due by 2026-09-30, in 15 days, serviceable, where the same
-  instant in UTC read 15 days overdue, unserviceable; a pack asked at
-  2026-08-31T23:30-05:00 kept a battery within its calendar life a day after it ended; and
-  the ledger accepted an install after the last UTC day of a calendar life, or refused one
-  on it, by the offset written. Now the service (`_utc`), the command line (`_when`), the
-  ledger's check and the store's write convert every time to UTC, and the engine and the
-  install check take UTC dates. A time with no offset is UTC, as before. A store written by
-  0.6.6 or earlier can hold entries with an offset: they are read and counted in UTC, and
-  shown in UTC by the API, `record history` and the reports, with the row never rewritten,
-  so the journal verifies with the same head; such a store can show an item due earlier, or
-  an aircraft unserviceable, where it read otherwise. An evidence pack made from such a store
-  hashes those entries as read, in UTC, so its ledger hash differs from the one 0.6.6 gave
-  for the same records, although no record changed: across this upgrade a different ledger
-  hash does not mean the ledger changed, and the journal head, which stays, is what to
-  compare. A dated answer echoes `as_of` in UTC.
-  The `--at` and `--as-of` help says an offset is converted to UTC. The seeded fleet's
-  times are all UTC, so the seed, its journal head, the SYN-04 pack and the static export
-  are unchanged.
+- A calendar item is counted at the bound that is never late, and every entry keeps its
+  time as given (closes #174). Counting every date in UTC (the next entry) read late the
+  other way: an annual inspection entered at 2025-08-31T22:00-05:00, late on a month's last
+  day west of UTC, read "due by 2026-09-30, in 15 days", serviceable, on 2026-09-15, where
+  its date as entered gives due by 2026-08-31, 15 days overdue; a battery whose calendar life
+  ended on 2026-08-31, asked at 2026-09-01T02:00+05:00, read 0 days left, serviceable; fitting
+  it at that time was accepted; and every new entry lost its offset, so its date as entered
+  was gone. Now a calendar interval counts from the earlier of its start's date as entered
+  and its UTC date, and to the later of the computation date's, or the install's, date as
+  given and its UTC date. The annual reads 15 days overdue and the aircraft unserviceable,
+  the battery reads past its life and the aircraft unserviceable, and the install is refused
+  in a sentence naming its date as entered. Where the bound reads earlier than the UTC count,
+  the item's sentence says which date it counted from or to. The cost: an item whose two
+  dates differ reads up to one day earlier than in UTC, and an inspection completed west of
+  UTC late on a month's last day falls due a month earlier. Every new entry stores its time
+  as given, offset included, and is shown in UTC as before; the assistant's tools ask the
+  service with the offset given. A store written by 0.6.6 is read at the bound with no row
+  rewritten, so it reads as 0.6.6 read it, or earlier. A row an unreleased build wrote
+  between #159 and this change holds the UTC time alone and reads in UTC; a correction giving
+  the same time with its offset as entered is accepted and repairs the reading (LIMITS). The
+  `--at` and `--as-of` help says how a time with an offset is counted. The seed, its journal
+  head, the SYN-04 pack and the static export are unchanged.
+- An entry or a query given east of UTC early on a month's first day no longer reads a
+  calendar item later than its UTC date allows (closes #149). An entry's time and a query's
+  `as_of` kept the offset they were given, and the engine and the ledger took dates in it,
+  so an annual inspection entered at 2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) read due
+  by 2026-09-30, in 15 days, serviceable, where its UTC date gives 15 days overdue,
+  unserviceable; a pack asked at 2026-08-31T23:30-05:00 kept a battery within its calendar
+  life a day after it ended in UTC; and the ledger accepted an install after the last UTC day
+  of a calendar life. These now read 15 days overdue, past, and refused, the UTC date being
+  the bound the previous entry takes for each. A dated answer echoes `as_of` in UTC, and the
+  API, `record history` and the reports show every entry's time in UTC. A store written by
+  0.6.6 or earlier can hold entries with an offset: they are shown in UTC with the row never
+  rewritten, so the journal verifies with the same head; such a store can show an item due
+  earlier, or an aircraft unserviceable, where it read otherwise. An evidence pack made from
+  such a store hashes those entries as shown, in UTC, so its ledger hash differs from the one
+  0.6.6 gave for the same records although no record changed: across this upgrade a
+  different ledger hash does not mean the ledger changed, and the journal head, which stays,
+  is what to compare. The seeded fleet's times are all UTC, so the seed, its journal head,
+  the SYN-04 pack and the static export are unchanged.
 - The cue checker (`life.cue.problems`, the tests' oracle; no served answer reads it) reads a
   number in a not-known item's name as the name's: a 24-month or 2-year inspection with no
   completion on record, whose own cue "24-month insp: none recorded, not known" it refused

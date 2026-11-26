@@ -216,6 +216,7 @@ def _retention(
     undated: int,
     problem: UnreadableRecord | None,
 ) -> dict[str, Any]:
+    as_of = as_of.astimezone(UTC)  # counted in UTC, whatever offset it was given with
     threshold = years_before(as_of, RETENTION_YEARS)
     out: dict[str, Any] = {
         "minimum_years": RETENTION_YEARS,

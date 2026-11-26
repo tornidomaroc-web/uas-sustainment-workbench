@@ -24,10 +24,32 @@ Unit = Literal["h", "cycles", "days"]
 
 
 def in_utc(t: datetime) -> datetime:
-    """The instant `t` written in UTC, so that its date is the UTC date whatever offset it was
-    given with (issue #149): 2025-09-01T02:00+05:00 is 2025-08-31 in UTC. A time with no offset
-    is UTC already, as everywhere a time comes in, and is returned as it is."""
+    """The instant `t` written in UTC (issue #149): 2025-09-01T02:00+05:00 is 2025-08-31 21:00
+    in UTC. Times are shown in UTC. A time with no offset is UTC already, as everywhere a time
+    comes in, and is returned as it is."""
     return t if t.tzinfo is None else t.astimezone(UTC)
+
+
+# A time given with an offset has two dates: its date as given and its UTC date. Which one an
+# authority counts a calendar month in cannot be known here, and each alone reads late one way
+# (0.6.6 took the date as given, #149; #159 the UTC date, #174). A calendar interval is
+# counted at the bound that is never late: from the earlier of its start's two dates, to the
+# later of its end's. The cost is a reading up to one day early, and at a month's end a due
+# date one month early; the item's sentence says so where it applies.
+
+
+def counted_from(t: datetime) -> date:
+    """The date a calendar interval starting at `t` is counted from: the earlier of its date
+    as given and its UTC date (issue #174). 2025-08-31T22:00-05:00 counts from 2025-08-31 and
+    2025-09-01T02:00+05:00 from 2025-08-31."""
+    return min(t.date(), in_utc(t).date())
+
+
+def counted_to(t: datetime) -> date:
+    """The date a calendar interval is counted to at `t`: the later of its date as given and
+    its UTC date (issue #174). 2026-09-01T02:00+05:00 counts to 2026-09-01 and
+    2026-08-31T23:30-05:00 to 2026-09-01."""
+    return max(t.date(), in_utc(t).date())
 
 
 @dataclass(frozen=True)
@@ -122,6 +144,9 @@ class DueList:
     usage: dict[str, Usage] = field(default_factory=dict)  # component id -> usage
     work_orders: tuple[WorkOrder, ...] = ()
     notes: tuple[str, ...] = ()
+    # The date its calendar items are counted to (counted_to of the as_of given, issue #174);
+    # as_of itself is the instant, in UTC. None: the UTC date of as_of.
+    day: date | None = None
 
 
 @dataclass(frozen=True)
