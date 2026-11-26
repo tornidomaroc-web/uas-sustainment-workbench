@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- pyulog is held below 1.4 (`pyulog>=1.3.0,<1.4`). pyulog 1.4.0, published on 2026-11-26,
+  changes how a ULog is parsed, and the suite has not been run on it, so until moving to it
+  is a change of its own, every install reads a log as 1.3.0 reads it.
 - A log whose flight time is not known now counts its whole span as hours, the most it can
   have flown (closes #152). Such a log (an ArduPilot log with no STAT messages, a ULog with
   no vehicle_land_detected topic) counted one cycle and no hours, so a part could read younger

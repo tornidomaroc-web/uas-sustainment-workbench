@@ -24,25 +24,39 @@ ROOT = Path(__file__).resolve().parents[1]
 S = 1_000_000
 
 
-def declared_floor() -> tuple[int, ...]:
+def declared() -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """The lowest pyulog the package allows and the first it does not."""
     dependencies = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"][
         "dependencies"
     ]
     (pyulog,) = [d for d in dependencies if re.match(r"pyulog\b", d)]
-    m = re.fullmatch(r"pyulog>=(\d+)\.(\d+)\.(\d+),<2", pyulog)
+    m = re.fullmatch(r"pyulog>=(\d+)\.(\d+)\.(\d+),<(\d+)\.(\d+)", pyulog)
     assert m, pyulog
-    return tuple(int(part) for part in m.groups())
+    parts = tuple(int(part) for part in m.groups())
+    return parts[:3], parts[3:]
+
+
+def declared_floor() -> tuple[int, ...]:
+    return declared()[0]
 
 
 def test_the_package_declares_pyulog_1_3_0_or_later() -> None:
     assert declared_floor() == (1, 3, 0)
 
 
+def test_the_package_declares_pyulog_below_1_4() -> None:
+    """pyulog 1.4.0 (2026-11-26) reads some logs differently from 1.3.0, and the suite has
+    not been run on it: until that is its own change, every install takes a 1.3 release, so
+    a log reads as it read when these tests were written."""
+    assert declared()[1] == (1, 4)
+
+
 def test_the_installed_pyulog_is_one_the_package_allows() -> None:
-    """An environment installed before the floor moved still holds 1.2.4; `python -m pip
-    install -e ".[dev]"` replaces it."""
+    """An environment installed before the floor moved still holds 1.2.4, and one installed
+    before the ceiling, 1.4.0; `python -m pip install -e ".[dev]"` replaces either."""
     installed = tuple(int(part) for part in version("pyulog").split(".")[:3])
-    assert installed >= declared_floor(), version("pyulog")
+    floor, ceiling = declared()
+    assert floor <= installed < ceiling, version("pyulog")
 
 
 @pytest.mark.parametrize("elements", [65_536, 100_000])
