@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.6.7 (2026-11-27)
+
+What operators see change (each entry below gives it in full, with its figures):
+
+- An entry keeps its time as given, offset included, and times are shown in UTC. A calendar
+  interval counts from the earlier of its start's two dates, as given and in UTC, and to the
+  later of a reading's or an install's, so it never reads later than its dates allow (#174).
+- No annual inspection on record reads not known, where it read serviceable (#150); a log of
+  unknown flight time counts its whole span (#152); inspection hours follow the time in
+  service, whatever order the records arrive in (#151).
+- What an undo brings back is judged as a new entry; a write leaving two live entries where
+  one is allowed is refused (#161). A closing store no longer makes a write wait up to 5 s
+  (#127). `uasw-census px4-excerpt` refuses a parameter of a type the ULog format does not
+  allow (#141, #143). pyulog is held below 1.4.
+
+Earlier than on 0.6.6, never later: of 278,010 calendar readings swept on both versions, none
+reads later and 60,519 read earlier, by one day for a time given west of UTC late in the day
+(an install then is refused on a calendar life's last day), and by 28 to 32 days for an annual
+inspection entered east of UTC early on the 1st of a month (#149). A log's span and an
+inspection's stated hours can also make an item read earlier, as their entries say.
+
+After upgrading: `uasw verify` prints the same journal head as before. A pack made from a store
+holding entries given with an offset carries another ledger hash with no record changed, so
+compare journal heads, not pack hashes. A store holding two live entries where one is allowed
+reads as before; LIMITS.md gives each repair (#165). Known issues that can read later than the
+records allow: #176, #169, #165 and #153, listed at the end of this section.
+
 - pyulog is held below 1.4 (`pyulog>=1.3.0,<1.4`). pyulog 1.4.0, published on 2026-11-26,
   changes how a ULog is parsed, and the suite has not been run on it, so until moving to it
   is a change of its own, every install reads a log as 1.3.0 reads it.
@@ -195,47 +222,23 @@
   unchanged.
 - A `uasw` command that writes, or a service stopping, closing its store beside a running
   service makes a write there wait about a tenth or two of a second where it waited up to the
-  5 s busy timeout, and refused none in the runs below (closes #127): `Store.close()` first
-  folds the WAL without waiting for anything (`PRAGMA wal_checkpoint(PASSIVE)`, no write lock),
-  then starts it over with `TRUNCATE` waiting no more than 100 ms (`CLOSE_WAIT_MS`) for the
-  write lock and for reads of an older state, where the `TRUNCATE` it ran alone waited the 5 s
-  busy timeout with the lock held, so a write through the service sent meanwhile waited as long
-  and could be refused 503 as if a write held the store. A `TRUNCATE` that does not get them in
-  time changes nothing in the `-wal`. Beside reads that each hold their state longer than that
-  wait, one after the other, one try never found them ended and the `-wal` grew by every run,
-  so once the `-wal` is past 4 MiB (`CLOSE_WAL_CAP`) as the close begins, the close tries
-  again after each 150 ms pause (`CLOSE_GAP_MS`) for up to 3.5 s (`CLOSE_TRIES_MS`), holding
-  the lock for 100 ms as SQLite counts it each time (up to 0.25 s measured on Windows, whose
-  short sleeps last longer): the closing command then waits up to about 3.7 s, a write beside
-  it about one try. Two limits stay: reads that leave no moment free of an older
-  state while the close tries (one read that never ends), or writes landing in every pause,
-  leave the `-wal` past the cap, growing by every command that writes, until a close finds
-  one; and the cap is looked at as the close begins, so the `-wal` can hold the cap and one
-  command's frames more. On a SQLite whose busy handler sleeps whole seconds (3.42 or older
-  built without `HAVE_USLEEP`, or any built with `HAVE_NANOSLEEP=0`), a write beside a close
-  waits up to about 4 s, still within its own 5 s wait. Measured through `uasw serve` beside a
-  `uasw record` closing while a reader in a third process held an older state (Windows, Python
-  3.12.10, SQLite 3.49.1, each a process of its own): before this change the service writes
-  sent as the close began were refused 503 in 5 to 7 of 8 (four runs of 8, 2026-10-31 and
-  2026-11-01) and every one waited over 5 s; this version refused 0, answered those below the
-  cap in 0.16 to 0.23 s and those beside a close past the cap (set to 0) in 0.16 to 0.23 s, the
-  close itself taking 3.61 to 3.75 s. Beside a service read by four threads and 80 `uasw record`
-  runs, the `-wal` held 0 B after every run, as before; beside one reader taking 2.0 s reads
-  one after the other, with four threads reading through the service and the cap set to
-  64 KiB, 40 runs left at most 119,512 B (the first version of this change, one try alone:
-  1,462,632 B and growing), a cap crossing kept the closing command 2.28 to 2.38 s when a try found the reads ended (11 of 40 closes) and 3.61 to 3.69 s when none did (5 of 40), and a
-  service write sent as each close began waited at most 0.27 s. Folding with `PASSIVE`
-  alone (this change's first version) left the `-wal` growing by every run's frames,
-  1,075,352 B after the 80th, until the service stopped; and a store
-  opened for reads only that closed last beside a writer's close leaves a `-wal` of 0 B, as
-  before, not a folded copy of the store's writes that every read-only open after it kept. A
-  closed store is one file as before, with the same bytes (the same seeded store written and
-  closed on each version has the same SHA-256). The
-  sentence a writer refused for the write lock gets names the lock and what can hold it,
-  another write or another store's own checkpoint waiting for an older read, where it said a
-  write held the store: `another connection held the store's write lock for longer than this
-  write waits, a write or a checkpoint waiting for a read of an older state to end; nothing
-  was written, so send it again`. `tests/test_close_without_waiting.py`,
+  5 s busy timeout (closes #127). `Store.close()` folds the WAL without waiting for anything
+  (`PRAGMA wal_checkpoint(PASSIVE)`, no write lock), then starts it over with `TRUNCATE`
+  waiting no more than 100 ms (`CLOSE_WAIT_MS`) for the write lock and for reads of an older
+  state, where the `TRUNCATE` it ran alone waited the 5 s busy timeout with the lock held. Once
+  the `-wal` is past 4 MiB (`CLOSE_WAL_CAP`) as the close begins, the close tries again after
+  each 150 ms pause (`CLOSE_GAP_MS`) for up to 3.5 s (`CLOSE_TRIES_MS`): the closing command
+  then waits up to about 3.7 s, a write beside it about one try. Reads that leave no moment
+  free of an older state, or writes landing in every pause, can still leave the `-wal` past the
+  cap, growing by every command that writes, until a close finds one. Measured through `uasw
+  serve` beside a `uasw record` closing while a reader in a third process held an older state:
+  before this change 5 to 7 of 8 service writes sent as the close began were refused 503, each
+  after waiting over 5 s; this version refused 0 and answered them in 0.16 to 0.23 s. LIMITS.md
+  gives every run's figures and the SQLite builds whose busy handler sleeps whole seconds. A
+  closed store is one file with the same bytes as before. A writer refused for the write lock
+  is told what can hold it: `another connection held the store's write lock for longer than
+  this write waits, a write or a checkpoint waiting for a read of an older state to end;
+  nothing was written, so send it again`. `tests/test_close_without_waiting.py`,
   `tests/test_close_bounds_the_wal.py`, `tests/test_close_caps_the_wal.py`.
 - `uasw-census px4-excerpt` refuses a ULog holding a parameter of a type the ULog format does
   not allow, any other than `int32_t` or `float`, in one line, exit 1, and makes no file or
@@ -259,6 +262,61 @@
   records and census probes, and none of the ULogs holds a parameter of another type (51,755
   initial, 7,456 default and 102 changed parameters over the 45, read from the message bytes).
   `tests/test_px4_excerpt_parameter_types.py`.
+
+Known issues, not fixed in this release; each issue gives its figures.
+
+Can read later than the records allow:
+
+- #176 (in 0.6.6 too): with no `--at`, `uasw record` stamps an entry with the UTC time, and
+  with no `--as-of`, `evidence`, `records`, `fleet-records` and `ask` count to the UTC date,
+  so the machine's local date is lost. An annual inspection recorded at 22:00 on 2025-08-31 at
+  -05:00 reads due by 2026-09-30, serviceable, on 2026-09-15, where its local date gives 15
+  days overdue; a reading early in the day east of UTC counts to the day before. Give `--at`
+  and `--as-of` with their offset.
+- #169 (in 0.6.6 too): a log with no UTC start counts toward no part, so a part can read
+  younger than it may be by that log's flight.
+- #165: a store written before 0.6.7 that holds two live entries where the records allow one
+  reads as it did, in seven shapes later than the entries stated last. LIMITS.md gives the
+  repair for each.
+- #153: flight no log covers adds no cycle, and counts toward the part fitted
+  when the log before it started, so a cycle limit can read lower, and a part fitted between
+  the two logs younger, than they may be.
+
+Can read earlier, more used than the records allow:
+
+- #172 (new in 0.6.7): the evidence pack's line for a part and an item's cue give the most
+  hours a log of unknown flight time allows, without the least; the item's sentence gives
+  both.
+- #162 and #155 can show an aircraft unserviceable that is not: inspection hours
+  filled in automatically do not follow a later change to the time in service before them, and
+  a replaced flight controller's restarted counter is read as the old counter's total of flight
+  no log covers.
+- #154: the evidence pack and the records summary can give the time in service as not known
+  beside a computed board, and count duplicate logs in their totals.
+
+Wording, routes, speed and tests:
+
+- #156: an inspection overdue within its tolerance puts the board at serviceable with deferred
+  defects; the item itself says overdue.
+- #166: after the earliest entry under an old correction of a correction is retracted, that
+  chain cannot be superseded again: two refusals name each other. #167: two ledger refusals
+  give no route, or a route that is itself refused.
+- #170: a component's registration cannot be corrected with `--supersedes` (refused as already
+  registered). Retract it and register the part again; a part already fitted has its install
+  retracted before and fitted again after.
+- #157: the records summary and the evidence pack take about 30 s for one aircraft with three
+  years of daily logs, on read routes that need no token.
+- #145: `uasw-census px4-excerpt` prints a refused key raw, so a key holding a newline or a
+  control character breaks its one-line refusal; nothing is written.
+- #128: some damaged PX4 ULogs are refused with a raw Python reason, or none; nothing from them
+  is stored.
+- #117: `serve` and `seed` on a store that holds data run the whole-file check twice before they
+  start (measured for this release: two checks and one journal walk before `serve` answers,
+  none for the twenty read requests after it), and the service runs it under the write lock
+  at every checkpoint it makes.
+- #118: a `seed` refused with 409 folds a sound `-wal` into the file and removes it.
+- #135: no test checks that the time cap of `tests/capped.py` ends the child's own processes
+  under `python -O`. A test gap, not a change in what the workbench does.
 
 ## 0.6.6 (2026-10-27)
 

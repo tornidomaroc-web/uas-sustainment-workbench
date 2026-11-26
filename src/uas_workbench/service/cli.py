@@ -628,15 +628,23 @@ def cmd_record(args: argparse.Namespace) -> None:
             print(line)
 
 
-def _who(p: argparse.ArgumentParser, statement: bool = True) -> None:
+AT_HELP = (
+    "when it happened (ISO 8601; an offset is kept, a time with none is UTC; a calendar "
+    "interval counts from the earlier of its date as given and its UTC date); default now"
+)
+# An install starts no calendar interval: it is checked against the part's calendar life, which
+# counts to the later of its two dates (validate._limits_past, issue #174).
+INSTALL_AT_HELP = (
+    "when it was fitted (ISO 8601; an offset is kept, a time with none is UTC; the part's "
+    "calendar life is checked to the later of its date as given and its UTC date); default now"
+)
+
+
+def _who(p: argparse.ArgumentParser, statement: bool = True, at_help: str = AT_HELP) -> None:
     p.add_argument("--by", required=True, help="your name and role, recorded as typed")
     if statement:
         p.add_argument("--statement", required=True, help="what was done, in your words")
-    p.add_argument(
-        "--at",
-        help="when it happened (ISO 8601; an offset is kept, a time with none is UTC; a calendar "
-        "interval counts from the earlier of its date as given and its UTC date); default now",
-    )
+    p.add_argument("--at", help=at_help)
     p.add_argument("--supersedes", type=int, help="the entry id this one corrects")
     p.add_argument("--reason", help="why that entry was wrong; required with --supersedes")
 
@@ -705,7 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
         p = comp_action.add_parser(action)
         p.add_argument("component")
         p.add_argument("aircraft")
-        _who(p)
+        _who(p, at_help=INSTALL_AT_HELP if action == "install" else AT_HELP)
 
     p = what.add_parser("inspection", help="record a completed inspection")
     p.add_argument("aircraft")

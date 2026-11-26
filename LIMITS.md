@@ -472,7 +472,12 @@ field-level tables. This file is about what that means for a maintenance tool.
   a calendar month in cannot be known here. A calendar interval is counted from the earlier
   of its start's two dates (an inspection's completion) and to the later of its end's (the
   computation date, `as_of`, and the time of an install checked against a calendar life); a
-  time with no offset is UTC, so its two dates are one. A battery's calendar life counts from
+  time with no offset is UTC, so its two dates are one. With no `--at` or `--as-of` the
+  command line takes the time now in UTC, so the machine's local date is not one of the two
+  and the bound cannot take it: an entry made late in the evening west of UTC carries the
+  next day's date, and a reading early in the day east of UTC counts to the day before, a
+  late reading in 0.6.6 as well (#176). Given with their offset, both are counted at the
+  bound. A battery's calendar life counts from
   its `--since` date, which carries no offset. Each calendar alone reads late one way: 0.6.6
   and earlier took the date as given, so an annual inspection entered at
   2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) fell due a month late and a query at
@@ -487,7 +492,13 @@ field-level tables. This file is about what that means for a maintenance tool.
   of that and its UTC date, 2025-09-01"; "counted to the computation date as given,
   2026-09-01, the later of that and its UTC date, 2026-08-31"), and an install refused by its
   date as entered says so. A start in the same month by both dates reads its due date as
-  before, its days used counted from the earlier date. A work order's date ("since ...") and
+  before, its days used counted from the earlier date. Its interval is then one day longer
+  than the UTC count gives, and an item reads due soon once a tenth of its interval or less
+  is left (`due_soon_fraction` in fleet.toml), so it can turn due soon one day sooner: an
+  annual inspection entered at 2025-09-05T22:00-05:00 counts 390 days to 2026-09-30 and reads
+  due soon on 2026-08-22, 39 days left, where the UTC count, 389 days, reads it ok until
+  2026-08-23; from that day the item is on `/fleet/due`, and the board's status is the same
+  either way. 0.6.6 read it as this version does. A work order's date ("since ...") and
   the date an hours check names are shown in UTC; they count no calendar interval. The time
   of every entry is stored as given, offset included, and shown in UTC by the service, the
   history, the reports and the export; the row is never rewritten, so its journal link
@@ -1303,11 +1314,19 @@ field-level tables. This file is about what that means for a maintenance tool.
   correction folds the first entry last (200 h read where 250 h was stated last, a work
   order state deferred read where in work was stated last: later).
   The repair, each measured: retract the entry of the pair that is wrong (the revived
-  correction, the second open, the open that took the default id); for a correction of a
-  correction, retract it, then the correction it corrected, then correct the first entry to
-  what was stated last (retracting the first entry instead reads the same, but then undoing
-  that retraction and retracting the last correction are each refused, naming the other, so
-  that chain can no longer be superseded); a registration with installs is retracted after
+  correction, the second open). The open that took the default id is retracted and then
+  opened again with a work id of its own, since retracting it alone drops the state it
+  stated: on a store written by 0.6.6 with WO-3 awaiting parts and a later open without an
+  id, deferred, the board reads serviceable with deferred defects; with that open retracted,
+  AOG and no deferred defect; opened again as WO-4, deferred, AOG with the deferred defect
+  too. For a correction of a correction, a close's as any other entry's, retract it, then
+  the correction it corrected, then correct the earliest entry to what was stated last (on a
+  store written by 0.6.6, WO-A and WO-C in work, a close of WO-A corrected to close WO-C and
+  that corrected again: serviceable; after the two retractions, in maintenance with WO-C in
+  work; after the correction, in maintenance with WO-A in work and WO-C closed). Retracting
+  the earliest entry instead reads the same, but then undoing that retraction and
+  retracting the last correction are each refused, naming the other, so that chain can no
+  longer be superseded (#166). A registration with installs is retracted after
   them, then the part is fitted again, and an open with a state change or close of its id
   is retracted after them, then they are recorded again (an open brought back after its
   order was closed: retract the close, then that open, then close the order again). The
@@ -1401,8 +1420,11 @@ field-level tables. This file is about what that means for a maintenance tool.
   write whose commit is refused leaves the kept result where it was. The result a summary
   shows is the one labelled with the state the summary reads, never a newer or an older one:
   a summary that straddles a commit shows the head it began on, with the rows it began on, and
-  walks nothing for it; the first summary after the commit walks once. Measured in the suite:
-  twenty requests with no token, zero walks; one write through the store, zero walks and the
+  walks nothing for it; the next summary after the commit walks once. A service starting
+  walks the journal once, so the zero walks below are for a state already walked (measured
+  for 0.6.7 through `uasw serve` on a seeded store: one walk and, per #117, two whole-file
+  checks before it answers, then none for twenty read requests with no token). Measured in
+  the suite: twenty requests with no token, zero walks; one write through the store, zero walks and the
   head moved; one edit made in the file, one walk, and the break shown from then on; one
   outside commit landing inside an open snapshot, zero walks for that snapshot and one for the
   next. What the summary shows is exactly what `uasw verify` would compute of that state,
