@@ -4,9 +4,11 @@ An entry's time and a query's `as_of` kept the offset they were given, and the l
 the ledger took dates from them as written, so an annual inspection entered at
 2025-09-01T02:00+05:00 (2025-08-31 21:00 UTC) fell due a month later than the same instant
 written in UTC, and a query at 2026-08-31T23:30-05:00 kept a battery within its calendar life
-a day after it ended. Now every time is converted to UTC where it comes in, a stored entry
-that already carries an offset (written by 0.6.6 or earlier) is read in UTC without its row
-being rewritten, so its journal link still verifies, and the dates are taken in UTC.
+a day after it ended. #159 converted every time to UTC where it came in; that reads late the
+other way (issue #174, tests/test_calendar_bound.py). Now a calendar interval counts from the
+earlier of its start's date as entered and its UTC date, and to the later of the computation
+date's (or an install's) date as given and its UTC date. A time is stored as given and shown
+in UTC; a stored entry is never rewritten, so its journal link still verifies.
 
 The rows of the issue run real `uasw` processes, and the service rows a real `uasw serve`,
 each on a store of its own: one aircraft, the committed PX4 log (2026-06-12).
@@ -162,18 +164,32 @@ def test_a_battery_asked_at_any_offset_is_past_its_calendar_life_as_in_utc(
     assert prog["status_reasons"] == [BATTERY_PAST]
 
 
-# The other way: on its last day in UTC, 2026-08-31 23:30, the battery is within its life
-# however the instant is written. The +05:00 row read past, unserviceable.
-@pytest.mark.parametrize("as_of", ["2026-08-31T23:30:00Z", "2026-09-01T04:30:00+05:00"])
-def test_a_battery_on_its_last_utc_day_is_within_its_life_at_any_offset(
-    tmp_path: Path, as_of: str
+# On its last day in UTC, 2026-08-31 23:30, the battery is within its life written in UTC.
+# Written at +05:00 (2026-09-01 04:30) its date as given is the next day: counted to the later
+# date it is past (#174; #159 read it 0 days left, serviceable, and 0.6.6 read it past).
+@pytest.mark.parametrize(
+    ("as_of", "state", "remaining", "message", "status"),
+    [
+        ("2026-08-31T23:30:00Z", "due_soon", 0.0, BATTERY_LAST_DAY, "serviceable"),
+        (
+            "2026-09-01T04:30:00+05:00",
+            "overdue",
+            -1.0,
+            f"{BATTERY_PAST}, counted to the computation date as given, 2026-09-01, the later of "
+            "that and its UTC date, 2026-08-31",
+            "unserviceable",
+        ),
+    ],
+)
+def test_a_battery_on_its_last_utc_day_is_within_its_life_only_by_both_dates(
+    tmp_path: Path, as_of: str, state: str, remaining: float, message: str, status: str
 ) -> None:
     battery_store(tmp_path)
     prog = programme(tmp_path, as_of)
     battery = calendar_item(prog, "battery pack BAT-1")
-    assert (battery["state"], battery["remaining"]) == ("due_soon", 0.0)
-    assert battery["message"] == BATTERY_LAST_DAY
-    assert prog["status"] == "serviceable"
+    assert (battery["state"], battery["remaining"]) == (state, remaining)
+    assert battery["message"] == message
+    assert prog["status"] == status
 
 
 # ---- the ledger's check at an install (validate.py), both ways -----------------------------
@@ -193,12 +209,23 @@ def test_an_install_after_the_last_utc_day_is_refused_at_any_offset(
     assert len(ok(tmp_path, "record", "history", "BAT-1").splitlines()) == 1  # the register
 
 
-# On its last day in UTC (2026-08-31 21:00), written at +05:00: the install was refused.
-@pytest.mark.parametrize("at", ["2026-08-31T21:00:00Z", "2026-09-01T02:00:00+05:00"])
-def test_an_install_on_the_last_utc_day_is_accepted_at_any_offset(tmp_path: Path, at: str) -> None:
+# On its last day in UTC (2026-08-31 21:00), written in UTC: accepted. Written at +05:00 its
+# date as entered is 2026-09-01, after the life ended: refused (#174; #159 accepted it, and
+# 0.6.6 refused it).
+def test_an_install_on_the_last_utc_day_is_accepted_only_by_both_dates(tmp_path: Path) -> None:
     ok(tmp_path, "ingest", "X-1", str(LOG))
     register(tmp_path)
-    r = uasw(tmp_path, "record", "component", "install", "BAT-1", "X-1", *WHO, "--at", at)
+    r = uasw(tmp_path, "record", "component", "install", "BAT-1", "X-1", *WHO,
+             "--at", "2026-09-01T02:00:00+05:00")  # fmt: skip
+    assert r.returncode == 1
+    assert r.stderr == (
+        "refused (409): BAT-1 cannot be fitted to X-1 at 2026-08-31 21:00 UTC: "
+        f"{FITTED_PAST}, and this install's date as entered is 2026-09-01, the later of that "
+        "and its UTC date, 2026-08-31; a life-limited part that has reached its life limit is "
+        "replaced, not fitted again\n"
+    )
+    r = uasw(tmp_path, "record", "component", "install", "BAT-1", "X-1", *WHO,
+             "--at", "2026-08-31T21:00:00Z")  # fmt: skip
     assert r.returncode == 0, r.stderr
     history = ok(tmp_path, "record", "history", "BAT-1").splitlines()
     assert history[-1].startswith("#2 2026-08-31 21:00 component.install by A. Tester")
@@ -207,7 +234,9 @@ def test_an_install_on_the_last_utc_day_is_accepted_at_any_offset(tmp_path: Path
 # ---- what the store holds and shows --------------------------------------------------------
 
 
-def test_an_entry_given_with_an_offset_is_stored_and_shown_in_utc(tmp_path: Path) -> None:
+def test_an_entry_given_with_an_offset_is_stored_as_given_and_shown_in_utc(
+    tmp_path: Path,
+) -> None:
     annual_store(tmp_path, "2025-09-01T02:00:00+05:00")
     (line,) = ok(tmp_path, "record", "history", "X-1").splitlines()
     assert line.startswith("#1 2025-08-31 21:00 inspection.done by A. Tester")
@@ -216,8 +245,9 @@ def test_an_entry_given_with_an_offset_is_stored_and_shown_in_utc(tmp_path: Path
         column, text = c.execute("SELECT occurred_utc, record FROM entries").fetchone()
     finally:
         c.close()
-    assert column == "2025-08-31T21:00:00+00:00"
-    assert json.loads(text)["occurred_utc"] == "2025-08-31T21:00:00+00:00"
+    # #159 stored 2025-08-31T21:00:00+00:00 in both; the time as given is kept (#174).
+    assert column == "2025-09-01T02:00:00+05:00"
+    assert json.loads(text)["occurred_utc"] == "2025-09-01T02:00:00+05:00"
 
 
 def write_as_0_6_6(db: Path, entry: Entry) -> None:
@@ -248,8 +278,9 @@ def write_as_0_6_6(db: Path, entry: Entry) -> None:
         c.close()
 
 
-# A store written by 0.6.6 holds the entry with its offset. It is read in UTC and counted in
-# UTC; its row is not rewritten, so the journal verifies with the same head before and after.
+# A store written by 0.6.6 holds the entry with its offset. It is shown in UTC and counted from
+# the earlier of its two dates, here its UTC date (#174); its row is not rewritten, so the
+# journal verifies with the same head before and after.
 def test_an_entry_stored_with_an_offset_is_read_in_utc_and_its_journal_still_verifies(
     tmp_path: Path,
 ) -> None:
@@ -285,7 +316,7 @@ def test_an_entry_stored_with_an_offset_is_read_in_utc_and_its_journal_still_ver
         (column,) = c.execute("SELECT occurred_utc FROM entries").fetchone()
     finally:
         c.close()
-    assert column == "2025-09-01T02:00:00+05:00"  # read in UTC, never rewritten
+    assert column == "2025-09-01T02:00:00+05:00"  # shown in UTC, never rewritten
 
 
 # ---- the service, a real `uasw serve` ------------------------------------------------------
@@ -348,7 +379,9 @@ def served(tmp_path: Path) -> Iterator[str]:
         log.close()
 
 
-def test_the_service_stores_an_entry_in_utc_and_counts_any_as_of_in_utc(served: str) -> None:
+def test_the_service_shows_an_entry_in_utc_and_counts_any_as_of_at_the_bound(
+    served: str,
+) -> None:
     status, entry = call(
         served,
         "POST",
@@ -398,20 +431,27 @@ def test_the_engine_takes_every_date_in_utc_whatever_offset_it_is_given() -> Non
             assert due.as_of == as_of_utc and due.as_of.utcoffset() == timedelta(0)
 
 
-def test_the_engine_counts_a_calendar_life_in_utc_whatever_offset_as_of_carries() -> None:
+def test_the_engine_counts_a_calendar_life_to_the_later_date_of_as_of() -> None:
     fitted = datetime(2025, 1, 1, tzinfo=UTC)
     bat = Component("BAT-1", "battery pack", date(2024, 8, 15), 0.0, 0,
                     (Installation("A", fitted, None),), True)  # fmt: skip
     past = datetime(2026, 9, 1, 4, 30, tzinfo=UTC)
     last = datetime(2026, 8, 31, 23, 30, tzinfo=UTC)
-    for at, remaining in ((past, -1.0), (last, 0.0)):
-        for as_of in (at, at.astimezone(PLUS5), at.astimezone(MINUS5)):
+    # Counted to the later of as_of's date as given and its UTC date (#174): the last UTC day
+    # written at +05:00 is 2026-09-01 as given, so past (-1; #159 read 0).
+    for at, remaining in ((past, (-1.0, -1.0, -1.0)), (last, (0.0, -1.0, 0.0))):
+        offsets = (at, at.astimezone(PLUS5), at.astimezone(MINUS5))
+        for as_of, left in zip(offsets, remaining, strict=True):
             due = compute("A", record("A"), components=(bat,), as_of=as_of)
             (life,) = [i for i in due.items if i.component_id == "BAT-1" and i.basis == "calendar"]
-            assert life.remaining == remaining, as_of
+            assert life.remaining == left, as_of
 
 
-def test_the_assistant_sends_as_of_in_utc() -> None:
+# The offset is sent as given, so the service counts to the later date (#174; #159 sent
+# 2026-09-15T00:00:00Z). A UTC time is sent as before.
+def test_the_assistant_sends_as_of_as_given() -> None:
     _, query = resolve("aircraft_due", {"key": "X-1"}, datetime(2026, 9, 14, 19, 0, tzinfo=MINUS5))
+    assert query["as_of"] == "2026-09-14T19:00:00-05:00"
+    _, query = resolve("aircraft_due", {"key": "X-1"}, datetime(2026, 9, 15, 0, 0, tzinfo=UTC))
     assert query["as_of"] == "2026-09-15T00:00:00Z"
     assert POLICY.inspections["annual inspection"].limits() == (("calendar", 12),)
